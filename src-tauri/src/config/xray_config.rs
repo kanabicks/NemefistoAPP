@@ -20,9 +20,32 @@ pub struct XrayConfig {
 ///
 /// `listen` — адрес для inbound (`"127.0.0.1"` для локального доступа,
 /// `"0.0.0.0"` если разрешён доступ из LAN).
-pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16, listen: &str) -> Result<XrayConfig> {
+/// `physic_iface` — если задан и `tun_mode=true`, выставляет
+/// `streamSettings.sockopt.interface` на direct outbound (см. описание в
+/// `patch_xray_json`).
+pub fn build(
+    entry: &ProxyEntry,
+    socks_port: u16,
+    http_port: u16,
+    listen: &str,
+    tun_mode: bool,
+    physic_iface: Option<&str>,
+) -> Result<XrayConfig> {
     let outbound = build_outbound(entry)
         .with_context(|| format!("ошибка построения outbound для «{}»", entry.name))?;
+    let direct_outbound = if tun_mode && physic_iface.is_some() {
+        let iface = physic_iface.unwrap();
+        json!({
+            "tag": "direct",
+            "protocol": "freedom",
+            "settings": {},
+            "streamSettings": {
+                "sockopt": { "interface": iface }
+            }
+        })
+    } else {
+        json!({ "tag": "direct", "protocol": "freedom", "settings": {} })
+    };
 
     let config = json!({
         "log": {
@@ -63,11 +86,7 @@ pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16, listen: &str) 
         ],
         "outbounds": [
             outbound,
-            {
-                "tag": "direct",
-                "protocol": "freedom",
-                "settings": {}
-            },
+            direct_outbound,
             {
                 "tag": "block",
                 "protocol": "blackhole",
@@ -118,8 +137,17 @@ const PRIVATE_CIDR: &[&str] = &[
 /// burstObservatory и leastLoad оставляются как есть — они работают на Windows.
 ///
 /// Возвращает пропатченный конфиг.
-pub fn patch_xray_json(mut config: Value, socks_port: u16, http_port: u16, listen: &str) -> Value {
-    // Обновляем порты + listen-адрес inbounds
+pub fn patch_xray_json(
+    mut config: Value,
+    socks_port: u16,
+    http_port: u16,
+    listen: &str,
+    tun_mode: bool,
+    physic_iface: Option<&str>,
+) -> Value {
+    // Обновляем порты + listen-адрес inbounds. Также убираем fakedns из
+    // destOverride — fakedns Xray использует диапазон 198.18.0.0/15, который
+    // конфликтует с TUN-интерфейсом, который у нас тоже на 198.18.0.1/15.
     if let Some(arr) = config["inbounds"].as_array_mut() {
         for ib in arr.iter_mut() {
             let proto = ib["protocol"].as_str().unwrap_or("").to_string();
@@ -128,11 +156,17 @@ pub fn patch_xray_json(mut config: Value, socks_port: u16, http_port: u16, liste
                 "http"  => { ib["port"] = json!(http_port); ib["listen"] = json!(listen); }
                 _ => {}
             }
+            // Удаляем fakedns из sniffing.destOverride
+            if let Some(dest) = ib["sniffing"]["destOverride"].as_array_mut() {
+                dest.retain(|v| v.as_str() != Some("fakedns"));
+            }
         }
     }
 
     // Убираем весь sockopt из outbounds: tcpFastOpen требует прав администратора,
     // tcpcongestion/bbr и tcpKeepAliveIdle — Linux-only. На Windows всё это не нужно.
+    // ВАЖНО: после этого sockopt мы можем заново выставить interface для
+    // direct-outbound в TUN-режиме (см. ниже).
     if let Some(outbounds) = config["outbounds"].as_array_mut() {
         for ob in outbounds.iter_mut() {
             if let Some(stream) = ob["streamSettings"].as_object_mut() {
@@ -141,14 +175,58 @@ pub fn patch_xray_json(mut config: Value, socks_port: u16, http_port: u16, liste
         }
     }
 
+    // В TUN-режиме direct outbound получает streamSettings.sockopt.interface =
+    // имя physic-интерфейса. На Windows Xray реализует это через IP_UNICAST_IF
+    // (см. xray-core: transport/internet/sockopt_windows.go). Этот socket-option
+    // заставляет ОС маршрутизировать **этот конкретный сокет** через указанный
+    // интерфейс — минуя routing-таблицу. Без него direct-сокет Xray уходит
+    // через наш half-route 0.0.0.0/1 → TUN → tun2socks → Xray → direct → loop,
+    // что давало ~20с задержки на первом запросе.
+    if tun_mode {
+        if let Some(iface) = physic_iface {
+            if let Some(outbounds) = config["outbounds"].as_array_mut() {
+                for ob in outbounds.iter_mut() {
+                    if ob.get("tag").and_then(|v| v.as_str()) == Some("direct") {
+                        // Удаляем устаревший sendThrough (на Windows не работает)
+                        if let Some(obj) = ob.as_object_mut() {
+                            obj.remove("sendThrough");
+                        }
+                        let stream = ob
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("streamSettings".to_string())
+                            .or_insert_with(|| json!({}));
+                        if !stream.is_object() {
+                            *stream = json!({});
+                        }
+                        let stream_obj = stream.as_object_mut().unwrap();
+                        stream_obj.insert(
+                            "sockopt".to_string(),
+                            json!({ "interface": iface }),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Патчим routing.rules
     if let Some(rules) = config["routing"]["rules"].as_array_mut() {
-        let mut keep = Vec::with_capacity(rules.len());
+        let mut keep = Vec::with_capacity(rules.len() + 1);
         for rule in rules.drain(..) {
             if let Some(patched) = patch_rule(rule) {
                 keep.push(patched);
             }
         }
+        // Финальное правило: всё что не сматчилось — гарантированно через VPN.
+        // Без него Xray может неожиданно отправить трафик в первый outbound
+        // или применить скрытые domainStrategy-правила, что в TUN-режиме
+        // приводит к loop через TUN-интерфейс.
+        keep.push(json!({
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": "proxy"
+        }));
         *rules = keep;
     }
 

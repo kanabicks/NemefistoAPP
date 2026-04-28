@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:helper": "cargo build --manifest-path src-tauri/Cargo.toml --bin nemefisto-helper",
+    "predev": "npm run dev:helper",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

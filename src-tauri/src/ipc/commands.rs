@@ -1,9 +1,12 @@
 //! Tauri commands, доступные из фронтенда через `invoke`.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::State;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use crate::config::subscription::fetch_and_parse;
 use crate::config::xray_config;
@@ -12,6 +15,82 @@ use crate::platform;
 use crate::vpn::{find_free_port, ping_entry, XrayState};
 
 const TUN2SOCKS_FILENAME: &str = "tun2socks-x86_64-pc-windows-msvc.exe";
+
+/// Прогревочный запрос через SOCKS5 чтобы заставить Xray установить
+/// upstream-соединение с VPN-сервером до того как мы перенаправим в TUN
+/// весь системный трафик. Без прогрева первый user-запрос ждёт burstObservatory
+/// probes + REALITY-handshake = 10-20 секунд видимой задержки.
+///
+/// Цикл: TCP-connect к 127.0.0.1:socks_port → SOCKS5 NoAuth handshake →
+/// CONNECT cloudflare.com:443 → читаем ответ. Xray в этот момент:
+///   1. Запускает burstObservatory probes (если есть balancer).
+///   2. Выбирает best outbound.
+///   3. Делает REALITY/TLS handshake к VPN-серверу.
+///   4. Открывает upstream TCP к cloudflare.com через VPN.
+///   5. Возвращает SOCKS5 success.
+///
+/// После этого вся машинерия Xray «горячая» и user-запросы идут мгновенно.
+async fn warmup_xray(socks_port: u16) -> Result<(), String> {
+    // Ждём пока Xray откроет 1080 (он стартует асинхронно)
+    let connect_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut stream = loop {
+        match TcpStream::connect(("127.0.0.1", socks_port)).await {
+            Ok(s) => break s,
+            Err(_) if tokio::time::Instant::now() < connect_deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => return Err(format!("Xray не открыл SOCKS5 за 3с: {e}")),
+        }
+    };
+
+    // SOCKS5 handshake (no auth)
+    let timeout = Duration::from_secs(15);
+    tokio::time::timeout(timeout, async {
+        stream.write_all(&[0x05, 0x01, 0x00]).await
+            .map_err(|e| format!("write greeting: {e}"))?;
+        let mut greet_resp = [0u8; 2];
+        stream.read_exact(&mut greet_resp).await
+            .map_err(|e| format!("read greeting: {e}"))?;
+        if greet_resp != [0x05, 0x00] {
+            return Err(format!("неожиданный greeting-ответ: {greet_resp:?}"));
+        }
+
+        // CONNECT 1.1.1.1:443 (используем IP чтобы не зависеть от DNS)
+        let request: [u8; 10] = [
+            0x05,                           // SOCKS5
+            0x01,                           // CONNECT
+            0x00,                           // reserved
+            0x01,                           // ATYP = IPv4
+            1, 1, 1, 1,                     // 1.1.1.1
+            0x01, 0xBB,                     // port 443
+        ];
+        stream.write_all(&request).await
+            .map_err(|e| format!("write connect: {e}"))?;
+        let mut resp_head = [0u8; 4];
+        stream.read_exact(&mut resp_head).await
+            .map_err(|e| format!("read connect-response head: {e}"))?;
+        if resp_head[1] != 0x00 {
+            return Err(format!("SOCKS5 CONNECT failed: код {}", resp_head[1]));
+        }
+        // Дочитываем addr+port (зависит от ATYP в resp_head[3])
+        let to_skip = match resp_head[3] {
+            0x01 => 4 + 2, // IPv4
+            0x03 => {
+                let mut len_buf = [0u8; 1];
+                stream.read_exact(&mut len_buf).await
+                    .map_err(|e| format!("read domain len: {e}"))?;
+                len_buf[0] as usize + 2
+            }
+            0x04 => 16 + 2, // IPv6
+            _ => return Err(format!("неожиданный ATYP в response: {}", resp_head[3])),
+        };
+        let mut skip_buf = vec![0u8; to_skip];
+        let _ = stream.read_exact(&mut skip_buf).await;
+        Ok(())
+    })
+    .await
+    .map_err(|_| format!("warmup-запрос не завершился за {}с", timeout.as_secs()))?
+}
 
 // ─── Helper-функции для TUN-режима ────────────────────────────────────────────
 
@@ -162,6 +241,17 @@ pub async fn connect(
     let default_socks = find_free_port(1080);
     let default_http = find_free_port(1087);
     let listen = if allow_lan.unwrap_or(false) { "0.0.0.0" } else { "127.0.0.1" };
+    let tun_mode = mode == "tun";
+
+    // Для TUN-режима получаем имя физического интерфейса. В Xray-конфиге
+    // direct-outbound получит `streamSettings.sockopt.interface = <name>` —
+    // на Windows это `IP_UNICAST_IF`, который форсит маршрутизацию сокета
+    // через указанный интерфейс минуя routing-таблицу (то есть мимо TUN).
+    let physic_iface = if tun_mode {
+        platform::network::get_default_route_interface_name()
+    } else {
+        None
+    };
 
     // Для TUN-режима готовим параметры до старта Xray, чтобы при ошибке
     // (нет helper-а / tun2socks) не пришлось гасить уже запущенный процесс.
@@ -191,11 +281,20 @@ pub async fn connect(
             default_socks,
             default_http,
             listen,
+            tun_mode,
+            physic_iface.as_deref(),
         );
         (patched, default_socks, default_http)
     } else {
-        let cfg = xray_config::build(&entry, default_socks, default_http, listen)
-            .map_err(|e| e.to_string())?;
+        let cfg = xray_config::build(
+            &entry,
+            default_socks,
+            default_http,
+            listen,
+            tun_mode,
+            physic_iface.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
         (cfg.json, cfg.socks_port, cfg.http_port)
     };
 
@@ -209,6 +308,20 @@ pub async fn connect(
                 .map_err(|e| e.to_string())?;
         }
         "tun" => {
+            // Прогреваем Xray ДО перенаправления трафика в TUN. Иначе первый
+            // user-запрос ждёт burstObservatory + REALITY handshake (10-20с).
+            if let Err(e) = warmup_xray(socks_port).await {
+                eprintln!("[connect] warmup_xray не удался ({e}) — продолжаем, первый запрос может тормозить");
+            }
+
+            // Гарантируем что helper-сервис запущен. Если нет — будет UAC
+            // и авто-установка. После первого согласия пользователя сервис
+            // ставится с AutoStart и больше UAC не запрашивает.
+            if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+                let _ = xray.stop();
+                return Err(format!("helper-сервис недоступен: {e}"));
+            }
+
             // tun_params гарантировано Some — установлено выше
             let (server_host, tun2socks_path) = tun_params.unwrap();
             if let Err(e) = platform::helper_client::tun_start(
@@ -222,7 +335,7 @@ pub async fn connect(
                 // Откатываем Xray если TUN не поднялся
                 let _ = xray.stop();
                 return Err(format!(
-                    "TUN-режим не запустился: {e}\n\nВозможные причины:\n• helper-сервис не установлен (admin: nemefisto-helper.exe install)\n• сервис остановлен (services.msc → NemefistoHelper)\n• tun2socks не нашёл wintun.dll (должен быть рядом с tun2socks.exe)"
+                    "TUN-режим не запустился: {e}\n\nПроверьте services.msc → NemefistoHelper, и что tun2socks.exe + wintun.dll лежат рядом друг с другом."
                 ));
             }
         }

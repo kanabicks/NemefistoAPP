@@ -46,7 +46,12 @@ impl Timing {
     }
 }
 
-const TUN_NAME: &str = "nemefisto";
+/// Префикс имени TUN-адаптера. Полное имя — `<префикс><pid>` чтобы
+/// каждый новый запуск получал свежий уникальный адаптер. Так zombie
+/// от kill -9 (или предыдущего падения) не блокирует создание нового:
+/// WinTUN ругается «interface ... not ready» если есть orphan с таким
+/// же именем, а с уникальным — конфликта нет.
+const TUN_NAME_PREFIX: &str = "nemefisto-";
 /// Адрес TUN-интерфейса. На Windows назначается helper-ом через
 /// `CreateUnicastIpAddressEntry` — tun2socks этого не делает (Windows-only
 /// особенность, на Linux/Darwin tun2socks назначает сам через ioctl).
@@ -61,10 +66,14 @@ const HOST_MASK: &str = "255.255.255.255";
 struct State {
     child: Child,
     server_ip: String,
+    /// DNS-IP для bypass-route — чтобы при stop удалить тот же что мы добавили.
+    dns: String,
     /// Сохраняем оригинальный default-route чтобы ssh-debugging знал что было.
     /// Удалять / восстанавливать его не нужно (мы используем half-routes).
     original: DefaultRoute,
     tun_index: u32,
+    /// Полное имя TUN-адаптера для текущей сессии (например `nemefisto-12345`).
+    tun_name: String,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::const_new(None);
@@ -87,6 +96,10 @@ pub async fn start(
     if !tun2socks_exe.is_file() {
         bail!("tun2socks не найден по пути: {tun2socks_path}");
     }
+
+    // Уникальное имя TUN-адаптера на эту сессию (не конфликтует с zombie).
+    let tun_name = format!("{TUN_NAME_PREFIX}{}", std::process::id());
+    eprintln!("[helper-tun] имя TUN-адаптера: {tun_name}");
 
     // 2. Резолв server_ip
     let server_ip = routing::resolve_host_ipv4(server_host)
@@ -114,22 +127,35 @@ pub async fn start(
         .with_context(|| format!("создание {}", log_path.display()))?;
     let log_clone = log_file.try_clone().context("клонирование файлового хендла")?;
 
+    // 4a. Best-effort cleanup всех orphan-адаптеров с нашим префиксом.
+    //     Если PowerShell-cmdlet есть — удалит мусор от прошлых падений.
+    //     Если нет (некоторые сборки Windows) — silently fails, и мы всё
+    //     равно не зависнем потому что новый адаптер получает уникальное имя.
+    if let Err(e) = routing::cleanup_orphan_tun(&format!("{TUN_NAME_PREFIX}*")).await {
+        eprintln!("[helper-tun] cleanup_orphan_tun failed (non-fatal): {e:#}");
+    }
+    t.step("orphan adapter cleanup (best-effort)");
+
     // 5. Спавн tun2socks. Лог пишем в файл — увидим причину если интерфейс
     //    не поднимется. Уровень debug для диагностики.
     eprintln!(
         "[helper-tun] запускаем tun2socks → socks5://127.0.0.1:{socks_port}, лог: {}",
         log_path.display()
     );
+    // ВНИМАНИЕ: НЕ ПЕРЕДАЁМ `-interface` сюда. tun2socks подключается
+    // только к 127.0.0.1:1080 (Xray SOCKS5), это loopback и не зависит от
+    // default route. А с `-interface Ethernet` tun2socks вешает на свой
+    // UDP-сокет `IP_UNICAST_IF=Ethernet` — и Windows возвращает ошибку
+    // `wsasendto: address not valid in its context` при попытке отправить
+    // на 127.0.0.1 (loopback недостижим через Ethernet). Это рушит ВСЁ
+    // UDP-проксирование, включая DNS — каждый DNS-запрос терялся, Windows
+    // resolver уходил в retry-цикл и давал ~15с задержку на первом запросе.
     let child = Command::new(tun2socks_exe)
         .args([
             "-device",
-            &format!("tun://{TUN_NAME}"),
+            &format!("tun://{tun_name}"),
             "-proxy",
             &format!("socks5://127.0.0.1:{socks_port}"),
-            // Имя физического интерфейса — для bypass самого tun2socks
-            // (чтобы он подключался к Xray не через свой же TUN).
-            "-interface",
-            &original.interface_name,
             "-loglevel",
             "debug",
         ])
@@ -142,7 +168,7 @@ pub async fn start(
 
     // 6. Ждём появления TUN-интерфейса (15 сек — впервые WinTUN может
     //    инициализироваться долго).
-    let tun_index = match routing::wait_for_interface(TUN_NAME, Duration::from_secs(15)).await {
+    let tun_index = match routing::wait_for_interface(&tun_name, Duration::from_secs(15)).await {
         Ok(idx) => idx,
         Err(e) => {
             kill_child(child).await;
@@ -153,7 +179,7 @@ pub async fn start(
             return Err(e).context(format!("TUN не поднялся за 15 сек. tun2socks log:\n{log_tail}"));
         }
     };
-    t.step(&format!("wait_for_interface ({TUN_NAME}, ifIndex {tun_index})"));
+    t.step(&format!("wait_for_interface ({tun_name}, ifIndex {tun_index})"));
 
     // 6a. Назначить IP на TUN — без него ОС считает интерфейс «без подсети»
     //     и `CreateIpForwardEntry2` для NextHop=198.18.0.1 возвращает 1168.
@@ -189,6 +215,25 @@ pub async fn start(
     }
     t.step("bypass-route added");
 
+    // 6a. Bypass-route на DNS-сервер тоже через старый gateway. Иначе
+    //     DNS-запросы идут через TUN → tun2socks → Xray → VPN-сервер,
+    //     и при первом коннекте Xray ещё не успел раскачаться, в итоге
+    //     Windows resolver висит ~15 секунд по timeout. Bypass даёт
+    //     быстрый resolve ценой DNS-leak (стандартная практика VPN).
+    if let Err(e) = routing::add_route(
+        dns,
+        HOST_MASK,
+        &original.gateway,
+        1,
+        Some(original.if_index),
+    )
+    .await
+    {
+        eprintln!("[helper-tun] bypass на DNS не удался ({e:#}) — продолжаем без него");
+    } else {
+        t.step("bypass-route на DNS added");
+    }
+
     // 7. Half-default routes через TUN
     if let Err(e) = routing::add_route(HALF_LOW_DST, HALF_MASK, TUN_GATEWAY, 1, Some(tun_index)).await {
         let _ = full_route_cleanup(&server_ip).await;
@@ -202,17 +247,28 @@ pub async fn start(
     }
     t.step("half-routes added");
 
-    // 8. DNS на TUN (не fatal — DNS leak возможен но трафик пойдёт)
+    // 8. DNS на TUN-интерфейсе. На physic не трогаем — это конфликтовало
+    //     с Windows-resolver и удлиняло первый запрос. Bypass-route на DNS
+    //     (см. шаг 6a) уже даёт быстрый отклик на 1.1.1.1 минуя VPN.
     if let Err(e) = routing::set_dns(tun_index, dns).await {
         eprintln!("[helper-tun] DNS на TUN не выставился ({e:#}) — продолжаем без него");
     }
-    t.step("dns set");
+    t.step("dns set on TUN");
+
+    // 8b. Сбросить кеш резолвера: иначе старые ответы будут пытаться
+    //     достучаться до cached IP через теперь-уже-другой routing.
+    if let Err(e) = routing::flush_dns_cache().await {
+        eprintln!("[helper-tun] flush_dns_cache failed: {e:#}");
+    }
+    t.step("dns cache flushed");
 
     *g = Some(State {
         child,
         server_ip,
+        dns: dns.to_string(),
         original,
         tun_index,
+        tun_name,
     });
 
     eprintln!("[helper-tun] TUN-режим активен (полное время старта см. выше)");
@@ -227,12 +283,16 @@ pub async fn stop() -> Result<()> {
 
     // 1. Сначала маршруты — чтобы трафик уже шёл напрямую пока убиваем tun2socks.
     let _ = full_route_cleanup(&state.server_ip).await;
+    let _ = routing::delete_route(&state.dns, HOST_MASK).await;
 
     // 2. Снять IP с TUN (если интерфейс ещё существует).
     let tun_ip: std::net::Ipv4Addr = TUN_GATEWAY.parse().unwrap();
     let _ = routing::unassign_ip(state.tun_index, tun_ip, TUN_PREFIX_LEN).await;
 
-    // 3. Убить tun2socks (он сам уберёт WinTUN-интерфейс).
+    // 3. Сбросить DNS-кеш чтобы старые ответы (через TUN-DNS) не зависли.
+    let _ = routing::flush_dns_cache().await;
+
+    // 4. Убить tun2socks (он сам уберёт WinTUN-интерфейс).
     kill_child(state.child).await;
 
     eprintln!("[helper-tun] TUN-режим остановлен");

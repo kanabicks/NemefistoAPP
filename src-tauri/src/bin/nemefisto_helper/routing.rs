@@ -482,3 +482,78 @@ pub async fn set_dns(if_index: u32, dns: &str) -> Result<()> {
     Ok(())
 }
 
+/// Вернуть DNS интерфейса в режим DHCP (подхватит DNS от роутера).
+pub async fn reset_dns_to_dhcp(if_index: u32) -> Result<()> {
+    let alias = alias_from_luid(luid_from_index(if_index)?)?;
+    let _ = AsyncCommand::new("netsh")
+        .args([
+            "interface",
+            "ipv4",
+            "set",
+            "dnsservers",
+            &alias,
+            "dhcp",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .context("netsh не запустился")?;
+    Ok(())
+}
+
+/// Сбросить DNS-кеш Windows-резолвера.
+///
+/// При активации TUN важно мгновенно очистить кеш: иначе Windows будет
+/// продолжать слать DNS-запросы по закешированным IP-адресам через
+/// инстанс resolver-а который привязан к старому интерфейсу, и эти
+/// запросы зависнут на 5-10 секунд пока не отвалятся по timeout.
+///
+/// Используем `ipconfig /flushdns` — нативный API `DnsFlushResolverCache`
+/// из dnsapi.dll не экспортирован в windows-sys.
+pub async fn flush_dns_cache() -> Result<()> {
+    let _ = AsyncCommand::new("ipconfig")
+        .args(["/flushdns"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .context("ipconfig /flushdns не запустился")?;
+    Ok(())
+}
+
+/// Удалить orphaned WinTUN-адаптер с указанным именем, если он остался от
+/// предыдущего запуска (например, после kill -9 tun2socks). Без cleanup-а
+/// новая попытка `Creating adapter` зависает на 15 секунд: WinTUN видит
+/// существующий адаптер с тем же именем и не может создать новый.
+///
+/// Реализация — через PowerShell: `Get-NetAdapter | Remove-NetAdapter`.
+/// WinTUN не экспортирует API для удаления адаптера по имени (только
+/// `WintunCloseAdapter` который удаляет открытый ранее handle), а нативные
+/// SetupAPI-вызовы для удаления PnP-устройства — большой объём кода.
+/// Один вызов PowerShell на старт TUN — приемлемая цена за надёжность.
+///
+/// Не падает если адаптера нет (SilentlyContinue). Удаляет ТОЛЬКО адаптер
+/// с указанным именем — чужие TUN-адаптеры (Happ, Outline, etc.) не трогаем.
+pub async fn cleanup_orphan_tun(name: &str) -> Result<()> {
+    // Защита от инъекции: имя адаптера должно быть только из ASCII-букв/цифр/
+    // дефисов/подчёркиваний/звёздочки (для wildcard `nemefisto-*`).
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '*')
+    {
+        bail!("недопустимое имя TUN-адаптера: {name:?}");
+    }
+    let script = format!(
+        "Get-NetAdapter -Name '{name}' -ErrorAction SilentlyContinue | Remove-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue"
+    );
+    let _ = AsyncCommand::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .context("powershell для cleanup_orphan_tun не запустился")?;
+    Ok(())
+}
+
