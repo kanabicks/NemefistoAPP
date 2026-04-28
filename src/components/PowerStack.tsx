@@ -1,4 +1,5 @@
 import { useVpnStore } from "../stores/vpnStore";
+import { PRESET_BUTTON_STYLE, useSettingsStore } from "../stores/settingsStore";
 import { MODE_LABEL, POWER_LABEL, STATUS_PILL } from "../lib/constants";
 import { PowerIcon } from "./icons";
 
@@ -16,6 +17,11 @@ export function PowerStack({ canConnect }: { canConnect: boolean }) {
   const httpPort = useVpnStore((s) => s.httpPort);
   const connect = useVpnStore((s) => s.connect);
   const disconnect = useVpnStore((s) => s.disconnect);
+  const buttonStyle = useSettingsStore((s) => s.buttonStyle);
+  const preset = useSettingsStore((s) => s.preset);
+  // Если активен пресет — стиль кнопки берётся из его таблицы
+  // (см. PRESET_BUTTON_STYLE в settingsStore).
+  const effectiveButtonStyle = preset === "none" ? buttonStyle : PRESET_BUTTON_STYLE[preset];
 
   const isBusy = status === "starting" || status === "stopping";
   const isRunning = status === "running";
@@ -37,7 +43,7 @@ export function PowerStack({ canConnect }: { canConnect: boolean }) {
 
       <button
         type="button"
-        className={`power-btn${isRunning ? " is-running" : ""}`}
+        className={`power-btn power-btn-${effectiveButtonStyle}${isRunning ? " is-running" : ""}`}
         disabled={isRunning ? isBusy : !canConnect}
         onClick={onClick}
         aria-label={isRunning ? "отключить" : "подключить"}

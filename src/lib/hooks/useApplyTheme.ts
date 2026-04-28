@@ -2,22 +2,31 @@ import { useEffect } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 
 /**
- * Синхронизирует значение `theme` из settings store с атрибутом
- * `data-theme` на <html>. CSS переменные в App.css переопределяются
- * по селектору `:root[data-theme="light"]`.
+ * Синхронизирует значение `theme` или `preset` из settings store с
+ * атрибутом на <html>. Один из двух взаимоисключающих:
+ *  - preset !== "none" → `data-preset="..."`, `data-theme` снят;
+ *  - иначе             → `data-theme="..."`, `data-preset` снят.
  *
- * Применяется в App.tsx один раз — реагирует на смену через store
- * автоматически.
+ * CSS переменные в App.css определены в `:root[data-theme="..."]` и
+ * `:root[data-preset="..."]` — пресет имеет ту же приоритет-структуру,
+ * но переопределяет более широкий набор переменных (палитра + glow + ...).
  */
 export function useApplyTheme() {
   const theme = useSettingsStore((s) => s.theme);
+  const preset = useSettingsStore((s) => s.preset);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const root = document.documentElement;
+    if (preset !== "none") {
+      root.dataset.preset = preset;
+      delete root.dataset.theme;
+    } else {
+      root.dataset.theme = theme;
+      delete root.dataset.preset;
+    }
     return () => {
-      // На размонтировании вернём дефолт. На практике приложение
-      // не размонтируется, но пусть без артефактов в HMR.
-      delete document.documentElement.dataset.theme;
+      delete root.dataset.theme;
+      delete root.dataset.preset;
     };
-  }, [theme]);
+  }, [theme, preset]);
 }

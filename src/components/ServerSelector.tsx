@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -23,6 +23,27 @@ export function ServerSelector() {
   const sort = useSettingsStore((s) => s.sort);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Delayed unmount: после клика «закрыть» rows должны отыграть leave-
+  // анимацию, прежде чем DOM удалится. drawerMounted держит элементы
+  // дополнительно ~CLOSE_DURATION_MS пока drawerOpen=false.
+  const [drawerMounted, setDrawerMounted] = useState(false);
+  const isClosing = drawerMounted && !drawerOpen;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (drawerOpen) {
+      setDrawerMounted(true);
+      // Принудительно сбрасываем scroll в 0 на следующий tick — иначе
+      // browser scroll-anchoring мог уже прокрутить вниз чтобы
+      // «удержаться» за анимирующийся первый row, и пользователь
+      // не увидит его.
+      requestAnimationFrame(() => {
+        if (listRef.current) listRef.current.scrollTop = 0;
+      });
+    } else if (drawerMounted) {
+      const t = setTimeout(() => setDrawerMounted(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [drawerOpen, drawerMounted]);
 
   const isBusy = status === "starting" || status === "stopping";
   const isRunning = status === "running";
@@ -80,52 +101,67 @@ export function ServerSelector() {
         )}
       </button>
 
-      {drawerOpen && (
-        <div style={{ marginTop: 8 }}>
-          <div className="server-list-head">
-            <span>{servers.length} nodes</span>
-            <button
-              type="button"
-              onClick={() => pingAll()}
-              disabled={pingsLoading}
-              className={`ping-refresh${pingsLoading ? " is-loading" : ""}`}
-              title="обновить пинги"
-              aria-label="обновить пинги"
-            >
-              ↻
-            </button>
-          </div>
-          <div className="server-list">
-            {sortedIndices.map((i) => {
-              const s = servers[i];
-              return (
-                <div
-                  key={i}
-                  className={
-                    "server-row" +
-                    (selectedIndex === i ? " is-selected" : "") +
-                    (isRunning ? " is-disabled" : "")
-                  }
-                  onClick={() => {
-                    if (isRunning) return;
-                    selectServer(i);
-                    setDrawerOpen(false);
-                  }}
+      {/* Drawer всегда в DOM — переключение через CSS-класс is-open даёт
+          плавный grid-rows transition (0fr → 1fr). Содержимое монтируется
+          только когда открыт — каскадная stagger-animation запускается
+          на каждое раскрытие, при закрытии rows резко уходят, но скрыты
+          overflow:hidden родителя. */}
+      <div
+        className={`server-drawer${drawerOpen ? " is-open" : ""}${
+          isClosing ? " is-closing" : ""
+        }`}
+      >
+        <div className="server-drawer-inner">
+          {drawerMounted && (
+            <>
+              <div className="server-list-head">
+                <span>{servers.length} nodes</span>
+                <button
+                  type="button"
+                  onClick={() => pingAll()}
+                  disabled={pingsLoading}
+                  className={`ping-refresh${pingsLoading ? " is-loading" : ""}`}
+                  title="обновить пинги"
+                  aria-label="обновить пинги"
                 >
-                  <span className="server-row-num">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="server-row-name">{s.name}</span>
-                  <PingBadge ms={pings[i]} loading={pingsLoading} />
-                  {selectedIndex === i && (
-                    <span className="server-row-check">✓</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  ↻
+                </button>
+              </div>
+              <div className="server-list" ref={listRef}>
+                {sortedIndices.map((i, idx) => {
+                  const s = servers[i];
+                  return (
+                    <div
+                      key={i}
+                      className={
+                        "server-row" +
+                        (selectedIndex === i ? " is-selected" : "") +
+                        (isRunning ? " is-disabled" : "")
+                      }
+                      // --i задаёт animation-delay через CSS — каскадное появление.
+                      style={{ ["--i" as string]: idx } as React.CSSProperties}
+                      onClick={() => {
+                        if (isRunning) return;
+                        selectServer(i);
+                        setDrawerOpen(false);
+                      }}
+                    >
+                      <span className="server-row-num">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span className="server-row-name">{s.name}</span>
+                      <PingBadge ms={pings[i]} loading={pingsLoading} />
+                      {selectedIndex === i && (
+                        <span className="server-row-check">✓</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </>
   );
 }

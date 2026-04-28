@@ -133,13 +133,18 @@ function App() {
             {errorMessage && (
               <pre className="hero-error grid-error">{errorMessage}</pre>
             )}
-            <div className="grid-mode">
-              <ModeSegment
-                mode={mode}
-                onChange={setMode}
-                disabled={isRunning || isBusy}
-              />
-            </div>
+            {/* ModeSegment скрыт пока подписка не добавлена — переключать
+                режим прокси/tun без серверов смысла нет, и Welcome card
+                с инструкцией читается чище без лишних элементов. */}
+            {servers.length > 0 && (
+              <div className="grid-mode">
+                <ModeSegment
+                  mode={mode}
+                  onChange={setMode}
+                  disabled={isRunning || isBusy}
+                />
+              </div>
+            )}
           </div>
 
           {/* Быстрый доступ в личный кабинет с главного экрана.

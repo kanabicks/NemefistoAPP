@@ -4,7 +4,12 @@ import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import {
   DEFAULT_USER_AGENT,
+  PRESET_BACKGROUND,
+  PRESET_BUTTON_STYLE,
   useSettingsStore,
+  type Background,
+  type ButtonStyle,
+  type Preset,
   type SortMode,
   type Theme,
 } from "../stores/settingsStore";
@@ -293,24 +298,103 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         {/* ── Интерфейс ────────────────────────────────────────────────── */}
         <section className="settings-section">
           <div className="settings-section-title">интерфейс</div>
+
+          {/* Пресет — отдельная ось настройки. Уникальные палитры,
+              недоступные через обычные «тема/фон/стиль». Когда выбран
+              любой кроме «без пресета» — селекты ниже становятся
+              недоступны (управляется пресетом). */}
           <div className="settings-row">
             <div>
-              <div className="settings-row-label">тема</div>
+              <div className="settings-row-label">пресет</div>
               <div className="settings-row-hint">
-                светлая или тёмная палитра приложения
+                готовая уникальная стилизация
               </div>
             </div>
             <select
               className="select-field"
-              value={s.theme}
-              onChange={(e) => s.set("theme", e.target.value as Theme)}
+              value={s.preset}
+              onChange={(e) => s.set("preset", e.target.value as Preset)}
             >
-              <option value="dark">тёмная</option>
-              <option value="light">светлая</option>
-              <option value="midnight">midnight</option>
-              <option value="sunset">sunset</option>
+              <option value="none">без пресета</option>
+              <option value="fluent">fluent</option>
+              <option value="cupertino">cupertino</option>
+              <option value="vice">vice</option>
+              <option value="arcade">arcade</option>
+              <option value="glacier">glacier</option>
             </select>
           </div>
+
+          {/* Если пресет активен, эти селекты — read-only с пометкой,
+              что значение задаёт пресет. Это сохраняет UX-понятность:
+              видно что и как переопределяется, а не «пропали настройки». */}
+          {(() => {
+            const presetActive = s.preset !== "none";
+            const effectiveBg = presetActive ? PRESET_BACKGROUND[s.preset] : s.background;
+            const effectiveStyle = presetActive ? PRESET_BUTTON_STYLE[s.preset] : s.buttonStyle;
+            const presetHint = "управляется пресетом";
+            return (
+              <>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">тема</div>
+                    <div className="settings-row-hint">
+                      {presetActive ? presetHint : "палитра приложения и кристалла"}
+                    </div>
+                  </div>
+                  <select
+                    className="select-field"
+                    value={s.theme}
+                    disabled={presetActive}
+                    onChange={(e) => s.set("theme", e.target.value as Theme)}
+                  >
+                    <option value="dark">тёмная</option>
+                    <option value="light">светлая</option>
+                    <option value="midnight">midnight</option>
+                    <option value="sunset">sunset</option>
+                    <option value="sand">sand</option>
+                  </select>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">фон</div>
+                    <div className="settings-row-hint">
+                      {presetActive ? presetHint : "3d-сцена за интерфейсом"}
+                    </div>
+                  </div>
+                  <select
+                    className="select-field"
+                    value={effectiveBg}
+                    disabled={presetActive}
+                    onChange={(e) => s.set("background", e.target.value as Background)}
+                  >
+                    <option value="crystal">кристалл</option>
+                    <option value="tunnel">тоннель</option>
+                    <option value="globe">глобус</option>
+                    <option value="particles">частицы</option>
+                  </select>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">стиль кнопки</div>
+                    <div className="settings-row-hint">
+                      {presetActive ? presetHint : "оформление главной кнопки connect"}
+                    </div>
+                  </div>
+                  <select
+                    className="select-field"
+                    value={effectiveStyle}
+                    disabled={presetActive}
+                    onChange={(e) => s.set("buttonStyle", e.target.value as ButtonStyle)}
+                  >
+                    <option value="glass">стекло</option>
+                    <option value="flat">плоский</option>
+                    <option value="neon">неон</option>
+                    <option value="metallic">металл</option>
+                  </select>
+                </div>
+              </>
+            );
+          })()}
         </section>
 
         {/* ── Туннель ──────────────────────────────────────────────────── */}
