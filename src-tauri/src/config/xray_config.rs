@@ -17,7 +17,10 @@ pub struct XrayConfig {
 }
 
 /// Построить конфиг Xray для заданного сервера и портов.
-pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16) -> Result<XrayConfig> {
+///
+/// `listen` — адрес для inbound (`"127.0.0.1"` для локального доступа,
+/// `"0.0.0.0"` если разрешён доступ из LAN).
+pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16, listen: &str) -> Result<XrayConfig> {
     let outbound = build_outbound(entry)
         .with_context(|| format!("ошибка построения outbound для «{}»", entry.name))?;
 
@@ -34,7 +37,7 @@ pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16) -> Result<Xray
         "inbounds": [
             {
                 "tag": "socks-in",
-                "listen": "127.0.0.1",
+                "listen": listen,
                 "port": socks_port,
                 "protocol": "socks",
                 "settings": {
@@ -48,7 +51,7 @@ pub fn build(entry: &ProxyEntry, socks_port: u16, http_port: u16) -> Result<Xray
             },
             {
                 "tag": "http-in",
-                "listen": "127.0.0.1",
+                "listen": listen,
                 "port": http_port,
                 "protocol": "http",
                 "settings": {},
@@ -115,14 +118,14 @@ const PRIVATE_CIDR: &[&str] = &[
 /// burstObservatory и leastLoad оставляются как есть — они работают на Windows.
 ///
 /// Возвращает пропатченный конфиг.
-pub fn patch_xray_json(mut config: Value, socks_port: u16, http_port: u16) -> Value {
-    // Обновляем порты inbounds
+pub fn patch_xray_json(mut config: Value, socks_port: u16, http_port: u16, listen: &str) -> Value {
+    // Обновляем порты + listen-адрес inbounds
     if let Some(arr) = config["inbounds"].as_array_mut() {
         for ib in arr.iter_mut() {
             let proto = ib["protocol"].as_str().unwrap_or("").to_string();
             match proto.as_str() {
-                "socks" => { ib["port"] = json!(socks_port); }
-                "http"  => { ib["port"] = json!(http_port); }
+                "socks" => { ib["port"] = json!(socks_port); ib["listen"] = json!(listen); }
+                "http"  => { ib["port"] = json!(http_port); ib["listen"] = json!(listen); }
                 _ => {}
             }
         }

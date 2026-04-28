@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { useSettingsStore } from "./settingsStore";
 
 export type VpnStatus =
   | "stopped"
@@ -60,11 +61,13 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     const { selectedIndex, mode } = get();
     if (selectedIndex === null) return;
 
+    const allowLan = useSettingsStore.getState().allowLan;
     set({ status: "starting", errorMessage: null });
     try {
       const result = await invoke<ConnectResult>("connect", {
         serverIndex: selectedIndex,
         mode,
+        allowLan,
       });
       set({
         status: "running",

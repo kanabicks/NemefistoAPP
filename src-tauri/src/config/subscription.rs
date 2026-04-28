@@ -26,20 +26,34 @@ impl SubscriptionState {
 
 /// Скачать подписку по URL и вернуть список серверов.
 ///
-/// UA `Happ/2.7.0` нужен чтобы провайдеры на базе Marzban отдавали
-/// массив готовых Xray-конфигов (с balancer + burstObservatory) вместо
-/// упрощённого base64-списка URI с псевдо-balancer-маркером.
-/// HWID должен быть зарегистрирован на стороне сервиса (Happ-овский
-/// идентификатор устройства).
-pub async fn fetch_and_parse(url: &str, hwid: &str) -> Result<Vec<ProxyEntry>> {
+/// `user_agent` — UA для запроса. По умолчанию `Happ/2.7.0` (так провайдеры
+/// на базе Marzban / RemnaWave отдают массив готовых Xray-конфигов).
+/// `hwid` — идентификатор устройства, шлётся в заголовке `x-hwid`. Сервер
+/// регистрирует новое устройство автоматически, если в подписке есть
+/// свободный HWID-слот. Если `send_hwid=false`, заголовок не шлётся.
+pub async fn fetch_and_parse(
+    url: &str,
+    hwid: &str,
+    user_agent: &str,
+    send_hwid: bool,
+) -> Result<Vec<ProxyEntry>> {
+    let ua = if user_agent.trim().is_empty() {
+        "Happ/2.7.0"
+    } else {
+        user_agent
+    };
+
     let client = reqwest::Client::builder()
-        .user_agent("Happ/2.7.0")
+        .user_agent(ua)
         .build()
         .context("не удалось создать HTTP-клиент")?;
 
-    let body = client
-        .get(url)
-        .header("x-hwid", hwid)
+    let mut req = client.get(url);
+    if send_hwid && !hwid.is_empty() {
+        req = req.header("x-hwid", hwid);
+    }
+
+    let body = req
         .send()
         .await
         .context("ошибка HTTP-запроса")?

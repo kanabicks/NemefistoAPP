@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { useSettingsStore } from "./settingsStore";
 
 export type ProxyEntry = {
   name: string;
@@ -11,6 +12,9 @@ export type ProxyEntry = {
 
 type SubscriptionStore = {
   servers: ProxyEntry[];
+  /** Пинги по индексам серверов: ms или null если offline / timeout. */
+  pings: (number | null)[];
+  pingsLoading: boolean;
   loading: boolean;
   error: string | null;
   url: string;
@@ -23,10 +27,17 @@ type SubscriptionStore = {
   loadDeviceHwid: () => Promise<void>;
   fetchSubscription: () => Promise<void>;
   loadCached: () => Promise<void>;
+  pingAll: () => Promise<void>;
 };
 
 const URL_KEY = "nemefisto.subscription.url";
-const HWID_KEY = "nemefisto.subscription.hwid";
+// Версионируем ключ override-HWID: при апгрейде клиента старое значение
+// (когда мы вручную подсовывали Happ-овский HWID для отладки) автоматически
+// перестаёт читаться. Override — теперь advanced-only, по умолчанию используется
+// системный MachineGuid через get_hwid.
+const HWID_KEY = "nemefisto.subscription.hwid.v2";
+const HWID_KEY_LEGACY = "nemefisto.subscription.hwid";
+const MIGRATION_KEY = "nemefisto.migrated.v2";
 
 const loadFromStorage = (key: string): string => {
   try {
@@ -44,8 +55,24 @@ const saveToStorage = (key: string, value: string) => {
   }
 };
 
+// Чистим устаревший ключ override-HWID. Версионирование выше уже отрезает
+// его от чтения, но удаляем для гигиены localStorage.
+const runMigrations = () => {
+  try {
+    if (!localStorage.getItem(MIGRATION_KEY)) {
+      localStorage.removeItem(HWID_KEY_LEGACY);
+      localStorage.setItem(MIGRATION_KEY, "1");
+    }
+  } catch {
+    // приватный режим — пропускаем
+  }
+};
+runMigrations();
+
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   servers: [],
+  pings: [],
+  pingsLoading: false,
   loading: false,
   error: null,
   url: loadFromStorage(URL_KEY),
@@ -73,13 +100,18 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   async fetchSubscription() {
     const { url, hwid } = get();
     if (!url.trim()) return;
+    const { userAgent, sendHwid } = useSettingsStore.getState();
     set({ loading: true, error: null });
     try {
       const servers = await invoke<ProxyEntry[]>("fetch_subscription", {
         url,
         hwidOverride: hwid.trim() || null,
+        userAgent: userAgent.trim() || null,
+        sendHwid,
       });
-      set({ servers, loading: false });
+      set({ servers, pings: [], loading: false });
+      // Авто-пинг сразу после получения списка
+      void get().pingAll();
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
@@ -88,9 +120,23 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   async loadCached() {
     try {
       const servers = await invoke<ProxyEntry[]>("get_servers");
-      if (servers.length > 0) set({ servers });
+      if (servers.length > 0) {
+        set({ servers });
+        void get().pingAll();
+      }
     } catch {
       // кеш пустой — не ошибка
+    }
+  },
+
+  async pingAll() {
+    if (get().servers.length === 0) return;
+    set({ pingsLoading: true });
+    try {
+      const result = await invoke<(number | null)[]>("ping_servers");
+      set({ pings: result, pingsLoading: false });
+    } catch {
+      set({ pingsLoading: false });
     }
   },
 }));
