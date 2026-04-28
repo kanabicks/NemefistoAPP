@@ -7,7 +7,7 @@ VPN-клиент под Windows на базе **Xray-core**. Главная це
 
 Архитектура изначально готова к портированию на macOS, iOS и Android — UI отделён от системного слоя, всё Windows-специфичное вынесено в отдельный модуль.
 
-![stage](https://img.shields.io/badge/stage-3_of_7-white?style=flat-square&labelColor=050505)
+![stage](https://img.shields.io/badge/stage-4_of_7-white?style=flat-square&labelColor=050505)
 ![platform](https://img.shields.io/badge/platform-windows-white?style=flat-square&labelColor=050505)
 ![tauri](https://img.shields.io/badge/tauri-2.0-white?style=flat-square&labelColor=050505)
 ![xray](https://img.shields.io/badge/xray--core-26.x-white?style=flat-square&labelColor=050505)
@@ -53,23 +53,29 @@ VPN-клиент под Windows на базе **Xray-core**. Главная це
 **Шаги:**
 
 ```bash
-# 1. клонировать репо
+# 1. клонировать репо (бинарники xray / tun2socks / wintun.dll уже включены в src-tauri/binaries/)
 git clone https://github.com/kanabicks/NemefistoAPP.git
 cd NemefistoAPP
 
 # 2. поставить зависимости фронта
 npm install
 
-# 3. положить xray.exe в src-tauri/binaries/
-#    имя файла обязательно: xray-x86_64-pc-windows-msvc.exe
-#    скачать с https://github.com/XTLS/Xray-core/releases
-
-# 4. dev-режим (с hot reload)
+# 3. dev-режим (с hot reload)
 npm run tauri dev
 
-# 5. release-сборка
+# 4. release-сборка
 npm run tauri build
 ```
+
+**Для TUN-режима** (этап 4) дополнительно нужно установить helper-сервис от админа:
+
+```powershell
+# admin PowerShell после первой `cargo build`
+cd src-tauri\target\debug
+.\nemefisto-helper.exe install
+```
+
+Helper стартует автоматически при логине Windows и слушает named pipe `\\.\pipe\nemefisto-helper`. Управляет TUN-интерфейсом и системной маршрутизацией от SYSTEM, чтобы основное приложение не требовало UAC при каждом запуске. Удалить — `.\nemefisto-helper.exe uninstall`.
 
 После первого запуска приложение покажет сгенерированный **HWID** в секции «настройки → hwid устройства». Скопируй его и отправь в Telegram-бот провайдера для добавления устройства в подписку.
 
@@ -114,7 +120,7 @@ npm run tauri build
 - [x] **этап 1** — Xray sidecar: запуск/остановка по кнопке, тест через SOCKS5
 - [x] **этап 2** — парсинг подписок (base64 URI / Xray JSON / plain / Clash YAML)
 - [x] **этап 3** — конфиги Xray, REALITY, balancer + burstObservatory, system proxy
-- [ ] **этап 4** — TUN-режим (WinTUN + tun2socks для всего системного трафика)
+- [x] **этап 4** — TUN-режим: WinTUN + tun2socks через привилегированный helper-сервис
 - [ ] **этап 5** — state machine, прогрев при старте, оптимистичный UI
 - [x] **этап 6** *(частично)* — HWID на MachineGuid; осталось: Credential Manager, автозапуск, kill switch
 - [x] **этап 7** *(предварительно)* — UI в стиле nemefisto.online; осталось: пинги серверов, флаги, авто-выбор, плавные анимации

@@ -1,5 +1,7 @@
 //! Tauri commands, доступные из фронтенда через `invoke`.
 
+use std::path::PathBuf;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -8,6 +10,76 @@ use crate::config::xray_config;
 use crate::config::{HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
 use crate::vpn::{find_free_port, ping_entry, XrayState};
+
+const TUN2SOCKS_FILENAME: &str = "tun2socks-x86_64-pc-windows-msvc.exe";
+
+// ─── Helper-функции для TUN-режима ────────────────────────────────────────────
+
+/// Извлечь хост VPN-сервера из ProxyEntry для bypass-route.
+/// Логика повторяет `vpn::ping::extract_target`, но возвращает только host.
+fn extract_server_host(entry: &ProxyEntry) -> Option<String> {
+    if entry.protocol != "xray-json" {
+        if entry.server.is_empty() {
+            return None;
+        }
+        return Some(entry.server.clone());
+    }
+    let outbounds = entry.raw.get("outbounds")?.as_array()?;
+    for ob in outbounds {
+        let tag = ob.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+        if !tag.starts_with("proxy") {
+            continue;
+        }
+        let proto = ob.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+        let settings = ob.get("settings")?;
+        let host = match proto {
+            "vless" | "vmess" => settings
+                .get("vnext")?
+                .as_array()?
+                .first()?
+                .get("address")?
+                .as_str()?,
+            "trojan" | "shadowsocks" => settings
+                .get("servers")?
+                .as_array()?
+                .first()?
+                .get("address")?
+                .as_str()?,
+            _ => continue,
+        };
+        return Some(host.to_string());
+    }
+    None
+}
+
+/// Найти `tun2socks-x86_64-pc-windows-msvc.exe` либо рядом с текущим exe
+/// (release-сборка), либо в `<exe_dir>/../../binaries/` (dev из target/debug).
+fn resolve_tun2socks_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    // 1. Production: рядом с exe или в подпапке binaries/
+    for candidate in [
+        exe_dir.join(TUN2SOCKS_FILENAME),
+        exe_dir.join("binaries").join(TUN2SOCKS_FILENAME),
+    ] {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    // 2. Dev: target/{profile}/ → подняться до src-tauri/, оттуда в binaries/
+    let dev_path = exe_dir
+        .parent()? // target/{profile}
+        .parent()? // target
+        .join("binaries")
+        .join(TUN2SOCKS_FILENAME);
+    if dev_path.is_file() {
+        return Some(dev_path);
+    }
+
+    None
+}
 
 // ─── Результаты команд ────────────────────────────────────────────────────────
 
@@ -65,13 +137,12 @@ pub fn get_servers(sub: State<'_, SubscriptionState>) -> Vec<ProxyEntry> {
 /// Подключиться к серверу с указанным индексом в режиме `mode`.
 ///
 /// `mode` = "proxy" — системный SOCKS5 + HTTP прокси через реестр.
-/// `mode` = "tun"   — TUN-режим (Этап 4, пока не реализован).
-/// `allow_lan` — если `Some(true)`, inbound слушает 0.0.0.0 вместо 127.0.0.1
-/// (даёт другим устройствам в локальной сети использовать наш прокси).
+/// `mode` = "tun"   — TUN-режим через helper-сервис + tun2socks.
+/// `allow_lan` — если `Some(true)`, inbound слушает 0.0.0.0 вместо 127.0.0.1.
 ///
 /// Автоматически находит свободные порты начиная с 1080/1087.
 #[tauri::command]
-pub fn connect(
+pub async fn connect(
     server_index: usize,
     mode: String,
     allow_lan: Option<bool>,
@@ -92,10 +163,35 @@ pub fn connect(
     let default_http = find_free_port(1087);
     let listen = if allow_lan.unwrap_or(false) { "0.0.0.0" } else { "127.0.0.1" };
 
-    // xray-json: патчим внешний конфиг (порты, убираем geoip/geosite/observatory)
+    // Для TUN-режима готовим параметры до старта Xray, чтобы при ошибке
+    // (нет helper-а / tun2socks) не пришлось гасить уже запущенный процесс.
+    let tun_params = if mode == "tun" {
+        let server_host = extract_server_host(&entry).ok_or_else(|| {
+            "не удалось определить хост сервера для TUN-режима".to_string()
+        })?;
+        let tun2socks_path = resolve_tun2socks_path().ok_or_else(|| {
+            format!(
+                "{TUN2SOCKS_FILENAME} не найден ни рядом с приложением, ни в src-tauri/binaries/"
+            )
+        })?;
+        let path_str = tun2socks_path
+            .to_str()
+            .ok_or_else(|| "путь к tun2socks содержит не-UTF-8 символы".to_string())?
+            .to_string();
+        Some((server_host, path_str))
+    } else {
+        None
+    };
+
+    // xray-json: патчим внешний конфиг (порты + listen)
     // иначе: генерируем конфиг из ProxyEntry
     let (config_json, socks_port, http_port) = if entry.protocol == "xray-json" {
-        let patched = xray_config::patch_xray_json(entry.raw.clone(), default_socks, default_http, listen);
+        let patched = xray_config::patch_xray_json(
+            entry.raw.clone(),
+            default_socks,
+            default_http,
+            listen,
+        );
         (patched, default_socks, default_http)
     } else {
         let cfg = xray_config::build(&entry, default_socks, default_http, listen)
@@ -103,6 +199,8 @@ pub fn connect(
         (cfg.json, cfg.socks_port, cfg.http_port)
     };
 
+    // Запускаем Xray ДО поднятия TUN — иначе резолв server-а в Xray уйдёт
+    // через TUN, а tun2socks не сможет соединиться с upstream-Xray.
     xray.start_with_config(&app, &config_json, socks_port, http_port)?;
 
     match mode.as_str() {
@@ -111,9 +209,25 @@ pub fn connect(
                 .map_err(|e| e.to_string())?;
         }
         "tun" => {
-            return Err("TUN-режим будет реализован на Этапе 4".to_string());
+            // tun_params гарантировано Some — установлено выше
+            let (server_host, tun2socks_path) = tun_params.unwrap();
+            if let Err(e) = platform::helper_client::tun_start(
+                socks_port,
+                server_host,
+                "1.1.1.1".to_string(),
+                tun2socks_path,
+            )
+            .await
+            {
+                // Откатываем Xray если TUN не поднялся
+                let _ = xray.stop();
+                return Err(format!(
+                    "TUN-режим не запустился: {e}\n\nВозможные причины:\n• helper-сервис не установлен (admin: nemefisto-helper.exe install)\n• сервис остановлен (services.msc → NemefistoHelper)\n• tun2socks не нашёл wintun.dll (должен быть рядом с tun2socks.exe)"
+                ));
+            }
         }
         other => {
+            let _ = xray.stop();
             return Err(format!("неизвестный режим: {other}"));
         }
     }
@@ -125,11 +239,25 @@ pub fn connect(
     })
 }
 
-/// Отключиться: остановить Xray и сбросить системный прокси.
+/// Отключиться: остановить TUN (если был активен), Xray и сбросить системный прокси.
+///
+/// Все три операции выполняются независимо: ошибка одной не отменяет других.
+/// `tun_stop` идемпотентен — игнорирует «не запущен» / «helper недоступен».
 #[tauri::command]
-pub fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
-    xray.stop()?;
-    platform::proxy::clear_system_proxy().map_err(|e| e.to_string())?;
+pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
+    // 1. TUN: всегда пытаемся; ошибки тихо проглатываем (helper может не стоять)
+    let _ = platform::helper_client::tun_stop().await;
+
+    // 2. Xray + system proxy
+    let xray_err = xray.stop().err();
+    let proxy_err = platform::proxy::clear_system_proxy().err().map(|e| e.to_string());
+
+    if let Some(e) = xray_err {
+        return Err(e);
+    }
+    if let Some(e) = proxy_err {
+        return Err(e);
+    }
     Ok(())
 }
 

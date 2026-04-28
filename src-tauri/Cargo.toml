@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "vpn-client"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -29,9 +30,18 @@ base64 = "0.22.1"
 uuid = { version = "1.23.1", features = ["v4"] }
 anyhow = "1.0.102"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset"] }
-tokio = { version = "1", features = ["net", "time", "rt"] }
+tokio = { version = "1", features = ["net", "time", "rt", "io-util", "macros", "sync", "process"] }
 futures = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+windows-service = "0.7"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security"] }
+
+# Helper-сервис как отдельный исполняемый файл. Запускается с правами SYSTEM
+# через Windows Service Control Manager и слушает named pipe для команд от
+# user-mode Tauri-приложения (управление TUN-интерфейсом и routing).
+[[bin]]
+name = "nemefisto-helper"
+path = "src/bin/nemefisto_helper.rs"
 

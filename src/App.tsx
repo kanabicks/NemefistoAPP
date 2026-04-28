@@ -42,7 +42,7 @@ const POWER_LABEL: Record<VpnStatus, { text: string; cls: string }> = {
 
 const MODE_LABEL: Record<VpnMode, string> = {
   proxy: "системный прокси",
-  tun: "tun",
+  tun: "tun (весь трафик)",
 };
 
 // ── UTC clock ────────────────────────────────────────────────────────────────
@@ -993,7 +993,7 @@ function App() {
                 onClick={() => setMode(m)}
                 className={mode === m ? "is-active" : ""}
               >
-                {m === "proxy" ? "системный прокси" : "tun (скоро)"}
+                {m === "proxy" ? "системный прокси" : "tun"}
               </button>
             ))}
           </div>
