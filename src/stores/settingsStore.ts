@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 export type SortMode = "none" | "ping" | "name";
+export type Theme = "dark" | "light" | "midnight" | "sunset";
 
 export type Settings = {
   /** Авто-обновление подписки */
@@ -21,6 +22,8 @@ export type Settings = {
   sort: SortMode;
   /** Разрешить подключения из LAN (inbound listen 0.0.0.0) */
   allowLan: boolean;
+  /** Тема оформления (тёмная по умолчанию). */
+  theme: Theme;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -35,6 +38,7 @@ const DEFAULTS: Settings = {
   userAgent: DEFAULT_USER_AGENT,
   sort: "none",
   allowLan: false,
+  theme: "dark",
 };
 
 const KEY = "nemefisto.settings.v1";

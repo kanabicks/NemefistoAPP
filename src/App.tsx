@@ -3,9 +3,13 @@ import "./App.css";
 import { useVpnStore } from "./stores/vpnStore";
 import { useSubscriptionStore } from "./stores/subscriptionStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useApplyTheme } from "./lib/hooks/useApplyTheme";
 import { initDeepLinks } from "./lib/deepLinks";
 
 import { BackgroundLayers } from "./components/effects/BackgroundLayers";
+import { Scene3D } from "./components/effects/Scene3D";
+import { CustomCursor } from "./components/effects/CustomCursor";
+import { WideAmbient } from "./components/effects/WideAmbient";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
@@ -13,6 +17,7 @@ import { ServerSelector } from "./components/ServerSelector";
 import { ModeSegment } from "./components/ModeSegment";
 import { Footer } from "./components/Footer";
 import { SettingsPage } from "./components/SettingsPage";
+import { openDashboard } from "./lib/openExternal";
 
 /**
  * Корневой компонент. Координирует:
@@ -49,6 +54,9 @@ function App() {
   const autoRefreshHours = useSettingsStore((x) => x.autoRefreshHours);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Применяем активную тему (data-theme на <html>). См. App.css :root[data-theme="light"].
+  useApplyTheme();
 
   // ── Старт: refresh статуса VPN, кеш списка, HWID, on-open actions ─────────
   useEffect(() => {
@@ -102,26 +110,51 @@ function App() {
   return (
     <>
       <BackgroundLayers />
+      <Scene3D status={status} />
+      <WideAmbient />
+      <CustomCursor />
 
       <div className="app">
         <div className="frame">
           <Header onOpenSettings={() => setSettingsOpen(true)} />
 
-          <PowerStack canConnect={canConnect} />
+          {/* main-grid:
+              - на узких — flex column в порядке
+                power → servers/welcome → error → mode-seg;
+              - на широких (≥1024px) — две колонки через grid-template-areas:
+                слева power+mode, справа постоянно открытый server-list. */}
+          <div className="main-grid">
+            <div className="grid-power">
+              <PowerStack canConnect={canConnect} />
+            </div>
+            <div className="grid-servers">
+              {servers.length === 0 ? <Welcome /> : <ServerSelector />}
+            </div>
+            {errorMessage && (
+              <pre className="hero-error grid-error">{errorMessage}</pre>
+            )}
+            <div className="grid-mode">
+              <ModeSegment
+                mode={mode}
+                onChange={setMode}
+                disabled={isRunning || isBusy}
+              />
+            </div>
+          </div>
 
-          {servers.length === 0 ? <Welcome /> : <ServerSelector />}
-
-          {errorMessage && (
-            <pre className="hero-error" style={{ marginTop: 12 }}>
-              {errorMessage}
-            </pre>
+          {/* Быстрый доступ в личный кабинет с главного экрана.
+              Скрываем когда показан Welcome — там уже есть своя кнопка,
+              чтобы не было дублирования и UI помещался без скролла. */}
+          {servers.length > 0 && (
+            <button
+              type="button"
+              onClick={openDashboard}
+              className="dashboard-link"
+            >
+              <span>личный кабинет</span>
+              <span className="dashboard-link-arrow">→</span>
+            </button>
           )}
-
-          <ModeSegment
-            mode={mode}
-            onChange={setMode}
-            disabled={isRunning || isBusy}
-          />
 
           <Footer />
         </div>

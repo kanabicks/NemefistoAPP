@@ -6,6 +6,7 @@ import {
   DEFAULT_USER_AGENT,
   useSettingsStore,
   type SortMode,
+  type Theme,
 } from "../stores/settingsStore";
 import { APP_VERSION } from "../lib/constants";
 import { openDashboard, openSupport } from "../lib/openExternal";
@@ -294,20 +295,20 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           <div className="settings-section-title">интерфейс</div>
           <div className="settings-row">
             <div>
-              <div className="settings-row-label">язык</div>
-              <div className="settings-row-hint">пока только русский</div>
-            </div>
-            <select className="select-field" disabled value="ru">
-              <option value="ru">русский</option>
-            </select>
-          </div>
-          <div className="settings-row">
-            <div>
               <div className="settings-row-label">тема</div>
-              <div className="settings-row-hint">только тёмная</div>
+              <div className="settings-row-hint">
+                светлая или тёмная палитра приложения
+              </div>
             </div>
-            <select className="select-field" disabled value="dark">
+            <select
+              className="select-field"
+              value={s.theme}
+              onChange={(e) => s.set("theme", e.target.value as Theme)}
+            >
               <option value="dark">тёмная</option>
+              <option value="light">светлая</option>
+              <option value="midnight">midnight</option>
+              <option value="sunset">sunset</option>
             </select>
           </div>
         </section>
@@ -327,29 +328,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               on={s.allowLan}
               onChange={(v) => s.set("allowLan", v)}
             />
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-label">фрагментация TCP</div>
-              <div className="settings-row-hint">этап 5 · скоро</div>
-            </div>
-            <Toggle on={false} onChange={() => {}} disabled />
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-label">мультиплексор (mux)</div>
-              <div className="settings-row-hint">этап 5 · скоро</div>
-            </div>
-            <Toggle on={false} onChange={() => {}} disabled />
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-label">предпочитаемый IP</div>
-              <div className="settings-row-hint">этап 5 · скоро</div>
-            </div>
-            <select className="select-field" disabled value="ipv4">
-              <option value="ipv4">IPv4</option>
-            </select>
           </div>
         </section>
 
