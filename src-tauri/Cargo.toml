@@ -29,3 +29,6 @@ uuid = { version = "1.23.1", features = ["v4"] }
 anyhow = "1.0.102"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset"] }
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+

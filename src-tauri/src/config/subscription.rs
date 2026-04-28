@@ -25,9 +25,15 @@ impl SubscriptionState {
 }
 
 /// Скачать подписку по URL и вернуть список серверов.
+///
+/// UA `Happ/2.7.0` нужен чтобы провайдеры на базе Marzban отдавали
+/// массив готовых Xray-конфигов (с balancer + burstObservatory) вместо
+/// упрощённого base64-списка URI с псевдо-balancer-маркером.
+/// HWID должен быть зарегистрирован на стороне сервиса (Happ-овский
+/// идентификатор устройства).
 pub async fn fetch_and_parse(url: &str, hwid: &str) -> Result<Vec<ProxyEntry>> {
     let client = reqwest::Client::builder()
-        .user_agent("NemefistoVPN/1.0")
+        .user_agent("Happ/2.7.0")
         .build()
         .context("не удалось создать HTTP-клиент")?;
 
@@ -43,14 +49,33 @@ pub async fn fetch_and_parse(url: &str, hwid: &str) -> Result<Vec<ProxyEntry>> {
         .await
         .context("не удалось прочитать тело ответа")?;
 
-    // Основной путь: base64-список URI
+    // 1. Xray JSON конфиг — приоритетнее всего, чтобы случайно
+    //    не распарсить JSON как base64. Может быть как одиночным объектом,
+    //    так и массивом (Happ-формат подписки).
+    let head = body.trim_start();
+    if head.starts_with('{') || head.starts_with('[') {
+        if let Ok(entries) = parse_xray_json(&body) {
+            if !entries.is_empty() {
+                return Ok(entries);
+            }
+        }
+    }
+
+    // 2. base64-список URI
     if let Ok(entries) = parse_base64_uri_list(&body) {
         if !entries.is_empty() {
             return Ok(entries);
         }
     }
 
-    // Fallback: Clash YAML
+    // 3. Plain text URI list (по одному URI на строку)
+    if let Ok(entries) = parse_plain_uri_list(&body) {
+        if !entries.is_empty() {
+            return Ok(entries);
+        }
+    }
+
+    // 4. Fallback: Clash YAML
     parse_clash_yaml(&body)
 }
 
@@ -269,6 +294,61 @@ fn url_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
+// ─── plain text URI list ──────────────────────────────────────────────────────
+
+fn parse_plain_uri_list(text: &str) -> Result<Vec<ProxyEntry>> {
+    let entries: Vec<ProxyEntry> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| parse_proxy_uri(l).ok())
+        .collect();
+
+    if entries.is_empty() {
+        bail!("нет URI в plain text");
+    }
+    Ok(entries)
+}
+
+// ─── Xray JSON конфиг as-is ───────────────────────────────────────────────────
+
+/// Парсит Xray JSON: либо одиночный объект-конфиг, либо массив таких объектов.
+/// Каждый конфиг становится отдельным ProxyEntry с name = `remarks`.
+fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
+    let json: serde_json::Value =
+        serde_json::from_str(text).context("не удалось распарсить Xray JSON")?;
+
+    let configs: Vec<serde_json::Value> = match json {
+        serde_json::Value::Array(arr) => arr,
+        obj @ serde_json::Value::Object(_) => vec![obj],
+        _ => bail!("Xray JSON: ожидался объект или массив объектов"),
+    };
+
+    let entries: Vec<ProxyEntry> = configs
+        .into_iter()
+        .filter(|c| c.get("outbounds").is_some() || c.get("inbounds").is_some())
+        .enumerate()
+        .map(|(i, cfg)| {
+            let name = cfg["remarks"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Xray config #{}", i + 1));
+            ProxyEntry {
+                name,
+                protocol: "xray-json".to_string(),
+                server: "127.0.0.1".to_string(),
+                port: 0,
+                raw: cfg,
+            }
+        })
+        .collect();
+
+    if entries.is_empty() {
+        bail!("в Xray JSON нет ни одного конфига с inbounds/outbounds");
+    }
+    Ok(entries)
 }
 
 // ─── Clash YAML fallback ──────────────────────────────────────────────────────

@@ -1,8 +1,5 @@
-//! VPN-логика: state machine коннекта, управление Xray sidecar и TUN.
-//!
-//! На Этапе 1 здесь только обёртка над Xray-процессом. На Этапе 5 модуль
-//! расширится до полноценной state machine (Idle → Warming → Ready → ...).
+//! VPN-логика: управление Xray sidecar, поиск свободных портов.
 
 mod xray;
 
-pub use xray::XrayState;
+pub use xray::{find_free_port, XrayState};
