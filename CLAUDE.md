@@ -64,3 +64,163 @@
 - **Этап 5**: State machine коннекта, прогрев при старте, оптимистичный UI.
 - **Этап 6**: Безопасное хранение конфигов (Credential Manager), автозапуск, kill switch, обработка смены сети.
 - **Этап 7**: Шлифовка UX — анимации кнопки, пинги серверов, автовыбор лучшего, обработка ошибок понятным языком.
+## Этап 8 — Двухядерная архитектура и server-driven config
+
+**Цель**: уникальная фича приложения — два VPN-движка на выбор + конфигурация
+дефолтов через HTTP-заголовки подписки + per-process routing.
+
+### Архитектура движков
+
+- **Xray** — текущий движок. Сильные стороны: Reality / Vision / XHTTP,
+  низколатентный обход DPI.
+- **Mihomo** (форк Clash Meta) — добавляется. Сильные стороны: Hysteria2 /
+  Tuic / AnyTLS / WireGuard, гибкий routing, нативный per-process matcher.
+
+Один пользователь использует **одно ядро на сессию**. Выбор:
+1. Из заголовка `X-Nemefisto-Engine` подписки;
+2. Иначе из настроек пользователя;
+3. По дефолту Xray.
+
+Серверы из подписки помечаются полем `engine_compat`. Если выбранное ядро
+несовместимо с сервером — UI показывает предупреждение и предлагает
+переключить движок.
+
+### Универсальный парсер подписок
+
+`src-tauri/src/config/subscription.rs` распознаёт:
+- base64-список ссылок (vless / vmess / trojan / ss / hysteria2 / tuic);
+- raw текстовый список ссылок (по строке);
+- готовый Xray JSON-массив (Marzban-style — UA `Happ/2.7.0`);
+- готовый Mihomo YAML-конфиг;
+- mixed формат (base64 со смесью).
+
+Любая запись приводится к единому `ProxyEntry` с маркером совместимости
+с движками.
+
+### Server-driven config (HTTP-заголовки)
+
+При запросе подписки сервер может вернуть заголовки, которые задают
+**defaults** для клиента. Все заголовки опциональны, клиент игнорирует
+неизвестные ключи. Whitelist:
+
+| Заголовок | Значение |
+|---|---|
+| `X-Nemefisto-Engine` | `xray` \| `mihomo` |
+| `X-Nemefisto-Mode` | `proxy` \| `tun` |
+| `X-Nemefisto-Theme` | `dark` \| `light` \| `midnight` \| `sunset` \| `sand` |
+| `X-Nemefisto-Background` | `crystal` \| `tunnel` \| `globe` \| `particles` |
+| `X-Nemefisto-Button-Style` | `glass` \| `flat` \| `neon` \| `metallic` |
+| `X-Nemefisto-Preset` | `none` \| `fluent` \| `cupertino` \| `vice` \| `arcade` \| `glacier` |
+| `X-Nemefisto-Routes` | base64-encoded JSON с domain/ip-правилами |
+| `X-Nemefisto-App-Rules` | base64-encoded JSON с per-process правилами |
+
+#### Override-логика
+
+effective[key] = userOverride[key] ?? subscriptionHints[key] ?? defaults[key]
+
+
+
+- Если пользователь не трогал настройку — используется значение из заголовков.
+- Если пользователь явно переключил — используется его выбор (override).
+- Если заголовков нет — поведение как сейчас, всё ручками.
+
+В UI рядом с настройками показывается badge «из подписки» когда значение
+пришло из заголовков и не переопределено пользователем.
+
+#### Безопасность заголовков
+
+- **Только whitelist ключей.** Любые другие заголовки игнорируются.
+- Заголовки **не могут**: запускать процессы, читать/писать файлы вне
+  стандартных путей приложения, отключать Settings, скрывать серверы из
+  списка, изменять URL подписки.
+- Заголовки **могут**: задавать UI-настройки, выбирать движок и режим,
+  предоставлять правила routing'а (которые потом проверяются и
+  применяются к Xray/Mihomo конфигу).
+
+### Per-process routing
+
+**Правила вида `<exe-name> → PROXY | DIRECT | BLOCK`.**
+
+Реализация:
+- **Mihomo**: нативно через matcher `PROCESS-NAME` (требует
+  `find-process-mode: always` в YAML). Просто конвертируем `appRules`
+  в правила Mihomo при генерации конфига.
+- **Xray**: на Windows нативно не поддерживается. Если выбран Xray и
+  заданы appRules — UI показывает предупреждение «правила приложений
+  работают только с Mihomo».
+
+Хранение в settings:
+```ts
+appRules: Array<{
+  exe: string;          // "telegram.exe"
+  action: "proxy" | "direct" | "block";
+  comment?: string;
+}>
+UI: Settings → раздел «правила приложений» → список + кнопка «добавить»
+с file-picker'ом для выбора exe.
+
+Этапы реализации
+8.A — универсальный парсер подписок (vmess / trojan / ss / hy2 / tuic + mihomo YAML).
+8.B — mihomo как второй sidecar; UI-селект движка; helper-coordination для TUN с любым ядром.
+8.C — заголовки подписки + override-логика + UI-бейджи «из подписки».
+8.D — per-process routing (Mihomo-only) с UI-редактором правил.
+### 8.E — Релизный NSIS-installer
+
+Цель: один setup.exe который пользователь скачивает с сайта,
+дважды кликает, и приложение готово к работе.
+
+- Все sidecar (xray, mihomo, tun2socks, wintun.dll) добавляются в
+  `tauri.conf.json` через `externalBin` или `resources`.
+- `nemefisto-helper.exe` собирается отдельно release-сборкой и
+  включается в bundle.
+- `helper_bootstrap.rs` ищет helper в `<install-dir>/` или
+  в `<install-dir>/resources/`, не только в exe-dir.
+- `webviewInstallMode: "downloadBootstrapper"` — auto-install
+  WebView2 при отсутствии (Win10 без обновлений).
+- Кастомная иконка и метаданные NSIS (название, описание, версия,
+  издатель).
+- Опциональная страница «Запустить Nemefisto после установки» в
+  wizard.
+- Output: `Nemefisto_<version>_x64-setup.exe` в
+  `src-tauri/target/release/bundle/nsis/`.
+## Этап 9 — Защита от конфликтов с другими VPN-клиентами
+
+**Цель**: приложение не падает и не оставляет систему в сломанном
+состоянии когда параллельно активен другой VPN, заняты порты, остались
+orphan-ресурсы от прошлых сессий.
+
+### 9.A — Авто-выбор свободных портов (готово)
+- `find_free_port(start)` сканит вверх до первого свободного.
+- Дополнительно: команда `get_port_conflict_info()` возвращает имя
+  процесса, занявшего стандартный порт — UI показывает в логах.
+
+### 9.B — Детект известных VPN-клиентов
+При старте приложения и при connect перебираем процессы. Знакомые
+имена (Happ, OutlineClient, OpenVPNGUI, wireguard, nordvpn, ExpressVPN,
+ProtonVPN, mullvad, v2rayN, Clash, Hiddify, и др.) — показываем
+неблокирующий warning-banner.
+
+Implementation: `EnumProcesses` Win32 API в `platform/processes.rs`.
+
+### 9.C — Детект конфликтов routing-таблицы
+Перед спавном tun2socks helper проверяет наличие сторонних TUN-адаптеров
+с активными half-default или 0.0.0.0/0 маршрутами. Если найдено —
+bail с сообщением «отключите другой VPN». Опциональный force-mode для
+продвинутых пользователей.
+
+### 9.D — System proxy backup/restore
+При connect (mode=proxy) сохранять предыдущие значения registry-keys
+`ProxyEnable` / `ProxyServer` / `ProxyOverride` в
+`%LOCALAPPDATA%\NemefistoVPN\proxy_backup.json`. При disconnect —
+восстанавливать. На случай краша — детект backup-файла на старте app
+с предложением восстановить.
+
+### 9.E — Cleanup orphan-ресурсов на старте
+- Helper-сервис при старте: удалить все WinTUN-адаптеры с префиксом
+  `nemefisto-` (best-effort через `Remove-NetAdapter`); вычистить
+  routing-rules с нашим NextHop=198.18.0.1.
+- Main app при старте: detect proxy_backup.json и предложить restore.
+
+### 9.F — Уникальное имя TUN (готово)
+Каждая сессия создаёт `nemefisto-<pid>` — двойной запуск приложения
+не конфликтует.
