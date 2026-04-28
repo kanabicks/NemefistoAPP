@@ -31,6 +31,7 @@ fn main() {
         "install" => nemefisto_helper::service::install(),
         "uninstall" => nemefisto_helper::service::uninstall(),
         "service" => nemefisto_helper::service::run_as_service(),
+        "debug" => run_debug_foreground(),
         "status" => match status_check() {
             Ok(version) => {
                 println!("сервис отвечает, версия: {version}");
@@ -47,6 +48,52 @@ fn main() {
     if let Err(e) = result {
         eprintln!("ошибка: {e:#}");
         std::process::exit(1);
+    }
+}
+
+/// Foreground-режим: pipe-сервер крутится прямо в этой консоли без
+/// регистрации Windows-сервиса. Нужны admin-права (для tun2socks/routes).
+/// Ctrl+C — корректное завершение через shutdown-флаг.
+#[cfg(windows)]
+fn run_debug_foreground() -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_for_handler = shutdown.clone();
+    ctrlc_or_warn(move || {
+        eprintln!("\n[helper-debug] получен Ctrl+C, выход…");
+        shutdown_for_handler.store(true, Ordering::SeqCst);
+    });
+
+    eprintln!("[helper-debug] foreground-режим (нет регистрации сервиса)");
+    eprintln!("[helper-debug] Ctrl+C для выхода");
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(nemefisto_helper::pipe::run_pipe_server(shutdown))?;
+    Ok(())
+}
+
+/// Простейший Ctrl+C handler через windows-sys — без новой зависимости.
+#[cfg(windows)]
+fn ctrlc_or_warn<F: FnMut() + Send + 'static>(handler: F) {
+    use std::sync::Mutex;
+    static HANDLER: Mutex<Option<Box<dyn FnMut() + Send>>> = Mutex::new(None);
+    *HANDLER.lock().unwrap() = Some(Box::new(handler));
+
+    unsafe extern "system" fn ctrl_handler(_: u32) -> i32 {
+        if let Ok(mut g) = HANDLER.lock() {
+            if let Some(h) = g.as_mut() {
+                h();
+            }
+        }
+        1 // TRUE — обработали
+    }
+
+    unsafe {
+        let _ = windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(ctrl_handler), 1);
     }
 }
 
@@ -100,6 +147,7 @@ fn print_usage() {
     eprintln!("  nemefisto-helper install     установить и запустить сервис");
     eprintln!("  nemefisto-helper uninstall   остановить и удалить сервис");
     eprintln!("  nemefisto-helper service     (внутренняя — вызывается SCM)");
+    eprintln!("  nemefisto-helper debug       foreground-режим для отладки");
     eprintln!("  nemefisto-helper status      проверить, что сервис отвечает");
 }
 

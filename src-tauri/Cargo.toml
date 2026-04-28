@@ -36,7 +36,14 @@ futures = "0.3"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-service = "0.7"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_System_Console",
+] }
 
 # Helper-сервис как отдельный исполняемый файл. Запускается с правами SYSTEM
 # через Windows Service Control Manager и слушает named pipe для команд от

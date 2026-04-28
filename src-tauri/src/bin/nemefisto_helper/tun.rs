@@ -18,7 +18,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use tokio::process::{Child, Command};
@@ -26,10 +26,32 @@ use tokio::sync::Mutex;
 
 use super::routing::{self, DefaultRoute};
 
+/// Простой helper для лог-таймингов: показывает прошедшее время
+/// от начального `Instant` и от прошлой записи.
+struct Timing {
+    start: Instant,
+    last: Instant,
+}
+impl Timing {
+    fn new() -> Self {
+        let n = Instant::now();
+        Self { start: n, last: n }
+    }
+    fn step(&mut self, label: &str) {
+        let now = Instant::now();
+        let total = now.duration_since(self.start).as_millis();
+        let delta = now.duration_since(self.last).as_millis();
+        eprintln!("[helper-tun][+{total}ms / Δ{delta}ms] {label}");
+        self.last = now;
+    }
+}
+
 const TUN_NAME: &str = "nemefisto";
-/// Адрес шлюза TUN-интерфейса. tun2socks по умолчанию даёт TUN адрес
-/// `198.18.0.1/15`, и этот же IP мы указываем как `gateway` для маршрутов.
+/// Адрес TUN-интерфейса. На Windows назначается helper-ом через
+/// `CreateUnicastIpAddressEntry` — tun2socks этого не делает (Windows-only
+/// особенность, на Linux/Darwin tun2socks назначает сам через ioctl).
 const TUN_GATEWAY: &str = "198.18.0.1";
+const TUN_PREFIX_LEN: u8 = 15;
 const HALF_LOW_DST: &str = "0.0.0.0";
 const HALF_HIGH_DST: &str = "128.0.0.0";
 const HALF_MASK: &str = "128.0.0.0";
@@ -53,10 +75,12 @@ pub async fn start(
     dns: &str,
     tun2socks_path: &str,
 ) -> Result<()> {
+    let mut t = Timing::new();
     let mut g = STATE.lock().await;
     if g.is_some() {
         bail!("TUN-режим уже запущен");
     }
+    t.step("lock acquired");
 
     // 1. Проверка пути к tun2socks
     let tun2socks_exe = Path::new(tun2socks_path);
@@ -68,11 +92,13 @@ pub async fn start(
     let server_ip = routing::resolve_host_ipv4(server_host)
         .await
         .with_context(|| format!("резолв {server_host}"))?;
+    t.step(&format!("resolve {server_host} → {server_ip}"));
 
     // 3. Текущий default route
     let original = routing::get_default_route()
         .await
         .context("чтение default-route")?;
+    t.step("get_default_route");
     eprintln!(
         "[helper-tun] default route: {} via {} (ifIndex {} «{}»)",
         "0.0.0.0/0", original.gateway, original.if_index, original.interface_name
@@ -112,6 +138,8 @@ pub async fn start(
         .spawn()
         .context("не удалось запустить tun2socks")?;
 
+    t.step("tun2socks spawned");
+
     // 6. Ждём появления TUN-интерфейса (15 сек — впервые WinTUN может
     //    инициализироваться долго).
     let tun_index = match routing::wait_for_interface(TUN_NAME, Duration::from_secs(15)).await {
@@ -125,7 +153,25 @@ pub async fn start(
             return Err(e).context(format!("TUN не поднялся за 15 сек. tun2socks log:\n{log_tail}"));
         }
     };
-    eprintln!("[helper-tun] TUN-интерфейс {TUN_NAME} поднят (ifIndex {tun_index})");
+    t.step(&format!("wait_for_interface ({TUN_NAME}, ifIndex {tun_index})"));
+
+    // 6a. Назначить IP на TUN — без него ОС считает интерфейс «без подсети»
+    //     и `CreateIpForwardEntry2` для NextHop=198.18.0.1 возвращает 1168.
+    let tun_ip: std::net::Ipv4Addr = TUN_GATEWAY.parse().unwrap();
+    let mut child = child;
+    if let Some(status) = child.try_wait().context("проверка статуса tun2socks")? {
+        let log_tail = std::fs::read_to_string(&log_path)
+            .map(|s| s.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_else(|_| "(лог tun2socks недоступен)".to_string());
+        bail!(
+            "tun2socks умер сразу после старта (exit {status}). Лог:\n{log_tail}"
+        );
+    }
+    if let Err(e) = routing::assign_ip(tun_index, tun_ip, TUN_PREFIX_LEN).await {
+        kill_child(child).await;
+        return Err(e).context("assign_ip на TUN");
+    }
+    t.step(&format!("ip {TUN_GATEWAY}/{TUN_PREFIX_LEN} назначен"));
 
     // 6. Bypass-route на VPN-сервер через старый gateway
     if let Err(e) = routing::add_route(
@@ -141,6 +187,7 @@ pub async fn start(
         kill_child(child).await;
         return Err(e).context("bypass-route на сервер");
     }
+    t.step("bypass-route added");
 
     // 7. Half-default routes через TUN
     if let Err(e) = routing::add_route(HALF_LOW_DST, HALF_MASK, TUN_GATEWAY, 1, Some(tun_index)).await {
@@ -153,11 +200,13 @@ pub async fn start(
         kill_child(child).await;
         return Err(e).context("half-route 128.0.0.0/1");
     }
+    t.step("half-routes added");
 
     // 8. DNS на TUN (не fatal — DNS leak возможен но трафик пойдёт)
     if let Err(e) = routing::set_dns(tun_index, dns).await {
         eprintln!("[helper-tun] DNS на TUN не выставился ({e:#}) — продолжаем без него");
     }
+    t.step("dns set");
 
     *g = Some(State {
         child,
@@ -166,7 +215,7 @@ pub async fn start(
         tun_index,
     });
 
-    eprintln!("[helper-tun] TUN-режим активен");
+    eprintln!("[helper-tun] TUN-режим активен (полное время старта см. выше)");
     Ok(())
 }
 
@@ -176,9 +225,14 @@ pub async fn stop() -> Result<()> {
         .take()
         .ok_or_else(|| anyhow!("TUN-режим не запущен"))?;
 
-    // Сначала маршруты — чтобы трафик уже шёл напрямую пока убиваем tun2socks.
+    // 1. Сначала маршруты — чтобы трафик уже шёл напрямую пока убиваем tun2socks.
     let _ = full_route_cleanup(&state.server_ip).await;
 
+    // 2. Снять IP с TUN (если интерфейс ещё существует).
+    let tun_ip: std::net::Ipv4Addr = TUN_GATEWAY.parse().unwrap();
+    let _ = routing::unassign_ip(state.tun_index, tun_ip, TUN_PREFIX_LEN).await;
+
+    // 3. Убить tun2socks (он сам уберёт WinTUN-интерфейс).
     kill_child(state.child).await;
 
     eprintln!("[helper-tun] TUN-режим остановлен");
