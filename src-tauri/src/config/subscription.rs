@@ -931,7 +931,13 @@ fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
 /// `None` если:
 /// - в `outbounds` нет VPN-протокола (только direct/block/dns/api);
 /// - VPN-outbound'ов больше одного (балансер);
-/// - протокол не поддерживается ни Xray, ни Mihomo универсально.
+/// - протокол не поддерживается ни Xray, ни Mihomo универсально;
+/// - **в JSON есть кастомные `routing.rules`** — теряем при нормализации
+///   важную логику маршрутизации (например, `*.ru → direct`). В этом
+///   случае оставляем запись как `xray-json` (engine_compat = xray),
+///   чтобы `patch_xray_json` сохранил все правила. Mihomo получит свой
+///   эквивалент через clash YAML — провайдер подписки отдаёт clash YAML
+///   с собственными `rules:` если запрашиваем с UA `clash-verge/*`.
 ///
 /// Поля в `raw` нормализуются под формат, который ожидают URI-парсеры
 /// (см. `parse_vless` / `parse_vmess` и т.д.) — чтобы один и тот же
@@ -940,6 +946,19 @@ fn xray_json_to_normalized_entry(
     cfg: &serde_json::Value,
     name: &str,
 ) -> Option<ProxyEntry> {
+    // Если есть кастомные routing-rules — не нормализуем. Иначе при
+    // пересборке в обычный ProxyEntry мы заменим их стандартным
+    // `MATCH,proxy`, и весь split-routing подписки потеряется.
+    let has_custom_routing = cfg
+        .get("routing")
+        .and_then(|r| r.get("rules"))
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false);
+    if has_custom_routing {
+        return None;
+    }
+
     let outbounds = cfg.get("outbounds")?.as_array()?;
     let vpn_outbounds: Vec<_> = outbounds
         .iter()
