@@ -736,6 +736,61 @@ input, textarea { font: inherit; cursor: text; }
   -webkit-backdrop-filter: blur(24px);
 }
 
+/* ── Subscription meta (трафик + срок подписки) ──────────────────────── */
+.sub-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.sub-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg-dim);
+}
+.sub-meta-traffic {
+  font-variant-numeric: tabular-nums;
+}
+.sub-meta-expiry {
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.sub-meta-expiry.is-warn {
+  color: #f0b840;
+}
+.sub-meta-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+:root[data-theme="light"] .sub-meta-bar,
+:root[data-preset="cupertino"] .sub-meta-bar {
+  background: rgba(0, 0, 0, 0.08);
+}
+.sub-meta-bar-fill {
+  height: 100%;
+  background: var(--accent, #6ee7b7);
+  border-radius: 2px;
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sub-meta-bar-fill.is-warn {
+  background: #f0b840;
+}
+.sub-meta-bar-fill.is-danger {
+  background: #f06060;
+}
+
 /* ── Server pill ──────────────────────────────────────────────────────── */
 .server-pill {
   display: flex;

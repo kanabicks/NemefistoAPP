@@ -10,8 +10,8 @@ use tauri::Manager;
 use config::hwid::load_or_create;
 use config::{HwidState, SubscriptionState};
 use ipc::commands::{
-    connect, disconnect, fetch_subscription, get_hwid, get_servers, is_xray_running,
-    ping_servers, read_xray_log,
+    connect, disconnect, fetch_subscription, get_hwid, get_servers, get_subscription_meta,
+    is_xray_running, ping_servers, read_xray_log,
 };
 use vpn::XrayState;
 
@@ -51,6 +51,7 @@ pub fn run() {
             is_xray_running,
             fetch_subscription,
             get_servers,
+            get_subscription_meta,
             get_hwid,
             ping_servers,
             read_xray_log,

@@ -14,6 +14,7 @@ import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
 import { ServerSelector } from "./components/ServerSelector";
+import { SubscriptionMeta } from "./components/SubscriptionMeta";
 import { ModeSegment } from "./components/ModeSegment";
 import { Footer } from "./components/Footer";
 import { SettingsPage } from "./components/SettingsPage";
@@ -128,7 +129,14 @@ function App() {
               <PowerStack canConnect={canConnect} />
             </div>
             <div className="grid-servers">
-              {servers.length === 0 ? <Welcome /> : <ServerSelector />}
+              {servers.length === 0 ? (
+                <Welcome />
+              ) : (
+                <>
+                  <SubscriptionMeta />
+                  <ServerSelector />
+                </>
+              )}
             </div>
             {errorMessage && (
               <pre className="hero-error grid-error">{errorMessage}</pre>

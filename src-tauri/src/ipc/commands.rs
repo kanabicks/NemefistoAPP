@@ -8,7 +8,7 @@ use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::config::subscription::fetch_and_parse;
+use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::xray_config;
 use crate::config::{HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
@@ -172,6 +172,14 @@ pub struct ConnectResult {
 
 // ─── Подписка ─────────────────────────────────────────────────────────────────
 
+/// Результат загрузки подписки: список серверов + опциональные метаданные
+/// из стандартных HTTP-заголовков (этап 8.C).
+#[derive(Serialize)]
+pub struct SubscriptionResult {
+    pub servers: Vec<ProxyEntry>,
+    pub meta: Option<SubscriptionMeta>,
+}
+
 /// Скачать подписку по URL, распарсить и сохранить список серверов.
 ///
 /// `hwid_override` — если задан и непустой, используется вместо локально
@@ -187,7 +195,7 @@ pub async fn fetch_subscription(
     send_hwid: Option<bool>,
     hwid: State<'_, HwidState>,
     sub: State<'_, SubscriptionState>,
-) -> Result<Vec<ProxyEntry>, String> {
+) -> Result<SubscriptionResult, String> {
     let effective_hwid = hwid_override
         .as_deref()
         .map(str::trim)
@@ -197,18 +205,25 @@ pub async fn fetch_subscription(
     let ua = user_agent.unwrap_or_default();
     let send = send_hwid.unwrap_or(true);
 
-    let servers = fetch_and_parse(&url, effective_hwid, &ua, send)
+    let (servers, meta) = fetch_and_parse(&url, effective_hwid, &ua, send)
         .await
         .map_err(|e| e.to_string())?;
 
     *sub.servers.lock().map_err(|e| e.to_string())? = servers.clone();
-    Ok(servers)
+    *sub.meta.lock().map_err(|e| e.to_string())? = meta.clone();
+    Ok(SubscriptionResult { servers, meta })
 }
 
 /// Вернуть закешированный список серверов без сетевого запроса.
 #[tauri::command]
 pub fn get_servers(sub: State<'_, SubscriptionState>) -> Vec<ProxyEntry> {
     sub.servers.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// Вернуть закешированные метаданные подписки (трафик, срок).
+#[tauri::command]
+pub fn get_subscription_meta(sub: State<'_, SubscriptionState>) -> Option<SubscriptionMeta> {
+    sub.meta.lock().map(|g| g.clone()).unwrap_or(None)
 }
 
 // ─── Подключение ──────────────────────────────────────────────────────────────

@@ -10,8 +10,26 @@ export type ProxyEntry = {
   raw: Record<string, unknown>;
 };
 
+/** Метаданные подписки из заголовка `subscription-userinfo`
+ *  (стандарт 3x-ui / Marzban / x-ui / sing-box).
+ *  used/total — байты, total=0 → безлимит. expireAt — unix-timestamp
+ *  в секундах, null → бессрочно. */
+export type SubscriptionMeta = {
+  used: number;
+  total: number;
+  expireAt: number | null;
+};
+
+/** Сырой ответ команды fetch_subscription — Rust возвращает snake_case. */
+type FetchSubscriptionRaw = {
+  servers: ProxyEntry[];
+  meta: { used: number; total: number; expire_at: number | null } | null;
+};
+
 type SubscriptionStore = {
   servers: ProxyEntry[];
+  /** Метаданные подписки или null если сервер их не прислал. */
+  meta: SubscriptionMeta | null;
   /** Пинги по индексам серверов: ms или null если offline / timeout. */
   pings: (number | null)[];
   pingsLoading: boolean;
@@ -29,6 +47,12 @@ type SubscriptionStore = {
   loadCached: () => Promise<void>;
   pingAll: () => Promise<void>;
 };
+
+/** Конверсия snake_case ответа Rust → camelCase TS. */
+const normalizeMeta = (
+  raw: { used: number; total: number; expire_at: number | null } | null
+): SubscriptionMeta | null =>
+  raw ? { used: raw.used, total: raw.total, expireAt: raw.expire_at } : null;
 
 const URL_KEY = "nemefisto.subscription.url";
 // Версионируем ключ override-HWID: при апгрейде клиента старое значение
@@ -71,6 +95,7 @@ runMigrations();
 
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   servers: [],
+  meta: null,
   pings: [],
   pingsLoading: false,
   loading: false,
@@ -103,13 +128,18 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
     const { userAgent, sendHwid } = useSettingsStore.getState();
     set({ loading: true, error: null });
     try {
-      const servers = await invoke<ProxyEntry[]>("fetch_subscription", {
+      const result = await invoke<FetchSubscriptionRaw>("fetch_subscription", {
         url,
         hwidOverride: hwid.trim() || null,
         userAgent: userAgent.trim() || null,
         sendHwid,
       });
-      set({ servers, pings: [], loading: false });
+      set({
+        servers: result.servers,
+        meta: normalizeMeta(result.meta),
+        pings: [],
+        loading: false,
+      });
       // Авто-пинг сразу после получения списка
       void get().pingAll();
     } catch (e) {
@@ -122,6 +152,18 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       const servers = await invoke<ProxyEntry[]>("get_servers");
       if (servers.length > 0) {
         set({ servers });
+        // Метаданные кешируются параллельно — могут отсутствовать если
+        // сервер их не присылал.
+        try {
+          const rawMeta = await invoke<{
+            used: number;
+            total: number;
+            expire_at: number | null;
+          } | null>("get_subscription_meta");
+          set({ meta: normalizeMeta(rawMeta) });
+        } catch {
+          // не критично
+        }
         void get().pingAll();
       }
     } catch {

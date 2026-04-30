@@ -7,20 +7,71 @@ use std::sync::Mutex;
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::server::ProxyEntry;
 
-/// Кешированный список серверов из последней успешной загрузки подписки.
+/// Метаданные подписки из заголовка `subscription-userinfo`
+/// (де-факто стандарт у 3x-ui / Marzban / x-ui / sing-box).
+///
+/// Формат заголовка: `upload=X;download=Y;total=Z;expire=T`,
+/// где X/Y/Z — байты (Z=0 → безлимит), T — unix-timestamp срока
+/// истечения (T=0 → бессрочно).
+#[derive(Debug, Clone, Serialize)]
+pub struct SubscriptionMeta {
+    /// upload + download в байтах.
+    pub used: u64,
+    /// Общий лимит в байтах. 0 = безлимит.
+    pub total: u64,
+    /// Unix-timestamp истечения. None = бессрочно.
+    pub expire_at: Option<i64>,
+}
+
+/// Кешированный список серверов и метаданных из последней успешной
+/// загрузки подписки. Живёт в памяти процесса, не персистится между
+/// запусками (для этого есть localStorage на фронте).
 pub struct SubscriptionState {
     pub servers: Mutex<Vec<ProxyEntry>>,
+    pub meta: Mutex<Option<SubscriptionMeta>>,
 }
 
 impl SubscriptionState {
     pub fn new() -> Self {
         Self {
             servers: Mutex::new(Vec::new()),
+            meta: Mutex::new(None),
         }
+    }
+}
+
+/// Парсит заголовок `subscription-userinfo` вида
+/// `upload=123;download=456;total=789;expire=1700000000`.
+/// Неизвестные ключи игнорируются, отсутствующие → 0.
+pub fn parse_subscription_userinfo(raw: &str) -> SubscriptionMeta {
+    let mut upload: u64 = 0;
+    let mut download: u64 = 0;
+    let mut total: u64 = 0;
+    let mut expire: i64 = 0;
+
+    for pair in raw.split(';') {
+        let pair = pair.trim();
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
+        let v = v.trim();
+        match k.trim() {
+            "upload" => upload = v.parse().unwrap_or(0),
+            "download" => download = v.parse().unwrap_or(0),
+            "total" => total = v.parse().unwrap_or(0),
+            "expire" => expire = v.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+
+    SubscriptionMeta {
+        used: upload.saturating_add(download),
+        total,
+        expire_at: if expire > 0 { Some(expire) } else { None },
     }
 }
 
@@ -36,7 +87,7 @@ pub async fn fetch_and_parse(
     hwid: &str,
     user_agent: &str,
     send_hwid: bool,
-) -> Result<Vec<ProxyEntry>> {
+) -> Result<(Vec<ProxyEntry>, Option<SubscriptionMeta>)> {
     let ua = if user_agent.trim().is_empty() {
         "Happ/2.7.0"
     } else {
@@ -53,22 +104,39 @@ pub async fn fetch_and_parse(
         req = req.header("x-hwid", hwid);
     }
 
-    let body = req
+    let response = req
         .send()
         .await
         .context("ошибка HTTP-запроса")?
         .error_for_status()
-        .context("сервер вернул ошибку")?
+        .context("сервер вернул ошибку")?;
+
+    // Извлекаем метаданные из заголовков ДО чтения body (после `text()`
+    // response уже потреблён). subscription-userinfo — единственный
+    // стандартный заголовок, остальные подключим позже (этап 8.C).
+    let meta = response
+        .headers()
+        .get("subscription-userinfo")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_subscription_userinfo);
+
+    let body = response
         .text()
         .await
         .context("не удалось прочитать тело ответа")?;
 
+    let servers = parse_subscription_body(&body)?;
+    Ok((servers, meta))
+}
+
+/// Парсит тело подписки, перебирая известные форматы по приоритету.
+fn parse_subscription_body(body: &str) -> Result<Vec<ProxyEntry>> {
     // 1. Xray JSON конфиг — приоритетнее всего, чтобы случайно
     //    не распарсить JSON как base64. Может быть как одиночным объектом,
     //    так и массивом (Happ-формат подписки).
     let head = body.trim_start();
     if head.starts_with('{') || head.starts_with('[') {
-        if let Ok(entries) = parse_xray_json(&body) {
+        if let Ok(entries) = parse_xray_json(body) {
             if !entries.is_empty() {
                 return Ok(entries);
             }
@@ -76,21 +144,21 @@ pub async fn fetch_and_parse(
     }
 
     // 2. base64-список URI
-    if let Ok(entries) = parse_base64_uri_list(&body) {
+    if let Ok(entries) = parse_base64_uri_list(body) {
         if !entries.is_empty() {
             return Ok(entries);
         }
     }
 
     // 3. Plain text URI list (по одному URI на строку)
-    if let Ok(entries) = parse_plain_uri_list(&body) {
+    if let Ok(entries) = parse_plain_uri_list(body) {
         if !entries.is_empty() {
             return Ok(entries);
         }
     }
 
     // 4. Fallback: Clash YAML
-    parse_clash_yaml(&body)
+    parse_clash_yaml(body)
 }
 
 // ─── base64 URI-список ────────────────────────────────────────────────────────
