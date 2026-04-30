@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{async_runtime, AppHandle, Emitter};
 
 use super::network::get_default_route_interface_name;
 
@@ -36,7 +36,13 @@ pub struct NetworkChange {
     pub to: Option<String>,
 }
 
-/// Запустить watcher как фоновую tokio-задачу.
+/// Запустить watcher как фоновую задачу через рантайм Tauri.
+///
+/// **ВАЖНО**: используем `tauri::async_runtime::spawn`, а не голый
+/// `tokio::spawn`. В Tauri 2 setup-callback выполняется ДО того как
+/// контекст Tokio runtime становится доступным внутри setup, поэтому
+/// прямой `tokio::spawn` паникует с `there is no reactor running`.
+/// `async_runtime::spawn` сам подхватывает managed-runtime Tauri.
 ///
 /// Идемпотентно: повторные вызовы — no-op.
 pub fn start(app: AppHandle) {
@@ -44,7 +50,7 @@ pub fn start(app: AppHandle) {
         return;
     }
 
-    tokio::spawn(async move {
+    async_runtime::spawn(async move {
         let mut last = get_default_route_interface_name();
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
