@@ -163,9 +163,51 @@ export type Settings = {
   /** Override-флаг для server-driven UX. Если false — заголовок
    *  `X-Nemefisto-Engine` подписки имеет приоритет над юзер-выбором. */
   engineTouched: boolean;
+
+  /** Touched-флаг для userAgent. Если false — `effectiveUserAgent`
+   *  возвращает зависящий от движка дефолт (Happ/* для Xray —
+   *  Marzban-style xray-json; clash-verge для Mihomo — clash YAML).
+   *  Когда пользователь явно правит поле в UI → флаг ставится в true,
+   *  и используется ровно то значение что вписано. */
+  userAgentTouched: boolean;
 };
 
-export const DEFAULT_USER_AGENT = "Happ/2.7.0";
+/**
+ * UA по умолчанию для Xray-движка.
+ *
+ * Большинство панелей подписок (Marzban, 3x-ui, sing-box-panel)
+ * детектят `Happ/*` UA и отдают полный Xray JSON-конфиг с готовыми
+ * routing-правилами (RU-сайты direct, ads block и т.д.). Для Xray это
+ * то что надо.
+ */
+export const DEFAULT_USER_AGENT_XRAY = "Happ/2.7.0";
+
+/**
+ * UA по умолчанию для Mihomo-движка.
+ *
+ * Те же панели на `clash-verge/*` UA отдают clash YAML с такими же
+ * routing-группами, но в формате Mihomo. Это позволяет владельцу
+ * подписки тонко настраивать конфиги под каждое ядро отдельно.
+ */
+export const DEFAULT_USER_AGENT_MIHOMO = "clash-verge/v2.0.0";
+
+/** Backwards-compat alias — используется в местах где UA всё ещё
+ *  «общий». Equivalent to `DEFAULT_USER_AGENT_XRAY`. */
+export const DEFAULT_USER_AGENT = DEFAULT_USER_AGENT_XRAY;
+
+/**
+ * Эффективный UA для запроса подписки. Если пользователь явно правил
+ * поле (`userAgentTouched`) — возвращаем его значение «как есть»,
+ * иначе — дефолт под выбранный движок.
+ */
+export function effectiveUserAgent(
+  engine: Engine,
+  userAgent: string,
+  userAgentTouched: boolean
+): string {
+  if (userAgentTouched) return userAgent;
+  return engine === "mihomo" ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_XRAY;
+}
 
 const DEFAULTS: Settings = {
   autoRefresh: false,
@@ -205,6 +247,7 @@ const DEFAULTS: Settings = {
   killSwitch: false,
   engine: "xray",
   engineTouched: false,
+  userAgentTouched: false,
 };
 
 const KEY = "nemefisto.settings.v1";
@@ -245,6 +288,7 @@ export const useSettingsStore = create<Store>((setState, get) => ({
     if (key === "buttonStyle") next.buttonStyleTouched = true;
     if (key === "preset") next.presetTouched = true;
     if (key === "engine") next.engineTouched = true;
+    if (key === "userAgent") next.userAgentTouched = true;
     // Любая правка anti-DPI поля → touched (override от заголовков
     // подписки больше не применяется).
     if (

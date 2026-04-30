@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { useSettingsStore } from "./settingsStore";
+import { effectiveUserAgent, useSettingsStore } from "./settingsStore";
 
 export type ProxyEntry = {
   name: string;
@@ -341,14 +341,24 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   async fetchSubscription() {
     const { url, hwid } = get();
     if (!url.trim()) return;
-    const { userAgent, sendHwid } = useSettingsStore.getState();
+    const settings = useSettingsStore.getState();
+    // 8.B: эффективный UA зависит от движка. Если пользователь не правил
+    // поле — Xray идёт с Happ-UA (получаем Marzban xray-json с готовым
+    // routing'ом), Mihomo — с clash-verge UA (получаем clash YAML с
+    // соответствующими правилами). Когда пользователь правил вручную —
+    // используется как есть, без перезаписи.
+    const ua = effectiveUserAgent(
+      settings.engine,
+      settings.userAgent,
+      settings.userAgentTouched
+    );
     set({ loading: true, error: null });
     try {
       const result = await invoke<FetchSubscriptionRaw>("fetch_subscription", {
         url,
         hwidOverride: hwid.trim() || null,
-        userAgent: userAgent.trim() || null,
-        sendHwid,
+        userAgent: ua.trim() || null,
+        sendHwid: settings.sendHwid,
       });
       const now = Date.now();
       saveToStorage(LAST_FETCH_KEY, String(now));

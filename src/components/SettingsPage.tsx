@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import {
-  DEFAULT_USER_AGENT,
+  DEFAULT_USER_AGENT_MIHOMO,
+  DEFAULT_USER_AGENT_XRAY,
   PRESET_BACKGROUND,
   PRESET_BUTTON_STYLE,
   useSettingsStore,
@@ -259,17 +260,25 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="settings-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-            <div className="settings-row-label">user agent</div>
+            <div className="settings-row-label">
+              user agent
+              {!s.userAgentTouched && (
+                <span className="hint-badge" style={{ marginLeft: 8 }}>
+                  авто по движку
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={s.userAgent}
               onChange={(e) => s.set("userAgent", e.target.value)}
-              placeholder={DEFAULT_USER_AGENT}
+              placeholder={mihomoActive ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_XRAY}
               className="input"
             />
             <div className="settings-row-hint">
-              на UA `Happ/2.7.0` сервер отдаёт массив готовых Xray-конфигов
-              с balancer-ом и burstObservatory. оставь пустым для дефолта.
+              автоматически: <b>Happ/2.7.0</b> для Xray (Marzban-style xray-json
+              с готовым routing), <b>clash-verge</b> для Mihomo (clash YAML).
+              если правишь вручную — фиксируется как есть, на оба движка.
             </div>
           </div>
         </section>
@@ -639,8 +648,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <div className="settings-row-label">
                 vpn-ядро
                 {!s.engineTouched && subMeta?.engine && (
-                  <span className="from-sub-badge" title="из подписки">
-                    {" "}из подписки
+                  <span className="hint-badge" style={{ marginLeft: 8 }}>
+                    из подписки
                   </span>
                 )}
               </div>
@@ -651,7 +660,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </div>
             </div>
             <select
-              className="settings-select"
+              className="select-field"
               value={
                 !s.engineTouched && subMeta?.engine === "mihomo"
                   ? "mihomo"
@@ -659,7 +668,17 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   ? "xray"
                   : s.engine
               }
-              onChange={(e) => s.set("engine", e.target.value as Engine)}
+              onChange={(e) => {
+                const next = e.target.value as Engine;
+                s.set("engine", next);
+                // 8.B: при смене движка сразу перезапрашиваем подписку,
+                // чтобы получить конфиг под новый формат (Xray JSON
+                // vs Clash YAML — see effectiveUserAgent). UA свопается
+                // автоматически если пользователь не правил его вручную.
+                if (subUrl.trim()) {
+                  void fetchSubscription();
+                }
+              }}
             >
               <option value="xray">Xray</option>
               <option value="mihomo">Mihomo</option>
