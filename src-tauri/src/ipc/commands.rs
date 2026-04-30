@@ -12,7 +12,7 @@ use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::xray_config::{self, AntiDpiOptions};
 use crate::config::{HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
-use crate::vpn::{find_free_port, ping_entry, XrayState};
+use crate::vpn::{find_free_port, ping_entry, random_high_port, XrayState};
 
 /// Имя файла с triplet-суффиксом — формат, в котором лежит исходный
 /// бинарь в `binaries/`, и в котором Tauri (большинство версий) кладёт
@@ -294,8 +294,12 @@ pub async fn connect(
             .ok_or_else(|| format!("сервер #{server_index} не найден в списке"))?
     };
 
-    let default_socks = find_free_port(1080);
-    let default_http = find_free_port(1087);
+    // 9.H — рандомизация портов inbound. Старт с псевдослучайных значений
+    // в диапазоне [30000, 60000) вместо фиксированных 1080/1087, чтобы
+    // сторонний процесс на машине не мог дёшево детектнуть VPN-клиент
+    // сканированием стандартных портов. См. https://habr.com/ru/news/1020902/.
+    let default_socks = find_free_port(random_high_port());
+    let default_http = find_free_port(random_high_port());
     let lan = allow_lan.unwrap_or(false);
     let listen = if lan { "0.0.0.0" } else { "127.0.0.1" };
     let tun_mode = mode == "tun";

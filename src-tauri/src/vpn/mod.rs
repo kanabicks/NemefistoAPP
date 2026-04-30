@@ -4,4 +4,4 @@ mod ping;
 mod xray;
 
 pub use ping::ping_entry;
-pub use xray::{find_free_port, XrayState};
+pub use xray::{find_free_port, random_high_port, XrayState};
