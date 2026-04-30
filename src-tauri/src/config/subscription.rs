@@ -894,6 +894,20 @@ fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
                 .as_str()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("Xray config #{}", i + 1));
+
+            // Пытаемся «расковырять» JSON и выдать нормализованный ProxyEntry
+            // со стандартным протоколом (vless/vmess/trojan/...). Тогда оба
+            // ядра смогут поднять сервер: Xray — через свой config-builder,
+            // Mihomo — через mihomo_config-builder. Большинство Marzban-style
+            // подписок ровно такие — один основной outbound + direct/block.
+            //
+            // Если в JSON балансер (>1 VPN-outbound), кастомный routing,
+            // или экзотический протокол — нормализация невозможна. Тогда
+            // остаёмся в режиме «как есть» с engine_compat=xray-only.
+            if let Some(normalized) = xray_json_to_normalized_entry(&cfg, &name) {
+                return normalized;
+            }
+
             ProxyEntry {
                 name,
                 protocol: "xray-json".to_string(),
@@ -910,6 +924,424 @@ fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
         bail!("в Xray JSON нет ни одного конфига с inbounds/outbounds");
     }
     Ok(entries)
+}
+
+/// Извлекает основной VPN-outbound из готового Xray JSON и пересобирает
+/// его в стандартный `ProxyEntry` с `engine_compat = both`. Возвращает
+/// `None` если:
+/// - в `outbounds` нет VPN-протокола (только direct/block/dns/api);
+/// - VPN-outbound'ов больше одного (балансер);
+/// - протокол не поддерживается ни Xray, ни Mihomo универсально.
+///
+/// Поля в `raw` нормализуются под формат, который ожидают URI-парсеры
+/// (см. `parse_vless` / `parse_vmess` и т.д.) — чтобы один и тот же
+/// `xray_config::build_*` / `mihomo_config::build_*_proxy` работал.
+fn xray_json_to_normalized_entry(
+    cfg: &serde_json::Value,
+    name: &str,
+) -> Option<ProxyEntry> {
+    let outbounds = cfg.get("outbounds")?.as_array()?;
+    let vpn_outbounds: Vec<_> = outbounds
+        .iter()
+        .filter(|ob| {
+            let tag = ob.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+            let protocol = ob.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+            !matches!(tag, "direct" | "block" | "dns" | "api")
+                && !matches!(protocol, "freedom" | "blackhole" | "dns" | "")
+        })
+        .collect();
+
+    // Ровно один VPN-outbound — простая запись. >1 = balancer, в этот
+    // случай не лезем (теряем routing-логику пересборкой).
+    if vpn_outbounds.len() != 1 {
+        return None;
+    }
+    let main = vpn_outbounds[0];
+    let protocol_str = main.get("protocol").and_then(|v| v.as_str())?;
+
+    match protocol_str {
+        "vless" => normalize_xray_vless(main, name),
+        "vmess" => normalize_xray_vmess(main, name),
+        "trojan" => normalize_xray_trojan(main, name),
+        "shadowsocks" | "ss" => normalize_xray_ss(main, name),
+        "hysteria2" => normalize_xray_hy2(main, name),
+        "wireguard" => normalize_xray_wg(main, name),
+        "socks" => normalize_xray_socks(main, name),
+        _ => None,
+    }
+}
+
+/// Извлечь общие поля streamSettings (network/security/SNI/transport-opts)
+/// и записать в `raw` под именами, которые используют URI-парсеры. Без
+/// этого `xray_config::build_stream` и `mihomo_config::apply_stream` не
+/// смогут понять transport.
+fn apply_stream_to_raw(raw: &mut serde_json::Map<String, serde_json::Value>, stream: &serde_json::Value) {
+    let network = stream.get("network").and_then(|v| v.as_str()).unwrap_or("tcp");
+    raw.insert("type".into(), network.to_string().into());
+
+    let security = stream.get("security").and_then(|v| v.as_str()).unwrap_or("none");
+    raw.insert("security".into(), security.to_string().into());
+
+    // TLS settings
+    if let Some(tls) = stream.get("tlsSettings") {
+        if let Some(sni) = tls.get("serverName").and_then(|v| v.as_str()) {
+            raw.insert("sni".into(), sni.to_string().into());
+        }
+        if let Some(fp) = tls.get("fingerprint").and_then(|v| v.as_str()) {
+            raw.insert("fp".into(), fp.to_string().into());
+        }
+        if let Some(alpn_arr) = tls.get("alpn").and_then(|v| v.as_array()) {
+            let joined: Vec<String> = alpn_arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            if !joined.is_empty() {
+                raw.insert("alpn".into(), joined.join(",").into());
+            }
+        }
+        if tls.get("allowInsecure").and_then(|v| v.as_bool()).unwrap_or(false) {
+            raw.insert("allowInsecure".into(), true.into());
+        }
+    }
+
+    // REALITY settings
+    if let Some(reality) = stream.get("realitySettings") {
+        if let Some(sni) = reality.get("serverName").and_then(|v| v.as_str()) {
+            raw.insert("sni".into(), sni.to_string().into());
+        }
+        if let Some(fp) = reality.get("fingerprint").and_then(|v| v.as_str()) {
+            raw.insert("fp".into(), fp.to_string().into());
+        }
+        if let Some(pbk) = reality.get("publicKey").and_then(|v| v.as_str()) {
+            raw.insert("pbk".into(), pbk.to_string().into());
+        }
+        if let Some(sid) = reality.get("shortId").and_then(|v| v.as_str()) {
+            raw.insert("sid".into(), sid.to_string().into());
+        }
+        if let Some(spx) = reality.get("spiderX").and_then(|v| v.as_str()) {
+            raw.insert("spx".into(), spx.to_string().into());
+        }
+    }
+
+    // ws settings: path + Host header
+    if let Some(ws) = stream.get("wsSettings") {
+        if let Some(path) = ws.get("path").and_then(|v| v.as_str()) {
+            raw.insert("path".into(), path.to_string().into());
+        }
+        if let Some(host) = ws.get("headers").and_then(|h| h.get("Host")).and_then(|v| v.as_str()) {
+            raw.insert("host".into(), host.to_string().into());
+        } else if let Some(host) = ws.get("host").and_then(|v| v.as_str()) {
+            raw.insert("host".into(), host.to_string().into());
+        }
+    }
+
+    // grpc settings
+    if let Some(grpc) = stream.get("grpcSettings") {
+        if let Some(svc) = grpc.get("serviceName").and_then(|v| v.as_str()) {
+            raw.insert("serviceName".into(), svc.to_string().into());
+        }
+        if let Some(mode) = grpc.get("multiMode").and_then(|v| v.as_bool()) {
+            raw.insert("mode".into(), if mode { "multi" } else { "gun" }.to_string().into());
+        }
+    }
+
+    // h2 settings
+    if let Some(h2) = stream.get("httpSettings") {
+        if let Some(path) = h2.get("path").and_then(|v| v.as_str()) {
+            raw.insert("path".into(), path.to_string().into());
+        }
+        if let Some(host_arr) = h2.get("host").and_then(|v| v.as_array()) {
+            if let Some(first) = host_arr.first().and_then(|v| v.as_str()) {
+                raw.insert("host".into(), first.to_string().into());
+            }
+        }
+    }
+
+    // xhttp / httpupgrade settings — для 8.A.1
+    if let Some(xh) = stream.get("xhttpSettings") {
+        if let Some(path) = xh.get("path").and_then(|v| v.as_str()) {
+            raw.insert("path".into(), path.to_string().into());
+        }
+        if let Some(host) = xh.get("host").and_then(|v| v.as_str()) {
+            raw.insert("host".into(), host.to_string().into());
+        }
+        if let Some(mode) = xh.get("mode").and_then(|v| v.as_str()) {
+            raw.insert("mode".into(), mode.to_string().into());
+        }
+    }
+    if let Some(hu) = stream.get("httpupgradeSettings") {
+        if let Some(path) = hu.get("path").and_then(|v| v.as_str()) {
+            raw.insert("path".into(), path.to_string().into());
+        }
+        if let Some(host) = hu.get("host").and_then(|v| v.as_str()) {
+            raw.insert("host".into(), host.to_string().into());
+        }
+    }
+}
+
+fn normalize_xray_vless(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let vnext = ob.get("settings")?.get("vnext")?.as_array()?.first()?;
+    let server = vnext.get("address")?.as_str()?.to_string();
+    let port = vnext.get("port")?.as_u64()? as u16;
+    let user = vnext.get("users")?.as_array()?.first()?;
+    let uuid = user.get("id")?.as_str()?.to_string();
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("uuid".into(), uuid.into());
+    if let Some(flow) = user.get("flow").and_then(|v| v.as_str()) {
+        if !flow.is_empty() {
+            raw.insert("flow".into(), flow.to_string().into());
+        }
+    }
+    if let Some(enc) = user.get("encryption").and_then(|v| v.as_str()) {
+        raw.insert("encryption".into(), enc.to_string().into());
+    }
+    if let Some(stream) = ob.get("streamSettings") {
+        apply_stream_to_raw(&mut raw, stream);
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "vless".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_vmess(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let vnext = ob.get("settings")?.get("vnext")?.as_array()?.first()?;
+    let server = vnext.get("address")?.as_str()?.to_string();
+    let port = vnext.get("port")?.as_u64()? as u16;
+    let user = vnext.get("users")?.as_array()?.first()?;
+    let uuid = user.get("id")?.as_str()?.to_string();
+
+    // VMess JSON URI parser ожидает поля add/port/id/aid/net/tls/sni/host/path/scy
+    // (legacy v2rayN base64 формат). Нормализуем сразу под него.
+    let mut raw = serde_json::Map::new();
+    raw.insert("ps".into(), name.to_string().into());
+    raw.insert("add".into(), server.clone().into());
+    raw.insert("port".into(), (port as u64).into());
+    raw.insert("id".into(), uuid.into());
+
+    let aid = user.get("alterId").and_then(|v| v.as_u64()).unwrap_or(0);
+    raw.insert("aid".into(), (aid as u64).into());
+
+    let cipher = user.get("security").and_then(|v| v.as_str()).unwrap_or("auto");
+    raw.insert("scy".into(), cipher.to_string().into());
+
+    let stream = ob.get("streamSettings");
+    let network = stream
+        .and_then(|s| s.get("network"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("tcp");
+    raw.insert("net".into(), network.to_string().into());
+
+    let security = stream
+        .and_then(|s| s.get("security"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    raw.insert("tls".into(), if security == "tls" { "tls" } else { "" }.to_string().into());
+
+    if let Some(s) = stream {
+        if let Some(tls) = s.get("tlsSettings") {
+            if let Some(sni) = tls.get("serverName").and_then(|v| v.as_str()) {
+                raw.insert("sni".into(), sni.to_string().into());
+            }
+            if let Some(fp) = tls.get("fingerprint").and_then(|v| v.as_str()) {
+                raw.insert("fp".into(), fp.to_string().into());
+            }
+            if let Some(alpn_arr) = tls.get("alpn").and_then(|v| v.as_array()) {
+                let joined: Vec<String> = alpn_arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                if !joined.is_empty() {
+                    raw.insert("alpn".into(), joined.join(",").into());
+                }
+            }
+        }
+        if let Some(ws) = s.get("wsSettings") {
+            if let Some(path) = ws.get("path").and_then(|v| v.as_str()) {
+                raw.insert("path".into(), path.to_string().into());
+            }
+            if let Some(host) = ws
+                .get("headers").and_then(|h| h.get("Host"))
+                .or_else(|| ws.get("host"))
+                .and_then(|v| v.as_str())
+            {
+                raw.insert("host".into(), host.to_string().into());
+            }
+        }
+        if let Some(grpc) = s.get("grpcSettings") {
+            if let Some(svc) = grpc.get("serviceName").and_then(|v| v.as_str()) {
+                raw.insert("serviceName".into(), svc.to_string().into());
+                raw.insert("path".into(), svc.to_string().into());
+            }
+        }
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "vmess".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_trojan(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let srv = ob.get("settings")?.get("servers")?.as_array()?.first()?;
+    let server = srv.get("address")?.as_str()?.to_string();
+    let port = srv.get("port")?.as_u64()? as u16;
+    let password = srv.get("password")?.as_str()?.to_string();
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("password".into(), password.into());
+    if let Some(stream) = ob.get("streamSettings") {
+        apply_stream_to_raw(&mut raw, stream);
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "trojan".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_ss(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let srv = ob.get("settings")?.get("servers")?.as_array()?.first()?;
+    let server = srv.get("address")?.as_str()?.to_string();
+    let port = srv.get("port")?.as_u64()? as u16;
+    let cipher = srv.get("method")?.as_str()?.to_string();
+    let password = srv.get("password")?.as_str()?.to_string();
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("cipher".into(), cipher.into());
+    raw.insert("password".into(), password.into());
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "ss".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_hy2(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let srv = ob.get("settings")?.get("servers")?.as_array()?.first()?;
+    let server = srv.get("address")?.as_str()?.to_string();
+    let port = srv.get("port")?.as_u64()? as u16;
+    let password = srv.get("password")?.as_str()?.to_string();
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("password".into(), password.into());
+
+    if let Some(obfs) = srv.get("obfs").and_then(|v| v.as_str()) {
+        if !obfs.is_empty() {
+            raw.insert("obfs".into(), obfs.to_string().into());
+        }
+    }
+    if let Some(obfs_pass) = srv.get("obfs-password").or_else(|| srv.get("obfsPassword")).and_then(|v| v.as_str()) {
+        if !obfs_pass.is_empty() {
+            raw.insert("obfs-password".into(), obfs_pass.to_string().into());
+        }
+    }
+    if let Some(stream) = ob.get("streamSettings") {
+        if let Some(tls) = stream.get("tlsSettings") {
+            if let Some(sni) = tls.get("serverName").and_then(|v| v.as_str()) {
+                raw.insert("sni".into(), sni.to_string().into());
+            }
+            if tls.get("allowInsecure").and_then(|v| v.as_bool()).unwrap_or(false) {
+                raw.insert("insecure".into(), "1".to_string().into());
+            }
+            if let Some(alpn_arr) = tls.get("alpn").and_then(|v| v.as_array()) {
+                let joined: Vec<String> = alpn_arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                if !joined.is_empty() {
+                    raw.insert("alpn".into(), joined.join(",").into());
+                }
+            }
+        }
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "hysteria2".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_wg(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let settings = ob.get("settings")?;
+    let private_key = settings.get("secretKey")?.as_str()?.to_string();
+    let peer = settings.get("peers")?.as_array()?.first()?;
+    let endpoint = peer.get("endpoint")?.as_str()?;
+    let (server, port) = parse_hostport(endpoint)?;
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("private-key".into(), private_key.into());
+    if let Some(pubk) = peer.get("publicKey").and_then(|v| v.as_str()) {
+        raw.insert("publickey".into(), pubk.to_string().into());
+    }
+    if let Some(psk) = peer.get("preSharedKey").and_then(|v| v.as_str()) {
+        if !psk.is_empty() {
+            raw.insert("presharedkey".into(), psk.to_string().into());
+        }
+    }
+    if let Some(addrs) = settings.get("address").and_then(|v| v.as_array()) {
+        if let Some(first) = addrs.first().and_then(|v| v.as_str()) {
+            raw.insert("address".into(), first.to_string().into());
+        }
+    }
+    if let Some(mtu) = settings.get("mtu").and_then(|v| v.as_u64()) {
+        raw.insert("mtu".into(), (mtu as u64).into());
+    }
+    if let Some(reserved) = settings.get("reserved").and_then(|v| v.as_array()) {
+        let joined: Vec<String> = reserved.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect();
+        if !joined.is_empty() {
+            raw.insert("reserved".into(), joined.join(",").into());
+        }
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "wireguard".to_string(),
+        server: server.to_string(),
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+fn normalize_xray_socks(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry> {
+    let srv = ob.get("settings")?.get("servers")?.as_array()?.first()?;
+    let server = srv.get("address")?.as_str()?.to_string();
+    let port = srv.get("port")?.as_u64()? as u16;
+
+    let mut raw = serde_json::Map::new();
+    if let Some(users) = srv.get("users").and_then(|v| v.as_array()) {
+        if let Some(user) = users.first() {
+            if let Some(u) = user.get("user").and_then(|v| v.as_str()) {
+                raw.insert("username".into(), u.to_string().into());
+            }
+            if let Some(p) = user.get("pass").and_then(|v| v.as_str()) {
+                raw.insert("password".into(), p.to_string().into());
+            }
+        }
+    }
+
+    Some(ProxyEntry {
+        name: name.to_string(),
+        protocol: "socks".to_string(),
+        server,
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
 }
 
 // ─── Clash YAML fallback ──────────────────────────────────────────────────────
