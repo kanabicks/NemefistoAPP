@@ -1392,28 +1392,32 @@ input, textarea { font: inherit; cursor: text; }
   flex-shrink: 0;
 }
 
-/* ── Settings: список категорий (page-based навигация) ──────────────── */
+/* ── Settings: список категорий (page-based навигация) ────────────────
+   Дизайн-язык такой же как у `.server-pill` на главном экране:
+   --display заголовок + --mono подпись с трекингом, glass-фон,
+   var(--line) рамка, cursor:none. Без больших эмодзи и closures —
+   карточки выглядят как natural продолжение основного UI. */
 .settings-categories {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .settings-category {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 14px;
+  padding: 14px 18px;
   background: var(--bg-glass);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  cursor: pointer;
+  border-radius: var(--r-lg);
+  cursor: none;
   text-align: left;
   width: 100%;
   font: inherit;
   color: var(--fg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  transition: border-color 0.18s, background 0.18s, transform 0.18s;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
 }
 .settings-category:hover {
   border-color: var(--line-strong);
@@ -1423,37 +1427,43 @@ input, textarea { font: inherit; cursor: text; }
   transform: scale(0.99);
 }
 .settings-category-icon {
-  font-size: 22px;
+  font-size: 16px;
   flex-shrink: 0;
-  width: 28px;
+  width: 22px;
   text-align: center;
   line-height: 1;
+  opacity: 0.85;
 }
 .settings-category-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
 }
 .settings-category-title {
-  font-size: 13px;
+  font-family: var(--display);
   font-weight: 500;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--fg);
-  letter-spacing: 0.01em;
 }
 .settings-category-desc {
   font-size: 11px;
-  color: var(--fg-dim);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   line-height: 1.4;
+  color: var(--fg-dim);
 }
 .settings-category-arrow {
-  font-size: 18px;
+  font-family: var(--mono);
+  font-size: 14px;
   color: var(--fg-mute);
   flex-shrink: 0;
-  font-weight: 400;
-  transition: color 0.18s, transform 0.18s;
+  transition: color 0.2s, transform 0.2s;
 }
 .settings-category:hover .settings-category-arrow {
   color: var(--fg);
