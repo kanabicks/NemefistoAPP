@@ -42,6 +42,7 @@ function App() {
 
   // Подписка
   const servers = useSubscriptionStore((s) => s.servers);
+  const subscriptionMeta = useSubscriptionStore((s) => s.meta);
   const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
   const loadCached = useSubscriptionStore((s) => s.loadCached);
   const loadDeviceHwid = useSubscriptionStore((s) => s.loadDeviceHwid);
@@ -53,6 +54,9 @@ function App() {
   const connectOnOpenSetting = useSettingsStore((x) => x.connectOnOpen);
   const autoRefresh = useSettingsStore((x) => x.autoRefresh);
   const autoRefreshHours = useSettingsStore((x) => x.autoRefreshHours);
+  const autoRefreshHoursTouched = useSettingsStore(
+    (x) => x.autoRefreshHoursTouched
+  );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -95,14 +99,21 @@ function App() {
   }, [connectOnOpenSetting, selectedIndex, servers.length, status]);
 
   // ── Auto-refresh подписки в фоне ──────────────────────────────────────────
+  // Override-логика 8.C: если пользователь сам не трогал интервал, используем
+  // значение из заголовка `profile-update-interval` подписки. Иначе — юзер-
+  // настройку.
+  const effectiveRefreshHours =
+    !autoRefreshHoursTouched && subscriptionMeta?.updateIntervalHours
+      ? subscriptionMeta.updateIntervalHours
+      : autoRefreshHours;
   useEffect(() => {
     if (!autoRefresh) return;
-    const ms = Math.max(1, autoRefreshHours) * 3600 * 1000;
+    const ms = Math.max(1, effectiveRefreshHours) * 3600 * 1000;
     const id = window.setInterval(() => {
       void fetchSubscription();
     }, ms);
     return () => window.clearInterval(id);
-  }, [autoRefresh, autoRefreshHours, fetchSubscription]);
+  }, [autoRefresh, effectiveRefreshHours, fetchSubscription]);
 
   const isBusy = status === "starting" || status === "stopping";
   const isRunning = status === "running";

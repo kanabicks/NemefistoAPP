@@ -10,20 +10,40 @@ export type ProxyEntry = {
   raw: Record<string, unknown>;
 };
 
-/** Метаданные подписки из заголовка `subscription-userinfo`
- *  (стандарт 3x-ui / Marzban / x-ui / sing-box).
- *  used/total — байты, total=0 → безлимит. expireAt — unix-timestamp
- *  в секундах, null → бессрочно. */
+/** Метаданные подписки из стандартных HTTP-заголовков
+ *  (3x-ui / Marzban / x-ui / sing-box).
+ *
+ *  - used/total: байты, total=0 → безлимит;
+ *  - expireAt: unix-timestamp в секундах, null → бессрочно;
+ *  - title: имя подписки (`profile-title`);
+ *  - webPageUrl: URL личного кабинета (`profile-web-page-url`);
+ *  - supportUrl: URL поддержки (`support-url`);
+ *  - updateIntervalHours: желаемый интервал автообновления в часах
+ *    (`profile-update-interval`); применяется только если пользователь
+ *    не менял настройку вручную. */
 export type SubscriptionMeta = {
   used: number;
   total: number;
   expireAt: number | null;
+  title: string | null;
+  webPageUrl: string | null;
+  supportUrl: string | null;
+  updateIntervalHours: number | null;
 };
 
 /** Сырой ответ команды fetch_subscription — Rust возвращает snake_case. */
+type SubscriptionMetaRaw = {
+  used: number;
+  total: number;
+  expire_at: number | null;
+  title: string | null;
+  web_page_url: string | null;
+  support_url: string | null;
+  update_interval_hours: number | null;
+};
 type FetchSubscriptionRaw = {
   servers: ProxyEntry[];
-  meta: { used: number; total: number; expire_at: number | null } | null;
+  meta: SubscriptionMetaRaw | null;
 };
 
 type SubscriptionStore = {
@@ -50,9 +70,19 @@ type SubscriptionStore = {
 
 /** Конверсия snake_case ответа Rust → camelCase TS. */
 const normalizeMeta = (
-  raw: { used: number; total: number; expire_at: number | null } | null
+  raw: SubscriptionMetaRaw | null
 ): SubscriptionMeta | null =>
-  raw ? { used: raw.used, total: raw.total, expireAt: raw.expire_at } : null;
+  raw
+    ? {
+        used: raw.used,
+        total: raw.total,
+        expireAt: raw.expire_at,
+        title: raw.title,
+        webPageUrl: raw.web_page_url,
+        supportUrl: raw.support_url,
+        updateIntervalHours: raw.update_interval_hours,
+      }
+    : null;
 
 const URL_KEY = "nemefisto.subscription.url";
 // Версионируем ключ override-HWID: при апгрейде клиента старое значение
@@ -155,11 +185,9 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         // Метаданные кешируются параллельно — могут отсутствовать если
         // сервер их не присылал.
         try {
-          const rawMeta = await invoke<{
-            used: number;
-            total: number;
-            expire_at: number | null;
-          } | null>("get_subscription_meta");
+          const rawMeta = await invoke<SubscriptionMetaRaw | null>(
+            "get_subscription_meta"
+          );
           set({ meta: normalizeMeta(rawMeta) });
         } catch {
           // не критично

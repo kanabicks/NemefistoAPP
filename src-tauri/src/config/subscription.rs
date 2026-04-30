@@ -25,6 +25,17 @@ pub struct SubscriptionMeta {
     pub total: u64,
     /// Unix-timestamp истечения. None = бессрочно.
     pub expire_at: Option<i64>,
+    /// Имя подписки из заголовка `profile-title`. Поддерживает префикс
+    /// `base64:...` для не-ASCII значений. ≤25 символов по стандарту.
+    pub title: Option<String>,
+    /// URL «личного кабинета» из `profile-web-page-url`.
+    pub web_page_url: Option<String>,
+    /// URL поддержки из `support-url`.
+    pub support_url: Option<String>,
+    /// Желаемый интервал автообновления подписки в часах из
+    /// `profile-update-interval`. Применяется только если пользователь
+    /// не менял настройку вручную (override-логика).
+    pub update_interval_hours: Option<u32>,
 }
 
 /// Кешированный список серверов и метаданных из последней успешной
@@ -72,7 +83,36 @@ pub fn parse_subscription_userinfo(raw: &str) -> SubscriptionMeta {
         used: upload.saturating_add(download),
         total,
         expire_at: if expire > 0 { Some(expire) } else { None },
+        title: None,
+        web_page_url: None,
+        support_url: None,
+        update_interval_hours: None,
     }
+}
+
+/// Декодирует значение HTTP-заголовка с поддержкой опционального префикса
+/// `base64:...` (стандарт у 3x-ui / Marzban для передачи не-ASCII значений
+/// типа кириллических заголовков подписки).
+fn decode_header_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(b64) = trimmed.strip_prefix("base64:") {
+        let bytes = general_purpose::STANDARD
+            .decode(b64.trim())
+            .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(b64.trim()))
+            .or_else(|_| general_purpose::URL_SAFE.decode(b64.trim()))
+            .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(b64.trim()))
+            .ok()?;
+        let s = String::from_utf8(bytes).ok()?;
+        let s = s.trim().to_string();
+        if s.is_empty() {
+            return None;
+        }
+        return Some(s);
+    }
+    Some(trimmed.to_string())
 }
 
 /// Скачать подписку по URL и вернуть список серверов.
@@ -112,13 +152,11 @@ pub async fn fetch_and_parse(
         .context("сервер вернул ошибку")?;
 
     // Извлекаем метаданные из заголовков ДО чтения body (после `text()`
-    // response уже потреблён). subscription-userinfo — единственный
-    // стандартный заголовок, остальные подключим позже (этап 8.C).
-    let meta = response
-        .headers()
-        .get("subscription-userinfo")
-        .and_then(|h| h.to_str().ok())
-        .map(parse_subscription_userinfo);
+    // response уже потреблён). Базовый заголовок — subscription-userinfo
+    // с трафиком и сроком; остальные стандартные заголовки (имя, URL'ы,
+    // интервал обновления) накладываются сверху если присутствуют.
+    let headers = response.headers().clone();
+    let meta = build_subscription_meta(&headers);
 
     let body = response
         .text()
@@ -127,6 +165,58 @@ pub async fn fetch_and_parse(
 
     let servers = parse_subscription_body(&body)?;
     Ok((servers, meta))
+}
+
+/// Собирает SubscriptionMeta из набора HTTP-заголовков ответа.
+/// Возвращает None если ни один из распознаваемых заголовков не задан.
+fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<SubscriptionMeta> {
+    let header_str = |name: &str| -> Option<String> {
+        headers
+            .get(name)
+            .and_then(|h| h.to_str().ok())
+            .and_then(decode_header_value)
+    };
+
+    // Базовая трафик/срок-часть. Если её нет — стартуем с zero-meta,
+    // которая подхватит остальные поля.
+    let mut meta = headers
+        .get("subscription-userinfo")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_subscription_userinfo)
+        .unwrap_or(SubscriptionMeta {
+            used: 0,
+            total: 0,
+            expire_at: None,
+            title: None,
+            web_page_url: None,
+            support_url: None,
+            update_interval_hours: None,
+        });
+
+    meta.title = header_str("profile-title");
+    meta.web_page_url = header_str("profile-web-page-url");
+    meta.support_url = header_str("support-url");
+    meta.update_interval_hours = headers
+        .get("profile-update-interval")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|n| *n > 0);
+
+    // Если все поля пустые/нулевые — возвращаем None чтобы UI не рендерил
+    // пустую плашку.
+    let has_any = meta.used > 0
+        || meta.total > 0
+        || meta.expire_at.is_some()
+        || meta.title.is_some()
+        || meta.web_page_url.is_some()
+        || meta.support_url.is_some()
+        || meta.update_interval_hours.is_some();
+
+    if has_any {
+        Some(meta)
+    } else {
+        None
+    }
 }
 
 /// Парсит тело подписки, перебирая известные форматы по приоритету.

@@ -50,10 +50,11 @@ export function SubscriptionMeta() {
   const meta = useSubscriptionStore((s) => s.meta);
   if (!meta) return null;
 
-  const { used, total, expireAt } = meta;
+  const { used, total, expireAt, title } = meta;
   const hasTraffic = total > 0 || used > 0;
   const hasExpiry = expireAt != null;
-  if (!hasTraffic && !hasExpiry) return null;
+  const hasTitle = !!title;
+  if (!hasTraffic && !hasExpiry && !hasTitle) return null;
 
   const ratio = total > 0 ? Math.min(1, used / total) : 0;
   const percent = Math.round(ratio * 100);
@@ -65,24 +66,33 @@ export function SubscriptionMeta() {
 
   return (
     <div className="sub-meta">
-      <div className="sub-meta-row">
-        <span className="sub-meta-traffic">
-          {total > 0 ? (
-            <>
-              использовано {formatBytes(used)} из {formatBytes(total)}
-            </>
-          ) : used > 0 ? (
-            <>использовано {formatBytes(used)} · безлимит</>
-          ) : (
-            <>безлимит</>
-          )}
-        </span>
-        {expiry && (
-          <span className={`sub-meta-expiry${expiry.warn ? " is-warn" : ""}`}>
-            {expiry.text}
+      {hasTitle && (
+        <div className="sub-meta-title">
+          <span>{title}</span>
+        </div>
+      )}
+      {(hasTraffic || hasExpiry) && (
+        <div className="sub-meta-row">
+          <span className="sub-meta-traffic">
+            {total > 0 ? (
+              <>
+                использовано {formatBytes(used)} из {formatBytes(total)}
+              </>
+            ) : used > 0 ? (
+              <>использовано {formatBytes(used)} · безлимит</>
+            ) : (
+              <>безлимит</>
+            )}
           </span>
-        )}
-      </div>
+          {expiry && (
+            <span
+              className={`sub-meta-expiry${expiry.warn ? " is-warn" : ""}`}
+            >
+              {expiry.text}
+            </span>
+          )}
+        </div>
+      )}
       {total > 0 && (
         <div className="sub-meta-bar" aria-label={`использовано ${percent}%`}>
           <div

@@ -751,6 +751,31 @@ input, textarea { font: inherit; cursor: text; }
   font-size: 12px;
   letter-spacing: 0.02em;
 }
+.sub-meta-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  letter-spacing: 0.01em;
+}
+.hint-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--fg-dim);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+:root[data-theme="light"] .hint-badge,
+:root[data-preset="cupertino"] .hint-badge {
+  background: rgba(0, 0, 0, 0.04);
+}
 .sub-meta-row {
   display: flex;
   justify-content: space-between;

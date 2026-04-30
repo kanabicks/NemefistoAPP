@@ -63,6 +63,10 @@ export type Settings = {
   autoRefresh: boolean;
   /** Интервал авто-обновления в часах */
   autoRefreshHours: number;
+  /** Флаг "пользователь явно менял интервал". Если false — заголовок
+   *  `profile-update-interval` подписки имеет приоритет. См. override-
+   *  логику в плане 8.C. Сбрасывается через reset(). */
+  autoRefreshHoursTouched: boolean;
   /** Обновлять подписку при запуске приложения */
   refreshOnOpen: boolean;
   /** Запускать пинг всех серверов при запуске */
@@ -95,6 +99,7 @@ export const DEFAULT_USER_AGENT = "Happ/2.7.0";
 const DEFAULTS: Settings = {
   autoRefresh: false,
   autoRefreshHours: 1,
+  autoRefreshHoursTouched: false,
   refreshOnOpen: false,
   pingOnOpen: true,
   connectOnOpen: false,
@@ -137,9 +142,14 @@ type Store = Settings & {
 export const useSettingsStore = create<Store>((setState, get) => ({
   ...load(),
   set: (key, value) => {
-    const next = { ...get(), [key]: value };
+    const next: Settings = { ...get(), [key]: value };
+    // Override-флаг: пользователь явно поменял интервал → перестаём
+    // подхватывать значение из заголовка подписки.
+    if (key === "autoRefreshHours") {
+      next.autoRefreshHoursTouched = true;
+    }
     save(next);
-    setState({ [key]: value } as Pick<Settings, typeof key>);
+    setState(next);
   },
   reset: () => {
     save(DEFAULTS);

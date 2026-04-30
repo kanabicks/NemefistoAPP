@@ -30,6 +30,7 @@ import { Toggle } from "./Toggle";
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const s = useSettingsStore();
   const subUrl = useSubscriptionStore((x) => x.url);
+  const subMeta = useSubscriptionStore((x) => x.meta);
   const subHwid = useSubscriptionStore((x) => x.hwid);
   const deviceHwid = useSubscriptionStore((x) => x.deviceHwid);
   const setSubUrl = useSubscriptionStore((x) => x.setUrl);
@@ -70,6 +71,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         {/* ── Подписка ─────────────────────────────────────────────────── */}
         <section className="settings-section">
           <div className="settings-section-title">подписка</div>
+          {subMeta?.title && (
+            <div className="settings-row-hint" style={{ marginBottom: 8 }}>
+              {subMeta.title} <span className="hint-badge">из подписки</span>
+            </div>
+          )}
           <div className="row-input">
             <input
               type="url"
@@ -163,13 +169,25 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {s.autoRefresh && (
             <div className="settings-row">
               <div>
-                <div className="settings-row-label">интервал (часы)</div>
+                <div className="settings-row-label">
+                  интервал (часы)
+                  {!s.autoRefreshHoursTouched &&
+                    subMeta?.updateIntervalHours != null && (
+                      <span className="hint-badge" style={{ marginLeft: 8 }}>
+                        из подписки
+                      </span>
+                    )}
+                </div>
               </div>
               <input
                 type="number"
                 min={1}
                 max={48}
-                value={s.autoRefreshHours}
+                value={
+                  !s.autoRefreshHoursTouched && subMeta?.updateIntervalHours
+                    ? subMeta.updateIntervalHours
+                    : s.autoRefreshHours
+                }
                 onChange={(e) =>
                   s.set(
                     "autoRefreshHours",
