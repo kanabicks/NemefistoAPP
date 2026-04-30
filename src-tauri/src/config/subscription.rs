@@ -470,7 +470,10 @@ fn engines_both() -> Vec<String> {
     vec!["xray".to_string(), "mihomo".to_string()]
 }
 
-/// Только Mihomo (для протоколов, нативно не поддержанных Xray-core: hy2, tuic).
+/// Только Mihomo. Используется для протоколов, которые Xray-core нативно
+/// НЕ поддерживает — это **TUIC** и **AnyTLS**. Hysteria2 и WireGuard
+/// раньше тоже были тут, но Xray их добавил (1.8.16+ и 1.8.6+ соответственно),
+/// поэтому теперь они в `engines_both()`.
 fn engines_mihomo_only() -> Vec<String> {
     vec!["mihomo".to_string()]
 }
@@ -603,8 +606,9 @@ fn parse_ss(uri: &str) -> Result<ProxyEntry> {
 // Параметры: sni, insecure (0/1), obfs (salamander), obfs-password,
 // pinSHA256 (опционально), alpn (h3 по умолчанию).
 //
-// engine_compat: Mihomo only (нативная поддержка). Xray не имеет outbound
-// для Hysteria2.
+// engine_compat: оба ядра. Xray-core поддерживает Hysteria2 outbound с
+// версии 1.8.16 (сентябрь 2024); Mihomo — нативно с момента появления
+// поддержки Hysteria2 в Clash Meta.
 
 fn parse_hysteria2(uri: &str) -> Result<ProxyEntry> {
     let rest = uri
@@ -631,7 +635,7 @@ fn parse_hysteria2(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
-        engine_compat: engines_mihomo_only(),
+        engine_compat: engines_both(),
     })
 }
 
@@ -684,8 +688,9 @@ fn parse_tuic(uri: &str) -> Result<ProxyEntry> {
 //
 // Также короткая форма `wg://...`. privateKey URL-encoded.
 //
-// engine_compat: Mihomo only (Xray-core не имеет outbound для WireGuard
-// в основной ветке).
+// engine_compat: оба ядра. Xray-core поддерживает WireGuard outbound
+// с версии 1.8.6+ (через встроенный gVisor userspace stack); Mihomo —
+// нативно.
 
 fn parse_wireguard(uri: &str) -> Result<ProxyEntry> {
     let rest = uri
@@ -712,7 +717,7 @@ fn parse_wireguard(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
-        engine_compat: engines_mihomo_only(),
+        engine_compat: engines_both(),
     })
 }
 
@@ -954,9 +959,11 @@ fn yaml_proxy_to_entry(v: serde_yaml::Value) -> Result<ProxyEntry> {
     let raw = serde_json::to_value(&v)
         .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
 
-    // Engine-compat по протоколу: Mihomo-only типы помечаем явно.
+    // Engine-compat по протоколу. Mihomo-only — только TUIC и AnyTLS;
+    // остальное (включая hy2/wireguard, которые поддерживает современный
+    // Xray-core) — оба ядра.
     let engine_compat = match protocol.as_str() {
-        "hysteria2" | "hy2" | "tuic" | "wireguard" | "wg" | "anytls" => engines_mihomo_only(),
+        "tuic" | "anytls" => engines_mihomo_only(),
         _ => engines_both(),
     };
 

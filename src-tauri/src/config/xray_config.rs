@@ -414,10 +414,11 @@ fn build_outbound(entry: &ProxyEntry) -> Result<Value> {
         "trojan" => build_trojan(entry),
         "ss" | "shadowsocks" => build_ss(entry),
         "socks" | "socks5" => build_socks(entry),
+        "hysteria2" | "hy2" => build_hysteria2(entry),
+        "wireguard" | "wg" => build_wireguard(entry),
         "xray-json" => bail!("протокол xray-json используется as-is, без генерации outbound"),
-        // Mihomo-only протоколы — Xray не поднимет, нужно переключить движок
-        // (этап 8.B). До тех пор пользователю показываем понятную ошибку.
-        "hysteria2" | "hy2" | "tuic" | "wireguard" | "wg" => bail!(
+        // Реально Mihomo-only протоколы — Xray их не умеет (нужен этап 8.B).
+        "tuic" | "anytls" => bail!(
             "протокол {} требует движок Mihomo (поддержка добавится на этапе 8.B); \
              выберите другой сервер из подписки",
             entry.protocol
@@ -567,6 +568,137 @@ fn build_ss(entry: &ProxyEntry) -> Result<Value> {
     }))
 }
 
+// ─── Hysteria2 ────────────────────────────────────────────────────────────────
+//
+// Xray-core поддерживает Hysteria2 outbound с версии 1.8.16+.
+// Hysteria2 — QUIC-based протокол (UDP), но в Xray-конфиге используется
+// streamSettings.security = "tls" с alpn ["h3"] для h3-handshake.
+
+fn build_hysteria2(entry: &ProxyEntry) -> Result<Value> {
+    let raw = &entry.raw;
+    let password = raw["password"]
+        .as_str()
+        .context("password обязателен для Hysteria2")?;
+
+    let mut server = json!({
+        "address": entry.server,
+        "port": entry.port,
+        "password": password,
+    });
+
+    // Обфускация salamander — поддерживается в Hysteria2 для маскировки
+    // QUIC-пакетов под случайный мусор (анти-DPI прямо в протоколе).
+    let obfs_type = raw["obfs"].as_str().unwrap_or("");
+    if !obfs_type.is_empty() {
+        let obfs_password = raw["obfs-password"]
+            .as_str()
+            .or_else(|| raw["obfs_password"].as_str())
+            .unwrap_or("");
+        let mut obfs = json!({ "type": obfs_type });
+        if !obfs_password.is_empty() {
+            obfs["password"] = obfs_password.into();
+        }
+        server["obfs"] = obfs;
+    }
+
+    // SNI для TLS-handshake. Берём из sni / peer / host параметров URI.
+    let sni = raw["sni"]
+        .as_str()
+        .or_else(|| raw["peer"].as_str())
+        .or_else(|| raw["host"].as_str())
+        .unwrap_or("");
+    let insecure = raw["insecure"]
+        .as_str()
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let mut tls = json!({
+        "alpn": ["h3"],
+        "allowInsecure": insecure,
+    });
+    if !sni.is_empty() {
+        tls["serverName"] = sni.into();
+    }
+
+    Ok(json!({
+        "tag": "proxy",
+        "protocol": "hysteria2",
+        "settings": {
+            "servers": [server]
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "tls",
+            "tlsSettings": tls,
+        }
+    }))
+}
+
+// ─── WireGuard ────────────────────────────────────────────────────────────────
+//
+// Xray-core поддерживает WireGuard outbound с версии 1.8.6+ (использует
+// gVisor-стек userspace для UDP).
+
+fn build_wireguard(entry: &ProxyEntry) -> Result<Value> {
+    let raw = &entry.raw;
+    let private_key = raw["private-key"]
+        .as_str()
+        .or_else(|| raw["privateKey"].as_str())
+        .or_else(|| raw["secretKey"].as_str())
+        .context("private-key обязателен для WireGuard")?;
+    let public_key = raw["publickey"]
+        .as_str()
+        .or_else(|| raw["publicKey"].as_str())
+        .context("publickey (peer) обязателен для WireGuard")?;
+
+    // address: "10.0.0.2/32" → массив, поддерживая и одиночное значение,
+    // и список через запятую.
+    let addr_raw = raw["address"].as_str().unwrap_or("10.0.0.2/32");
+    let addresses: Vec<&str> = addr_raw.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+
+    let endpoint = format!("{}:{}", entry.server, entry.port);
+
+    let mut peer = json!({
+        "publicKey": public_key,
+        "endpoint": endpoint,
+        "allowedIPs": ["0.0.0.0/0", "::/0"],
+    });
+    if let Some(psk) = raw["presharedkey"].as_str().or_else(|| raw["preSharedKey"].as_str()) {
+        if !psk.is_empty() {
+            peer["preSharedKey"] = psk.into();
+        }
+    }
+
+    let mut settings = json!({
+        "secretKey": private_key,
+        "address": addresses,
+        "peers": [peer],
+    });
+
+    // MTU — опциональный параметр, дефолт 1420 (стандарт WireGuard).
+    if let Some(mtu) = raw["mtu"].as_u64().or_else(|| raw["mtu"].as_str().and_then(|s| s.parse().ok())) {
+        settings["mtu"] = json!(mtu);
+    }
+
+    // Cloudflare WARP использует поле reserved (3 байта). В URI приходит
+    // "0,0,0" — конвертируем в массив чисел.
+    if let Some(reserved_str) = raw["reserved"].as_str() {
+        let nums: Vec<u8> = reserved_str
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u8>().ok())
+            .collect();
+        if nums.len() == 3 {
+            settings["reserved"] = json!(nums);
+        }
+    }
+
+    Ok(json!({
+        "tag": "proxy",
+        "protocol": "wireguard",
+        "settings": settings,
+    }))
+}
+
 // ─── streamSettings ───────────────────────────────────────────────────────────
 
 fn build_stream(network: &str, security: &str, raw: &Value) -> Result<Value> {
@@ -640,6 +772,34 @@ fn build_stream(network: &str, security: &str, raw: &Value) -> Result<Value> {
                 "path": path,
                 "host": if host.is_empty() { json!([]) } else { json!([host]) }
             });
+        }
+        "xhttp" => {
+            // XHTTP (Xray ≥ 1.8.18) — современный transport, маскирующий
+            // трафик под HTTP/1.1+2+3. Заменяет splithttp/h2/grpc.
+            // mode: auto (default) | packet-up | stream-up | stream-one.
+            let path = raw["path"].as_str().unwrap_or("/");
+            let host = raw["host"].as_str().unwrap_or("");
+            let mode = raw["mode"].as_str().unwrap_or("auto");
+            let mut x = json!({
+                "path": path,
+                "mode": mode,
+            });
+            if !host.is_empty() {
+                x["host"] = host.into();
+            }
+            s["xhttpSettings"] = x;
+        }
+        "httpupgrade" => {
+            // HTTPUpgrade — single-stream WebSocket-style upgrade
+            // (один HTTP request, после которого соединение остаётся
+            // открытым как сырой стрим). Дешевле WS, но похож на TLS.
+            let path = raw["path"].as_str().unwrap_or("/");
+            let host = raw["host"].as_str().unwrap_or("");
+            let mut hu = json!({ "path": path });
+            if !host.is_empty() {
+                hu["host"] = host.into();
+            }
+            s["httpupgradeSettings"] = hu;
         }
         "tcp" => {
             // HTTP obfuscation поверх TCP (устаревший, но встречается)
