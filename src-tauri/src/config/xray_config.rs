@@ -5,6 +5,7 @@
 //! Routing: приватные адреса → direct, всё остальное → proxy.
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::server::ProxyEntry;
@@ -15,6 +16,31 @@ pub struct XrayConfig {
     pub socks_port: u16,
     pub http_port: u16,
 }
+
+/// Anti-DPI обвязка Xray (этап 10). Все три механизма опциональны и
+/// независимы. Все строковые поля — формат «min-max» или enum-значения,
+/// валидация на стороне фронта/настроек.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntiDpiOptions {
+    /// Включить TCP-фрагментацию (10.A): freedom outbound с `fragment`,
+    /// chain через `streamSettings.sockopt.dialerProxy` основного outbound.
+    pub fragmentation: bool,
+    pub fragmentation_packets: String,
+    pub fragmentation_length: String,
+    pub fragmentation_interval: String,
+    /// Включить шумовые UDP-пакеты (10.B): freedom outbound с `noises`.
+    pub noises: bool,
+    pub noises_type: String,
+    pub noises_packet: String,
+    pub noises_delay: String,
+    /// Резолвить адрес VPN-сервера через DoH (10.C): dns.servers + hosts
+    /// для bootstrap'а DoH-эндпоинта.
+    pub server_resolve: bool,
+    pub server_resolve_doh: String,
+    pub server_resolve_bootstrap: String,
+}
+
 
 /// Построить конфиг Xray для заданного сервера и портов.
 ///
@@ -30,8 +56,9 @@ pub fn build(
     listen: &str,
     tun_mode: bool,
     physic_iface: Option<&str>,
+    anti_dpi: Option<&AntiDpiOptions>,
 ) -> Result<XrayConfig> {
-    let outbound = build_outbound(entry)
+    let mut outbound = build_outbound(entry)
         .with_context(|| format!("ошибка построения outbound для «{}»", entry.name))?;
     let direct_outbound = if tun_mode && physic_iface.is_some() {
         let iface = physic_iface.unwrap();
@@ -47,16 +74,120 @@ pub fn build(
         json!({ "tag": "direct", "protocol": "freedom", "settings": {} })
     };
 
-    let config = json!({
-        "log": {
-            "loglevel": "warning"
-        },
-        "dns": {
+    // Anti-DPI: добавляем «fragment» и/или «noise» freedom-outbounds
+    // и подключаем основной outbound через dialerProxy chain.
+    let mut anti_dpi_outbounds: Vec<Value> = Vec::new();
+    let mut chain_tag: Option<&'static str> = None;
+    if let Some(ad) = anti_dpi {
+        if ad.fragmentation {
+            anti_dpi_outbounds.push(json!({
+                "tag": "fragment",
+                "protocol": "freedom",
+                "settings": {
+                    "fragment": {
+                        "packets": ad.fragmentation_packets,
+                        "length": ad.fragmentation_length,
+                        "interval": ad.fragmentation_interval,
+                    }
+                }
+            }));
+            chain_tag = Some("fragment");
+        }
+        if ad.noises {
+            // Если уже есть fragment — chain выглядит как proxy → fragment → noise.
+            // Делаем noise последним звеном цепочки (на сетевой стек). Для этого
+            // chain_tag меняем на "noise", а fragment сам идёт через noise.
+            anti_dpi_outbounds.push(json!({
+                "tag": "noise",
+                "protocol": "freedom",
+                "settings": {
+                    "noises": [{
+                        "type": ad.noises_type,
+                        "packet": ad.noises_packet,
+                        "delay": ad.noises_delay,
+                    }]
+                }
+            }));
+            // Если был fragment — пристёгиваем fragment к noise.
+            if chain_tag == Some("fragment") {
+                if let Some(frag) = anti_dpi_outbounds
+                    .iter_mut()
+                    .find(|o| o["tag"] == "fragment")
+                {
+                    frag["streamSettings"] = json!({
+                        "sockopt": { "dialerProxy": "noise" }
+                    });
+                }
+            }
+            chain_tag = Some("noise");
+        }
+        if let Some(tag) = chain_tag {
+            // Подключаем основной outbound через chain.
+            let stream = outbound
+                .as_object_mut()
+                .unwrap()
+                .entry("streamSettings".to_string())
+                .or_insert_with(|| json!({}));
+            if !stream.is_object() {
+                *stream = json!({});
+            }
+            let stream_obj = stream.as_object_mut().unwrap();
+            let sockopt = stream_obj
+                .entry("sockopt".to_string())
+                .or_insert_with(|| json!({}));
+            if !sockopt.is_object() {
+                *sockopt = json!({});
+            }
+            sockopt
+                .as_object_mut()
+                .unwrap()
+                .insert("dialerProxy".to_string(), json!(tag));
+        }
+    }
+
+    // DNS: если включён DoH-resolve адреса сервера, добавляем DoH с
+    // bootstrap-IP. server-domain ставим в matching правило, чтобы
+    // именно адрес VPN-сервера резолвился через DoH.
+    let dns = if let Some(ad) = anti_dpi.filter(|a| a.server_resolve) {
+        // Извлекаем host часть DoH endpoint URL для hosts-маппинга
+        let doh_host = doh_endpoint_host(&ad.server_resolve_doh)
+            .unwrap_or_else(|| "cloudflare-dns.com".to_string());
+        json!({
+            "hosts": {
+                doh_host: ad.server_resolve_bootstrap.clone(),
+            },
+            "servers": [
+                {
+                    "address": ad.server_resolve_doh,
+                    "domains": [format!("full:{}", entry.server)]
+                },
+                "localhost"
+            ]
+        })
+    } else {
+        json!({
             "servers": [
                 "https+local://1.1.1.1/dns-query",
                 "localhost"
             ]
+        })
+    };
+
+    let mut all_outbounds: Vec<Value> = Vec::with_capacity(3 + anti_dpi_outbounds.len());
+    all_outbounds.push(outbound);
+    all_outbounds.extend(anti_dpi_outbounds);
+    all_outbounds.push(direct_outbound);
+    all_outbounds.push(json!({
+        "tag": "block",
+        "protocol": "blackhole",
+        "settings": {}
+    }));
+
+    let config = json!({
+        "log": {
+            "loglevel": "warning"
         },
+        "dns": dns,
         "inbounds": [
             {
                 "tag": "socks-in",
@@ -84,15 +215,7 @@ pub fn build(
                 }
             }
         ],
-        "outbounds": [
-            outbound,
-            direct_outbound,
-            {
-                "tag": "block",
-                "protocol": "blackhole",
-                "settings": {}
-            }
-        ],
+        "outbounds": all_outbounds,
         "routing": {
             "domainStrategy": "IPIfNonMatch",
             "rules": [
@@ -114,6 +237,13 @@ pub fn build(
     });
 
     Ok(XrayConfig { json: config, socks_port, http_port })
+}
+
+/// Извлечь host из URL `https://cloudflare-dns.com/dns-query` → `cloudflare-dns.com`.
+fn doh_endpoint_host(url: &str) -> Option<String> {
+    let after_proto = url.split("://").nth(1)?;
+    let host = after_proto.split('/').next()?;
+    if host.is_empty() { None } else { Some(host.to_string()) }
 }
 
 // ─── Приватные CIDR (замена geoip:private) ────────────────────────────────────
@@ -283,7 +413,15 @@ fn build_outbound(entry: &ProxyEntry) -> Result<Value> {
         "vmess" => build_vmess(entry),
         "trojan" => build_trojan(entry),
         "ss" | "shadowsocks" => build_ss(entry),
+        "socks" | "socks5" => build_socks(entry),
         "xray-json" => bail!("протокол xray-json используется as-is, без генерации outbound"),
+        // Mihomo-only протоколы — Xray не поднимет, нужно переключить движок
+        // (этап 8.B). До тех пор пользователю показываем понятную ошибку.
+        "hysteria2" | "hy2" | "tuic" | "wireguard" | "wg" => bail!(
+            "протокол {} требует движок Mihomo (поддержка добавится на этапе 8.B); \
+             выберите другой сервер из подписки",
+            entry.protocol
+        ),
         p => bail!("неподдерживаемый протокол Xray: {p}"),
     }
 }
@@ -373,6 +511,33 @@ fn build_trojan(entry: &ProxyEntry) -> Result<Value> {
             }]
         },
         "streamSettings": stream
+    }))
+}
+
+// ─── SOCKS5 ───────────────────────────────────────────────────────────────────
+
+fn build_socks(entry: &ProxyEntry) -> Result<Value> {
+    let raw = &entry.raw;
+    let user = raw["username"].as_str().unwrap_or("");
+    let password = raw["password"].as_str().unwrap_or("");
+
+    let mut server = json!({
+        "address": entry.server,
+        "port": entry.port,
+    });
+    if !user.is_empty() {
+        server["users"] = json!([{
+            "user": user,
+            "pass": password,
+        }]);
+    }
+
+    Ok(json!({
+        "tag": "proxy",
+        "protocol": "socks",
+        "settings": {
+            "servers": [server]
+        }
     }))
 }
 

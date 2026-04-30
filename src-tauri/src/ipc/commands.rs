@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
-use crate::config::xray_config;
+use crate::config::xray_config::{self, AntiDpiOptions};
 use crate::config::{HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
 use crate::vpn::{find_free_port, ping_entry, XrayState};
@@ -247,6 +247,7 @@ pub async fn connect(
     server_index: usize,
     mode: String,
     allow_lan: Option<bool>,
+    anti_dpi: Option<AntiDpiOptions>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     sub: State<'_, SubscriptionState>,
@@ -315,6 +316,7 @@ pub async fn connect(
             listen,
             tun_mode,
             physic_iface.as_deref(),
+            anti_dpi.as_ref(),
         )
         .map_err(|e| e.to_string())?;
         (cfg.json, cfg.socks_port, cfg.http_port)
@@ -400,6 +402,30 @@ pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
 #[tauri::command]
 pub fn is_xray_running(xray: State<'_, XrayState>) -> bool {
     xray.is_running()
+}
+
+// ─── Crash recovery (9.D) ─────────────────────────────────────────────────────
+
+/// Существует ли backup-файл системного прокси с прошлой сессии.
+/// UI вызывает на старте; если true — показывает диалог «обнаружены
+/// остатки прошлой сессии, восстановить настройки прокси?».
+#[tauri::command]
+pub fn has_proxy_backup() -> bool {
+    platform::proxy::has_pending_backup()
+}
+
+/// Восстановить системный прокси из backup-файла (после краша приложения
+/// в режиме proxy). Удаляет backup-файл после успеха.
+#[tauri::command]
+pub fn restore_proxy_backup() -> Result<(), String> {
+    platform::proxy::restore_from_backup().map_err(|e| e.to_string())
+}
+
+/// Отбросить backup без применения (пользователь в диалоге выбрал
+/// «не восстанавливать»). Текущее состояние реестра остаётся как есть.
+#[tauri::command]
+pub fn discard_proxy_backup() {
+    platform::proxy::discard_backup();
 }
 
 /// Вернуть HWID устройства (Windows MachineGuid либо локально сохранённый UUID).

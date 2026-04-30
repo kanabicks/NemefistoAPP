@@ -449,6 +449,149 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           })()}
         </section>
 
+        {/* ── Anti-DPI (этап 10) ───────────────────────────────────────── */}
+        <section className="settings-section">
+          <div className="settings-section-title">
+            anti-dpi
+            {!s.antiDpiTouched &&
+              (subMeta?.fragmentationEnable != null ||
+                subMeta?.noisesEnable != null ||
+                subMeta?.serverResolveEnable != null) && (
+                <span className="hint-badge" style={{ marginLeft: 8 }}>
+                  из подписки
+                </span>
+              )}
+          </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">фрагментация tcp</div>
+              <div className="settings-row-hint">
+                режет tls clienthello на куски — обходит большинство dpi
+              </div>
+            </div>
+            <Toggle
+              on={
+                !s.antiDpiTouched && subMeta?.fragmentationEnable != null
+                  ? subMeta.fragmentationEnable
+                  : s.antiDpiFragmentation
+              }
+              onChange={(v) => s.set("antiDpiFragmentation", v)}
+            />
+          </div>
+
+          {s.antiDpiFragmentation && (
+            <>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">какие пакеты</div>
+                </div>
+                <select
+                  className="select-field"
+                  value={s.antiDpiFragmentationPackets}
+                  onChange={(e) =>
+                    s.set("antiDpiFragmentationPackets", e.target.value)
+                  }
+                >
+                  <option value="tlshello">tlshello</option>
+                  <option value="1-3">1-3</option>
+                  <option value="all">все</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">длина (байт)</div>
+                </div>
+                <input
+                  type="text"
+                  className="input input-num"
+                  value={s.antiDpiFragmentationLength}
+                  onChange={(e) =>
+                    s.set("antiDpiFragmentationLength", e.target.value)
+                  }
+                />
+              </div>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">интервал (мс)</div>
+                </div>
+                <input
+                  type="text"
+                  className="input input-num"
+                  value={s.antiDpiFragmentationInterval}
+                  onChange={(e) =>
+                    s.set("antiDpiFragmentationInterval", e.target.value)
+                  }
+                />
+              </div>
+            </>
+          )}
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">шумовые пакеты</div>
+              <div className="settings-row-hint">
+                фейковые udp-пакеты для запутывания dpi
+              </div>
+            </div>
+            <Toggle
+              on={
+                !s.antiDpiTouched && subMeta?.noisesEnable != null
+                  ? subMeta.noisesEnable
+                  : s.antiDpiNoises
+              }
+              onChange={(v) => s.set("antiDpiNoises", v)}
+            />
+          </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">doh-резолв сервера</div>
+              <div className="settings-row-hint">
+                адрес vpn-сервера резолвится через doh, минуя системный dns
+                (помогает при dns-блокировках)
+              </div>
+            </div>
+            <Toggle
+              on={
+                !s.antiDpiTouched && subMeta?.serverResolveEnable != null
+                  ? subMeta.serverResolveEnable
+                  : s.antiDpiServerResolve
+              }
+              onChange={(v) => s.set("antiDpiServerResolve", v)}
+            />
+          </div>
+
+          {s.antiDpiServerResolve && (
+            <>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">doh endpoint</div>
+                </div>
+                <input
+                  type="url"
+                  className="input"
+                  value={s.antiDpiResolveDoH}
+                  onChange={(e) => s.set("antiDpiResolveDoH", e.target.value)}
+                />
+              </div>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">bootstrap ip</div>
+                </div>
+                <input
+                  type="text"
+                  className="input input-num"
+                  value={s.antiDpiResolveBootstrap}
+                  onChange={(e) =>
+                    s.set("antiDpiResolveBootstrap", e.target.value)
+                  }
+                />
+              </div>
+            </>
+          )}
+        </section>
+
         {/* ── Туннель ──────────────────────────────────────────────────── */}
         <section className="settings-section">
           <div className="settings-section-title">туннель</div>

@@ -61,6 +61,31 @@ pub struct SubscriptionMeta {
     /// Желаемое VPN-ядро (`X-Nemefisto-Engine`): xray/mihomo. Зарезер-
     /// вировано для этапа 8.B.
     pub engine: Option<String>,
+
+    // ── Anti-DPI (этап 10) ──────────────────────────────────────────
+    /// Включена ли TCP-фрагментация (`fragmentation-enable: 0|1`).
+    pub fragmentation_enable: Option<bool>,
+    /// Какие пакеты фрагментировать (`fragmentation-packets`):
+    /// `tlshello` / `1-3` / `all`.
+    pub fragmentation_packets: Option<String>,
+    /// Длина фрагмента (`fragmentation-length`): `min-max`.
+    pub fragmentation_length: Option<String>,
+    /// Задержка между фрагментами (`fragmentation-interval`): `min-max` (мс).
+    pub fragmentation_interval: Option<String>,
+    /// Включены ли шумовые пакеты (`noises-enable: 0|1`).
+    pub noises_enable: Option<bool>,
+    /// Тип шума (`noises-type`): `rand` / `str` / `hex`.
+    pub noises_type: Option<String>,
+    /// Содержимое или размер шумового пакета (`noises-packet`).
+    pub noises_packet: Option<String>,
+    /// Задержка между шумовыми пакетами (`noises-delay`).
+    pub noises_delay: Option<String>,
+    /// Резолвить адрес сервера через DoH (`server-address-resolve-enable: 0|1`).
+    pub server_resolve_enable: Option<bool>,
+    /// DoH endpoint для резолва (`server-address-resolve-dns-domain`).
+    pub server_resolve_doh: Option<String>,
+    /// Bootstrap-IP для DoH (`server-address-resolve-dns-ip`).
+    pub server_resolve_bootstrap: Option<String>,
 }
 
 /// Кешированный список серверов и метаданных из последней успешной
@@ -121,6 +146,17 @@ pub fn parse_subscription_userinfo(raw: &str) -> SubscriptionMeta {
         preset: None,
         mode: None,
         engine: None,
+        fragmentation_enable: None,
+        fragmentation_packets: None,
+        fragmentation_length: None,
+        fragmentation_interval: None,
+        noises_enable: None,
+        noises_type: None,
+        noises_packet: None,
+        noises_delay: None,
+        server_resolve_enable: None,
+        server_resolve_doh: None,
+        server_resolve_bootstrap: None,
     }
 }
 
@@ -248,6 +284,17 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
             preset: None,
             mode: None,
             engine: None,
+            fragmentation_enable: None,
+            fragmentation_packets: None,
+            fragmentation_length: None,
+            fragmentation_interval: None,
+            noises_enable: None,
+            noises_type: None,
+            noises_packet: None,
+            noises_delay: None,
+            server_resolve_enable: None,
+            server_resolve_doh: None,
+            server_resolve_bootstrap: None,
         });
 
     // Стандартные заголовки (8.C, шаг 2)
@@ -289,6 +336,26 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
     meta.mode = header_enum("x-nemefisto-mode", &["proxy", "tun"]);
     meta.engine = header_enum("x-nemefisto-engine", &["xray", "mihomo"]);
 
+    // Anti-DPI заголовки (этап 10)
+    let header_bool = |name: &str| -> Option<bool> {
+        header_str(name).map(|v| {
+            let v = v.trim().to_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+    };
+    meta.fragmentation_enable = header_bool("fragmentation-enable");
+    meta.fragmentation_packets =
+        header_enum("fragmentation-packets", &["tlshello", "1-3", "all"]);
+    meta.fragmentation_length = header_str("fragmentation-length");
+    meta.fragmentation_interval = header_str("fragmentation-interval");
+    meta.noises_enable = header_bool("noises-enable");
+    meta.noises_type = header_enum("noises-type", &["rand", "str", "hex"]);
+    meta.noises_packet = header_str("noises-packet");
+    meta.noises_delay = header_str("noises-delay");
+    meta.server_resolve_enable = header_bool("server-address-resolve-enable");
+    meta.server_resolve_doh = header_str("server-address-resolve-dns-domain");
+    meta.server_resolve_bootstrap = header_str("server-address-resolve-dns-ip");
+
     // Если все поля пустые/нулевые — возвращаем None чтобы UI не рендерил
     // пустую плашку.
     let has_any = meta.used > 0
@@ -306,7 +373,10 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
         || meta.button_style.is_some()
         || meta.preset.is_some()
         || meta.mode.is_some()
-        || meta.engine.is_some();
+        || meta.engine.is_some()
+        || meta.fragmentation_enable.is_some()
+        || meta.noises_enable.is_some()
+        || meta.server_resolve_enable.is_some();
 
     if has_any {
         Some(meta)
@@ -382,9 +452,27 @@ fn parse_proxy_uri(uri: &str) -> Result<ProxyEntry> {
         parse_trojan(uri)
     } else if uri.starts_with("ss://") {
         parse_ss(uri)
+    } else if uri.starts_with("hysteria2://") || uri.starts_with("hy2://") {
+        parse_hysteria2(uri)
+    } else if uri.starts_with("tuic://") {
+        parse_tuic(uri)
+    } else if uri.starts_with("wireguard://") || uri.starts_with("wg://") {
+        parse_wireguard(uri)
+    } else if uri.starts_with("socks5://") || uri.starts_with("socks://") {
+        parse_socks(uri)
     } else {
         bail!("неизвестный протокол: {uri}")
     }
+}
+
+/// Стандартная пара движков для протоколов, поддерживаемых обоими ядрами.
+fn engines_both() -> Vec<String> {
+    vec!["xray".to_string(), "mihomo".to_string()]
+}
+
+/// Только Mihomo (для протоколов, нативно не поддержанных Xray-core: hy2, tuic).
+fn engines_mihomo_only() -> Vec<String> {
+    vec!["mihomo".to_string()]
 }
 
 // ─── парсеры URI ──────────────────────────────────────────────────────────────
@@ -411,6 +499,7 @@ fn parse_vless(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
     })
 }
 
@@ -440,6 +529,7 @@ fn parse_vmess(uri: &str) -> Result<ProxyEntry> {
         server,
         port,
         raw: json,
+        engine_compat: engines_both(),
     })
 }
 
@@ -465,6 +555,7 @@ fn parse_trojan(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
     })
 }
 
@@ -498,7 +589,202 @@ fn parse_ss(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
     })
+}
+
+// ─── Hysteria2 ───────────────────────────────────────────────────────────────
+//
+// Формат: `hysteria2://password@server:port?sni=...&insecure=0&obfs=salamander
+//          &obfs-password=...#name`
+// Также допустимая короткая форма `hy2://...`.
+//
+// Особенность: пароль (`password`) — единственное «userinfo» в URL, без user.
+// Параметры: sni, insecure (0/1), obfs (salamander), obfs-password,
+// pinSHA256 (опционально), alpn (h3 по умолчанию).
+//
+// engine_compat: Mihomo only (нативная поддержка). Xray не имеет outbound
+// для Hysteria2.
+
+fn parse_hysteria2(uri: &str) -> Result<ProxyEntry> {
+    let rest = uri
+        .strip_prefix("hysteria2://")
+        .or_else(|| uri.strip_prefix("hy2://"))
+        .unwrap();
+
+    let (rest, name) = split_fragment(rest);
+    let (authority, query) = split_query(rest);
+    let (password, host, port) = split_userinfo_hostport(authority)
+        .context("некорректный authority в Hysteria2 URI")?;
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("password".into(), url_decode(password).into());
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            raw.insert(k.to_string(), url_decode(v).into());
+        }
+    }
+
+    Ok(ProxyEntry {
+        name,
+        protocol: "hysteria2".to_string(),
+        server: host.to_string(),
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_mihomo_only(),
+    })
+}
+
+// ─── TUIC ────────────────────────────────────────────────────────────────────
+//
+// Формат: `tuic://uuid:password@server:port?sni=...&alpn=h3&congestion_control=bbr
+//          &udp_relay_mode=quic&disable_sni=0#name`
+//
+// userinfo разделён двоеточием: до `:` — uuid, после — password.
+//
+// engine_compat: Mihomo only.
+
+fn parse_tuic(uri: &str) -> Result<ProxyEntry> {
+    let rest = uri.strip_prefix("tuic://").unwrap();
+
+    let (rest, name) = split_fragment(rest);
+    let (authority, query) = split_query(rest);
+    let (userinfo, host, port) = split_userinfo_hostport(authority)
+        .context("некорректный authority в TUIC URI")?;
+
+    // userinfo: "uuid:password"
+    let (uuid, password) = userinfo
+        .split_once(':')
+        .map(|(u, p)| (url_decode(u), url_decode(p)))
+        .unwrap_or_else(|| (url_decode(userinfo), String::new()));
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("uuid".into(), uuid.into());
+    raw.insert("password".into(), password.into());
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            raw.insert(k.to_string(), url_decode(v).into());
+        }
+    }
+
+    Ok(ProxyEntry {
+        name,
+        protocol: "tuic".to_string(),
+        server: host.to_string(),
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_mihomo_only(),
+    })
+}
+
+// ─── WireGuard ───────────────────────────────────────────────────────────────
+//
+// Формат: `wireguard://privateKey@server:port?publickey=...&address=10.0.0.2/32
+//          &dns=1.1.1.1&mtu=1420&reserved=0,0,0&presharedkey=...#name`
+//
+// Также короткая форма `wg://...`. privateKey URL-encoded.
+//
+// engine_compat: Mihomo only (Xray-core не имеет outbound для WireGuard
+// в основной ветке).
+
+fn parse_wireguard(uri: &str) -> Result<ProxyEntry> {
+    let rest = uri
+        .strip_prefix("wireguard://")
+        .or_else(|| uri.strip_prefix("wg://"))
+        .unwrap();
+
+    let (rest, name) = split_fragment(rest);
+    let (authority, query) = split_query(rest);
+    let (private_key, host, port) = split_userinfo_hostport(authority)
+        .context("некорректный authority в WireGuard URI")?;
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("private-key".into(), url_decode(private_key).into());
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            raw.insert(k.to_string(), url_decode(v).into());
+        }
+    }
+
+    Ok(ProxyEntry {
+        name,
+        protocol: "wireguard".to_string(),
+        server: host.to_string(),
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_mihomo_only(),
+    })
+}
+
+// ─── SOCKS5 ──────────────────────────────────────────────────────────────────
+//
+// Формат: `socks5://[user:password@]host:port#name` (или `socks://...`).
+// userinfo может отсутствовать — анонимный SOCKS-сервер.
+//
+// engine_compat: оба ядра (Xray имеет SOCKS outbound, Mihomo тоже).
+
+fn parse_socks(uri: &str) -> Result<ProxyEntry> {
+    let rest = uri
+        .strip_prefix("socks5://")
+        .or_else(|| uri.strip_prefix("socks://"))
+        .unwrap();
+
+    let (rest, name) = split_fragment(rest);
+    let (authority, _query) = split_query(rest);
+
+    // userinfo может быть в base64 (SIP-style) или открытым "user:pass"
+    let (userinfo, host, port) = if authority.contains('@') {
+        split_userinfo_hostport(authority)
+            .context("некорректный authority в SOCKS URI")?
+    } else {
+        // Без userinfo — host:port
+        let (h, p) = parse_hostport(authority)
+            .context("некорректный host:port в SOCKS URI")?;
+        ("", h, p)
+    };
+
+    let mut raw = serde_json::Map::new();
+    if !userinfo.is_empty() {
+        // Пробуем base64-декод (SIP-style). Если не вышло — берём как plaintext.
+        let decoded = general_purpose::STANDARD
+            .decode(userinfo)
+            .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(userinfo))
+            .or_else(|_| general_purpose::URL_SAFE.decode(userinfo))
+            .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(userinfo))
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_else(|| url_decode(userinfo));
+
+        if let Some((u, p)) = decoded.split_once(':') {
+            raw.insert("username".into(), u.to_string().into());
+            raw.insert("password".into(), p.to_string().into());
+        } else {
+            raw.insert("username".into(), decoded.into());
+        }
+    }
+
+    Ok(ProxyEntry {
+        name,
+        protocol: "socks".to_string(),
+        server: host.to_string(),
+        port,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_both(),
+    })
+}
+
+/// `"host:port"` или `"[ipv6]:port"` → (host, port).
+fn parse_hostport(s: &str) -> Option<(&str, u16)> {
+    let (host, port_str) = if s.starts_with('[') {
+        let close = s.find(']')?;
+        let port_str = s[close + 1..].strip_prefix(':')?;
+        (&s[..=close], port_str)
+    } else {
+        let colon = s.rfind(':')?;
+        (&s[..colon], &s[colon + 1..])
+    };
+    let port: u16 = port_str.parse().ok()?;
+    Some((host, port))
 }
 
 // ─── вспомогательные функции ──────────────────────────────────────────────────
@@ -609,6 +895,8 @@ fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
                 server: "127.0.0.1".to_string(),
                 port: 0,
                 raw: cfg,
+                // Готовый Xray JSON конфигурируется только Xray-ядром.
+                engine_compat: vec!["xray".to_string()],
             }
         })
         .collect();
@@ -666,11 +954,18 @@ fn yaml_proxy_to_entry(v: serde_yaml::Value) -> Result<ProxyEntry> {
     let raw = serde_json::to_value(&v)
         .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
 
+    // Engine-compat по протоколу: Mihomo-only типы помечаем явно.
+    let engine_compat = match protocol.as_str() {
+        "hysteria2" | "hy2" | "tuic" | "wireguard" | "wg" | "anytls" => engines_mihomo_only(),
+        _ => engines_both(),
+    };
+
     Ok(ProxyEntry {
         name,
         protocol,
         server,
         port,
         raw,
+        engine_compat,
     })
 }

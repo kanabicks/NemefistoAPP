@@ -11,6 +11,7 @@ import { Scene3D } from "./components/effects/Scene3D";
 import { CustomCursor } from "./components/effects/CustomCursor";
 import { WideAmbient } from "./components/effects/WideAmbient";
 import { AnnounceBanner } from "./components/AnnounceBanner";
+import { CrashRecoveryDialog } from "./components/CrashRecoveryDialog";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
@@ -189,6 +190,8 @@ function App() {
       {settingsOpen && (
         <SettingsPage onClose={() => setSettingsOpen(false)} />
       )}
+
+      <CrashRecoveryDialog />
     </>
   );
 }

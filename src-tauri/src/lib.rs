@@ -10,8 +10,9 @@ use tauri::Manager;
 use config::hwid::load_or_create;
 use config::{HwidState, SubscriptionState};
 use ipc::commands::{
-    connect, disconnect, fetch_subscription, get_hwid, get_servers, get_subscription_meta,
-    is_xray_running, ping_servers, read_xray_log,
+    connect, discard_proxy_backup, disconnect, fetch_subscription, get_hwid, get_servers,
+    get_subscription_meta, has_proxy_backup, is_xray_running, ping_servers, read_xray_log,
+    restore_proxy_backup,
 };
 use vpn::XrayState;
 
@@ -55,6 +56,9 @@ pub fn run() {
             get_hwid,
             ping_servers,
             read_xray_log,
+            has_proxy_backup,
+            restore_proxy_backup,
+            discard_proxy_backup,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка инициализации Tauri runtime")

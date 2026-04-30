@@ -8,6 +8,10 @@ export type ProxyEntry = {
   server: string;
   port: number;
   raw: Record<string, unknown>;
+  /** Список движков, способных поднять этот сервер.
+   *  Возможные значения: "xray", "mihomo".
+   *  Если поле пустое (старый кеш до 8.A) — считаем совместимым с обоими. */
+  engine_compat?: string[];
 };
 
 /** Метаданные подписки из HTTP-заголовков.
@@ -48,6 +52,18 @@ export type SubscriptionMeta = {
   preset: string | null;
   mode: string | null;
   engine: string | null;
+  // Anti-DPI (этап 10)
+  fragmentationEnable: boolean | null;
+  fragmentationPackets: string | null;
+  fragmentationLength: string | null;
+  fragmentationInterval: string | null;
+  noisesEnable: boolean | null;
+  noisesType: string | null;
+  noisesPacket: string | null;
+  noisesDelay: string | null;
+  serverResolveEnable: boolean | null;
+  serverResolveDoH: string | null;
+  serverResolveBootstrap: string | null;
 };
 
 /** Сырой ответ команды fetch_subscription — Rust возвращает snake_case. */
@@ -68,6 +84,17 @@ type SubscriptionMetaRaw = {
   preset: string | null;
   mode: string | null;
   engine: string | null;
+  fragmentation_enable: boolean | null;
+  fragmentation_packets: string | null;
+  fragmentation_length: string | null;
+  fragmentation_interval: string | null;
+  noises_enable: boolean | null;
+  noises_type: string | null;
+  noises_packet: string | null;
+  noises_delay: string | null;
+  server_resolve_enable: boolean | null;
+  server_resolve_doh: string | null;
+  server_resolve_bootstrap: string | null;
 };
 type FetchSubscriptionRaw = {
   servers: ProxyEntry[];
@@ -118,6 +145,17 @@ const normalizeMeta = (
         preset: raw.preset,
         mode: raw.mode,
         engine: raw.engine,
+        fragmentationEnable: raw.fragmentation_enable,
+        fragmentationPackets: raw.fragmentation_packets,
+        fragmentationLength: raw.fragmentation_length,
+        fragmentationInterval: raw.fragmentation_interval,
+        noisesEnable: raw.noises_enable,
+        noisesType: raw.noises_type,
+        noisesPacket: raw.noises_packet,
+        noisesDelay: raw.noises_delay,
+        serverResolveEnable: raw.server_resolve_enable,
+        serverResolveDoH: raw.server_resolve_doh,
+        serverResolveBootstrap: raw.server_resolve_bootstrap,
       }
     : null;
 

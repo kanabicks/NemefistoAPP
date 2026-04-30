@@ -99,6 +99,40 @@ export type Settings = {
   backgroundTouched: boolean;
   buttonStyleTouched: boolean;
   presetTouched: boolean;
+
+  // ── Anti-DPI (этап 10) ──────────────────────────────────────────────
+  /** TCP-фрагментация: режет TLS ClientHello (или другие пакеты) на
+   *  куски, мешая DPI собрать его. Реализовано через freedom-outbound
+   *  Xray с настройкой `fragment`. */
+  antiDpiFragmentation: boolean;
+  /** Какие пакеты фрагментировать: `tlshello` (default — только
+   *  TLS handshake), `1-3` (первые 1-3 пакета), `all` (все). */
+  antiDpiFragmentationPackets: string;
+  /** Длина одного фрагмента в байтах: формат `min-max`. */
+  antiDpiFragmentationLength: string;
+  /** Задержка между фрагментами в миллисекундах: `min-max`. */
+  antiDpiFragmentationInterval: string;
+  /** UDP шумовые пакеты — фейковые UDP-пакеты для запутывания DPI. */
+  antiDpiNoises: boolean;
+  /** Тип содержимого: `rand` (случайные байты), `str` (строка),
+   *  `hex` (hex-строка). */
+  antiDpiNoisesType: string;
+  /** Содержимое пакета или его размер в формате `min-max`. */
+  antiDpiNoisesPacket: string;
+  /** Задержка между шумовыми пакетами `min-max` (мс). */
+  antiDpiNoisesDelay: string;
+  /** Резолвить адрес VPN-сервера через DoH (минуя системный DNS).
+   *  Помогает при DNS-блокировках Роскомнадзора. */
+  antiDpiServerResolve: boolean;
+  /** DoH endpoint для резолва адреса сервера. */
+  antiDpiResolveDoH: string;
+  /** Bootstrap-IP для самого DoH-сервера (чтобы он сам не резолвился
+   *  через себя). */
+  antiDpiResolveBootstrap: string;
+  /** Один общий override-флаг для всей anti-DPI секции. Если
+   *  false — настройки из заголовков подписки `fragmentation-*` /
+   *  `noises-*` / `server-address-resolve-*` имеют приоритет. */
+  antiDpiTouched: boolean;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -122,6 +156,21 @@ const DEFAULTS: Settings = {
   backgroundTouched: false,
   buttonStyleTouched: false,
   presetTouched: false,
+
+  // Anti-DPI: по дефолту всё выключено, разумные значения для случая
+  // когда пользователь включит вручную.
+  antiDpiFragmentation: false,
+  antiDpiFragmentationPackets: "tlshello",
+  antiDpiFragmentationLength: "10-20",
+  antiDpiFragmentationInterval: "10-20",
+  antiDpiNoises: false,
+  antiDpiNoisesType: "rand",
+  antiDpiNoisesPacket: "10-30",
+  antiDpiNoisesDelay: "10-20",
+  antiDpiServerResolve: false,
+  antiDpiResolveDoH: "https://cloudflare-dns.com/dns-query",
+  antiDpiResolveBootstrap: "1.1.1.1",
+  antiDpiTouched: false,
 };
 
 const KEY = "nemefisto.settings.v1";
@@ -161,6 +210,23 @@ export const useSettingsStore = create<Store>((setState, get) => ({
     if (key === "background") next.backgroundTouched = true;
     if (key === "buttonStyle") next.buttonStyleTouched = true;
     if (key === "preset") next.presetTouched = true;
+    // Любая правка anti-DPI поля → touched (override от заголовков
+    // подписки больше не применяется).
+    if (
+      key === "antiDpiFragmentation" ||
+      key === "antiDpiFragmentationPackets" ||
+      key === "antiDpiFragmentationLength" ||
+      key === "antiDpiFragmentationInterval" ||
+      key === "antiDpiNoises" ||
+      key === "antiDpiNoisesType" ||
+      key === "antiDpiNoisesPacket" ||
+      key === "antiDpiNoisesDelay" ||
+      key === "antiDpiServerResolve" ||
+      key === "antiDpiResolveDoH" ||
+      key === "antiDpiResolveBootstrap"
+    ) {
+      next.antiDpiTouched = true;
+    }
     save(next);
     setState(next);
   },

@@ -779,6 +779,83 @@ input, textarea { font: inherit; cursor: text; }
   color: var(--bg);
 }
 
+/* ── Crash recovery dialog (9.D) ─────────────────────────────────────── */
+.recovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: recovery-fade 0.25s ease-out;
+}
+@keyframes recovery-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.recovery-dialog {
+  max-width: 380px;
+  width: calc(100% - 32px);
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-2);
+  color: var(--fg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: recovery-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes recovery-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.recovery-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 10px;
+}
+.recovery-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  margin-bottom: 14px;
+}
+.recovery-error {
+  font-size: 11px;
+  color: #f06060;
+  white-space: pre-wrap;
+  margin: 0 0 12px 0;
+}
+.recovery-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.btn-primary {
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md, 12px);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: none;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── Announce banner (объявление от провайдера) ──────────────────────── */
 .announce-banner {
   display: flex;
