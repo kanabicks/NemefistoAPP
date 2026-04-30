@@ -81,10 +81,13 @@
 
 ### Архитектура движков
 
-- **Xray** — текущий движок. Сильные стороны: Reality / Vision / XHTTP,
-  низколатентный обход DPI.
-- **Mihomo** (форк Clash Meta) — добавляется. Сильные стороны: Hysteria2 /
-  Tuic / AnyTLS / WireGuard, гибкий routing, нативный per-process matcher.
+- **Xray** — текущий движок. Сильные стороны: REALITY / Vision / XHTTP /
+  HTTPUpgrade, низколатентный обход DPI. С 1.8.16+ **поддерживает
+  Hysteria2 outbound**, с 1.8.6+ — **WireGuard outbound**. То есть для
+  большинства современных подписок Mihomo не обязателен.
+- **Mihomo** (форк Clash Meta) — добавляется. Уникальная зона: **TUIC**,
+  **AnyTLS**, гибкий routing с native `PROCESS-NAME` matcher (per-process
+  без WFP). Дублирует поддержку других протоколов с Xray.
 
 Один пользователь использует **одно ядро на сессию**. Выбор:
 1. Из заголовка `X-Nemefisto-Engine` подписки;
@@ -94,6 +97,21 @@
 Серверы из подписки помечаются полем `engine_compat`. Если выбранное ядро
 несовместимо с сервером — UI показывает предупреждение и предлагает
 переключить движок.
+
+### Корректная таблица совместимости протоколов
+
+| Протокол / транспорт | Xray | Mihomo |
+|---|---|---|
+| VLESS, VMess, Trojan, SS, SOCKS5 | ✅ | ✅ |
+| **Hysteria2** | ✅ (1.8.16+) | ✅ |
+| **WireGuard** | ✅ (1.8.6+) | ✅ |
+| **TUIC** | ❌ | ✅ |
+| **AnyTLS** | ❌ | ✅ |
+| Transport: TCP, WS, gRPC, h2 | ✅ | ✅ |
+| Transport: **XHTTP** | ✅ (1.8.18+) | ✅ (1.18+) |
+| Transport: **HTTPUpgrade** | ✅ | ✅ |
+| Security: TLS, REALITY | ✅ | ✅ |
+| Vision (XTLS) | ✅ | ✅ |
 
 ### Универсальный парсер подписок
 
@@ -214,11 +232,65 @@ UI: Settings → раздел «правила приложений» → спи
 
 ### Этапы реализации
 
-- **8.A** — универсальный парсер подписок (vmess / trojan / ss / hy2 / tuic / wireguard + Mihomo YAML + полные Xray JSON).
-- **8.B** — Mihomo как второй sidecar; UI-селект движка; helper-coordination для TUN с любым ядром.
+- **8.A** — универсальный парсер подписок (vmess / trojan / ss / hy2 / tuic / wireguard / socks + Mihomo YAML + полные Xray JSON).
+- **8.A.1** — *(срочный hotfix, см. ниже)* завершение Xray-поддержки: hy2/wireguard outbounds + xhttp/httpupgrade transports + правка `engine_compat` для hy2/wireguard.
+- **8.B** — Mihomo как второй sidecar; UI-селект движка; helper-coordination для TUN с любым ядром. **Уникальная зона Mihomo сократилась до TUIC + AnyTLS + native per-process** — но всё ещё нужен.
 - **8.C** — заголовки подписки (стандартные + Nemefisto) + override-логика + UI-бейджи «из подписки» + UI для `subscription-userinfo` / `announce` / `support-url` / `premium-url`.
-- **8.D** — per-process routing (Mihomo-only) с UI-редактором правил.
+- **8.D** — per-process routing (Mihomo-only через PROCESS-NAME) с UI-редактором правил. Альтернативная реализация через WFP (Windows-native, для обоих движков) — см. этап 13.G.
 - **8.E** — релизный NSIS-installer (см. ниже).
+
+### 8.A.1 — Завершение поддержки протоколов и транспортов
+
+**Срочный hotfix** к коммиту `6fcb4d9` (этап 8.A): ошибочно маркировал
+hy2 и wireguard как Mihomo-only, тогда как современный Xray умеет оба.
+Также не были добавлены два важных Xray-транспорта.
+
+Изменения в коде:
+
+1. **`config/subscription.rs`** — `engine_compat` для парсеров:
+   - `parse_hysteria2()` → `engines_both()` (было `engines_mihomo_only()`);
+   - `parse_wireguard()` → `engines_both()` (было `engines_mihomo_only()`);
+   - функция `engines_mihomo_only` остаётся — теперь только для **TUIC**
+     и **AnyTLS** (yaml_proxy_to_entry helper).
+
+2. **`config/xray_config.rs`** — добавить новые `build_*` функции:
+   - `build_hysteria2(entry)` — VLESS-style outbound с `protocol:
+     "hysteria2"`, settings включают `password` + `obfs` (если
+     задано в raw) + `serverName` + `alpn: ["h3"]`.
+   - `build_wireguard(entry)` — `protocol: "wireguard"`, settings:
+     `secretKey`, `address` (массив `"10.0.0.2/32"`), `peers` с
+     `publicKey`, `endpoint` = server:port, `mtu`, `reserved`
+     (если есть).
+   - Подключить в `build_outbound()`: убрать `bail!` для hy2/wireguard.
+
+3. **`config/xray_config.rs`** — расширить `build_stream()` новыми
+   transport-ами:
+   - `"xhttp"` →
+     ```rust
+     let path = raw["path"].as_str().unwrap_or("/");
+     let host = raw["host"].as_str().unwrap_or("");
+     let mode = raw["mode"].as_str().unwrap_or("auto");
+     // mode: auto | packet-up | stream-up | stream-one
+     let mut x = json!({ "path": path, "mode": mode });
+     if !host.is_empty() { x["host"] = host.into(); }
+     s["xhttpSettings"] = x;
+     ```
+   - `"httpupgrade"` →
+     ```rust
+     let path = raw["path"].as_str().unwrap_or("/");
+     let host = raw["host"].as_str().unwrap_or("");
+     let mut hu = json!({ "path": path });
+     if !host.is_empty() { hu["host"] = host.into(); }
+     s["httpupgradeSettings"] = hu;
+     ```
+
+После 8.A.1 пользователи смогут подключаться к hy2/wireguard
+серверам в Xray-only клиенте, **без необходимости 8.B (Mihomo)**.
+Это убирает блокирующее «требуется Mihomo» сообщение для большинства
+современных подписок.
+
+**Время реализации**: ~30–40 минут. Должен быть **первым делом
+следующей сессии** (горячие следы, простые правки).
 
 ### 8.E — Релизный NSIS-installer
 
@@ -596,3 +668,218 @@ IP-range, но начинаем с имени.
   (~1 час).
 - **12.E** — генератор имён + интеграция с tun2socks/helper +
   Settings-toggle (~30 мин).
+
+---
+
+## Этап 13 — Что отличает «крепкий клиент» от «топового»
+
+**Цель**: фичи которые формируют разницу между «работающим VPN-клиентом»
+и «приложением которое хочется рекомендовать». Все пункты независимы и
+могут реализовываться параллельно с основным roadmap. Расположены по
+value/effort.
+
+### 13.A — Системный трей + автоминимизация
+
+**Must-have** для VPN-клиента, ожидаемое поведение.
+
+- Иконка в трее с цвет-статусом (red = stopped/error, yellow = busy,
+  green = running). Анимация при переходных состояниях.
+- Контекстное меню трея: connect/disconnect, быстрая смена сервера
+  (топ-5 по пингу), открыть main, выход.
+- Закрытие окна (X) → сворачиваем в трей, не выходим из приложения.
+  Опционально настраивается («close button: minimize / quit»).
+- Двойной клик по иконке трея → восстановить главное окно.
+
+Реализация: **`tauri-plugin-tray`** (в Tauri 2 — встроено в core API
+через `app.tray()`). Win32-специфичных вызовов не нужно.
+
+### 13.B — Leak-test после connect
+
+После успешного `connect` (или по кнопке в Settings) делаем HTTP-запрос
+к `https://api.ipify.org?format=json` через системный прокси, парсим
+IP, опционально через GeoIP-API получаем страну. Показываем toast:
+«твой IP сейчас: 203.0.113.x — 🇩🇪 Германия».
+
+Зачем: подтверждает что VPN реально работает. Без этого пользователь
+полагается на веру. Ставит планку доверия к клиенту.
+
+Опционально: до/после диалог при первом подключении («твой IP был:
+X.X.X.X (РФ) → стал: Y.Y.Y.Y (DE)»).
+
+### 13.C — Smart auto-failover
+
+Во время сессии мониторим выбранный сервер: пинг каждые 30 сек, или
+ловим TCP-fail в логах Xray. Если пинг > 3000мс на 30 сек подряд или
+TCP-disconnect → автоматически переключаемся на следующий по пингу.
+Toast: «сервер DE-Fast не отвечает, переключился на NL-Stable».
+
+Не работает если пользователь явно выбрал конкретный сервер (опция
+«не переключать автоматически» в settings). Включается только при
+выборе сервера через «авто-выбор лучшего» (этап 7-хвост).
+
+### 13.D — Kill switch (часть этапа 6)
+
+WFP-фильтр (Windows Filtering Platform) блокирует весь не-VPN трафик
+когда VPN disconnect. Защита от утечек при reconnect / краше Xray /
+смене сети.
+
+- Опция в Settings (off по умолчанию).
+- Whitelist для LAN (можно выключить блокировку 192.168.*).
+- Реализация через `windivert` или native WFP API (через crate
+  `windows-rs`, `Win32::NetworkManagement::WindowsFilteringPlatform`).
+- Helper-сервис должен поднимать/убирать WFP-правила (нужны admin-
+  права).
+
+### 13.E — История сессий
+
+Локальный лог connect/disconnect события: timestamp, сервер, режим
+(proxy/tun), длительность сессии, причина disconnect (user / failover
+/ error). Хранится в SQLite файле `%LOCALAPPDATA%\NemefistoVPN\
+history.db` (можно через `rusqlite`).
+
+UI: вкладка «история» в Settings или отдельный экран. Сортировка по
+времени, фильтр по серверу. Полезно для диагностики и просто
+интересно пользователю.
+
+### 13.F — Speed-test встроенный
+
+Кнопка в Settings → «измерить скорость через VPN». Скачивает 5–10 МБ
+с известного быстрого CDN (Cloudflare speedtest endpoints или
+`speed.cloudflare.com`), показывает Mbps.
+
+Опционально: автоматически раз в неделю на всех серверах подписки
+(в фоне) для smart-сортировки. Полученные значения сохраняются
+вместе с пингами в `subscriptionStore`.
+
+### 13.G — Per-app routing через WFP (Windows-native, без Mihomo)
+
+Mihomo на Windows реализует `PROCESS-NAME` через `find-process-mode:
+always` — это **полл текущих процессов раз в N секунд**, медленно и не
+ловит короткоживущие процессы.
+
+Альтернатива: **WFP callout-driver** перехватывает соединения по
+`process-id` напрямую от ядра Windows. Точно, мгновенно, работает с
+обоими движками (Xray и Mihomo).
+
+- Реализация серьёзная (~1 неделя): нужен kernel-mode driver или
+  user-mode WFP filter с callout. Crate `windivert-rs` упрощает но
+  требует подписи драйвера.
+- Альтернативный путь: использовать готовый `WinDivert` который уже
+  подписан Microsoft.
+- Серьёзно отличает приложение от конкурентов на Windows.
+
+После 8.D считается «достаточно хорошо», 13.G — «идеально».
+
+### 13.H — WebRTC + DNS leak protection
+
+**DNS leak**: monitor DNS-traffic на интерфейсах (через `pktmon` или
+WFP), assert что все DNS-запросы идут только через VPN. Иначе toast
+с предупреждением + ссылкой «как починить DNS» (Settings → DNS
+override).
+
+**WebRTC**: на странице первого запуска / в Settings секция «утечки
+браузера»: текстовая инструкция + deep-link на `about:flags` /
+`chrome://flags` для отключения WebRTC. Браузерное расширение мы
+делать не будем — это вне scope нативного клиента.
+
+### 13.I — Bandwidth-метр в реальном времени
+
+Маленький график (или текстовый индикатор) в верхнем углу окна:
+↑ 1.2 МБ/с / ↓ 5.4 МБ/с. Обновление 1 Гц. Получаем через Windows
+Performance Counters (`PdhCollectQueryData` для нашего interface)
+или из tun2socks логов.
+
+Не ставит планку (есть в любом VPN), но добавляет ощущение «живого»
+приложения. Низкий effort.
+
+### 13.J — Session passcode (Windows Hello)
+
+Опция: при запуске приложения требовать аутентификацию через
+**Windows Hello** (face / pin / fingerprint). Crate `windows-rs`,
+`UserConsentVerifier`. Полезно для общих компьютеров.
+
+Toggle в Settings → «требовать аутентификацию при запуске».
+
+### 13.K — Hysteria2 obfs salamander (anti-DPI прямо в протоколе)
+
+Hysteria2 поддерживает obfuscation `salamander` с паролем — пакеты
+маскируются под случайный мусор, DPI не может определить QUIC. Это
+встраивается в outbound:
+
+```json
+{
+  "protocol": "hysteria2",
+  "settings": {
+    "password": "...",
+    "obfs": { "type": "salamander", "password": "..." }
+  }
+}
+```
+
+Парсер уже сохраняет `obfs` / `obfs-password` из URI → достаточно
+учесть в `build_hysteria2()` (после 8.A.1).
+
+### 13.L — Mihomo built-in TUN-mode (альтернатива tun2socks)
+
+Mihomo имеет встроенный TUN-режим с собственным userspace network
+stack (gVisor). Не нужен отдельный tun2socks-процесс — Mihomo сам
+поднимает TUN-интерфейс через WinTUN.
+
+Плюсы: одна цепочка процессов вместо двух (Mihomo вместо
+Xray + tun2socks), меньше точек отказа, проще архитектура.
+Минусы: только когда выбран Mihomo (для Xray всё равно нужен tun2socks).
+
+Альтернативный путь реализации в рамках 8.B. Решение принимается
+при разработке 8.B.
+
+### Приоритет внутри этапа 13
+
+| Пункт | Value | Effort | Когда |
+|---|---|---|---|
+| 13.A системный трей | ⭐⭐⭐⭐⭐ | средний | сразу после 12 |
+| 13.B leak-test | ⭐⭐⭐⭐⭐ | низкий | сразу после 12 |
+| 13.C smart failover | ⭐⭐⭐⭐ | средний | после 13.A/B |
+| 13.D kill switch | ⭐⭐⭐⭐ | высокий | в этапе 6 |
+| 13.K hy2 salamander | ⭐⭐⭐ | низкий | после 8.A.1 |
+| 13.L Mihomo TUN | ⭐⭐⭐ | средний | в этапе 8.B |
+| 13.E история | ⭐⭐⭐ | низкий | в любой момент |
+| 13.F speed-test | ⭐⭐⭐ | средний | после 7-хвоста |
+| 13.I bandwidth | ⭐⭐ | низкий | UX-полировка |
+| 13.J Windows Hello | ⭐⭐ | низкий | UX-полировка |
+| 13.G WFP per-app | ⭐⭐⭐⭐ | очень высокий | долгосрочно |
+| 13.H DNS/WebRTC leak | ⭐⭐⭐ | средний | после 13.D |
+
+---
+
+## Дорожная карта по сессиям
+
+**Следующая сессия (~3.5 ч)**:
+1. **8.A.1** — hotfix Xray (hy2/wg/xhttp/httpupgrade) — ~40 мин;
+2. **Этап 12** — UX-полировка (5 пунктов) — ~2.5 ч.
+
+**Сессия после неё (~4 ч)**:
+- **Этап 6** — Credential Manager + autostart + kill switch (13.D) +
+  обработка смены сети.
+
+**Третья сессия (~3 ч)**:
+- **Этап 8.B** — Mihomo как второй sidecar. Решаем по ходу: классический
+  путь (tun2socks для обоих) или 13.L (Mihomo built-in TUN для своего
+  движка).
+- **Этап 8.D** — per-process routing (Mihomo PROCESS-NAME).
+
+**Четвёртая сессия (~2 ч)**:
+- **13.A** системный трей + **13.B** leak-test — самое заметное для
+  пользователя.
+
+**Пятая+ сессия (~4–5 ч)**:
+- **Этап 11** — routing-профили (geofiles, autorouting, расширенные
+  deep-links).
+
+**Долгосрочно** (отдельные блоки):
+- **9.B / 9.C / 9.E** — закрытие conflict-protection остатков.
+- **13.C / 13.E / 13.F / 13.I / 13.J** — UX-улучшения по мере желания.
+- **13.G** — WFP per-app routing (большой проект, серьёзный отрыв от
+  конкурентов).
+
+**Долги**:
+- TUN 15-секундная задержка первого запроса.
