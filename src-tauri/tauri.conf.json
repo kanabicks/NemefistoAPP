@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vpn-client",
+  "productName": "Nemefisto",
   "version": "0.1.0",
   "identifier": "com.nemefisto.vpn-client",
   "build": {
@@ -32,7 +32,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "category": "Network",
+    "publisher": "Nemefisto",
+    "shortDescription": "VPN-клиент на Xray-core",
+    "longDescription": "Лёгкий VPN-клиент для Windows на базе Xray-core. Поддержка VLESS, VMess, Trojan, Shadowsocks. Подключение в один клик через системный прокси или TUN.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,7 +44,25 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/xray"],
-    "resources": ["resources/*"]
+    "externalBin": [
+      "binaries/xray",
+      "binaries/tun2socks"
+    ],
+    "resources": {
+      "binaries/wintun.dll": "wintun.dll",
+      "binaries/nemefisto-helper-x86_64-pc-windows-msvc.exe": "nemefisto-helper-x86_64-pc-windows-msvc.exe",
+      "binaries/geoip.dat": "resources/geoip.dat",
+      "binaries/geosite.dat": "resources/geosite.dat"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Russian"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

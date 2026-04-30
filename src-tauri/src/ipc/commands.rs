@@ -14,7 +14,12 @@ use crate::config::{HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
 use crate::vpn::{find_free_port, ping_entry, XrayState};
 
+/// Имя файла с triplet-суффиксом — формат, в котором лежит исходный
+/// бинарь в `binaries/`, и в котором Tauri (большинство версий) кладёт
+/// его в bundle рядом с основным exe.
 const TUN2SOCKS_FILENAME: &str = "tun2socks-x86_64-pc-windows-msvc.exe";
+/// На случай если конкретная версия Tauri стрипает triplet после bundle.
+const TUN2SOCKS_FILENAME_PLAIN: &str = "tun2socks.exe";
 
 /// Прогревочный запрос через SOCKS5 чтобы заставить Xray установить
 /// upstream-соединение с VPN-сервером до того как мы перенаправим в TUN
@@ -131,33 +136,35 @@ fn extract_server_host(entry: &ProxyEntry) -> Option<String> {
     None
 }
 
-/// Найти `tun2socks-x86_64-pc-windows-msvc.exe` либо рядом с текущим exe
-/// (release-сборка), либо в `<exe_dir>/../../binaries/` (dev из target/debug).
+/// Найти `tun2socks` в нескольких возможных локациях:
+///   1. `<exe-dir>/tun2socks-<triplet>.exe`          — стандартный bundle
+///                                                     externalBin;
+///   2. `<exe-dir>/tun2socks.exe`                    — на случай если
+///                                                     Tauri стрипает
+///                                                     triplet;
+///   3. `<exe-dir>/binaries/tun2socks-<triplet>.exe` — старый layout
+///                                                     для совместимости;
+///   4. `<exe-dir>/../../binaries/...`               — dev из
+///                                                     target/{debug,
+///                                                     release}/.
 fn resolve_tun2socks_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
-    // 1. Production: рядом с exe или в подпапке binaries/
-    for candidate in [
+    // Production-кандидаты
+    let mut candidates: Vec<PathBuf> = vec![
         exe_dir.join(TUN2SOCKS_FILENAME),
+        exe_dir.join(TUN2SOCKS_FILENAME_PLAIN),
         exe_dir.join("binaries").join(TUN2SOCKS_FILENAME),
-    ] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+        exe_dir.join("resources").join(TUN2SOCKS_FILENAME),
+    ];
+
+    // Dev: target/{profile}/ → подняться до src-tauri/, оттуда в binaries/
+    if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
+        candidates.push(dev_root.join("binaries").join(TUN2SOCKS_FILENAME));
     }
 
-    // 2. Dev: target/{profile}/ → подняться до src-tauri/, оттуда в binaries/
-    let dev_path = exe_dir
-        .parent()? // target/{profile}
-        .parent()? // target
-        .join("binaries")
-        .join(TUN2SOCKS_FILENAME);
-    if dev_path.is_file() {
-        return Some(dev_path);
-    }
-
-    None
+    candidates.into_iter().find(|c| c.is_file())
 }
 
 // ─── Результаты команд ────────────────────────────────────────────────────────
