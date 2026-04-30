@@ -839,6 +839,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
   const rules = useSettingsStore((s) => s.appRules);
   const set = useSettingsStore((s) => s.set);
+  // 8.D: PROCESS-NAME matcher Mihomo на Windows работает только когда
+  // соединение приходит к Mihomo напрямую от приложения (proxy-режим).
+  // В TUN-режиме между приложением и Mihomo стоит tun2socks — Mihomo
+  // видит PID tun2socks, а не исходного приложения, и matcher не
+  // срабатывает. Это уйдёт когда сделаем 13.L (Mihomo built-in TUN
+  // через gVisor — там Mihomo сам видит ядерный PID).
+  const vpnMode = useVpnStore((s) => s.mode);
+  const tunMode = vpnMode === "tun";
 
   const [draftExe, setDraftExe] = useState("");
   const [draftAction, setDraftAction] = useState<AppRuleAction>("direct");
@@ -891,11 +899,31 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
         </div>
       )}
 
+      {mihomoActive && tunMode && (
+        <div
+          className="settings-row-hint"
+          style={{
+            marginBottom: 8,
+            padding: "6px 10px",
+            background: "rgba(229,115,115,0.07)",
+            borderRadius: 4,
+            borderLeft: "2px solid #e57373",
+          }}
+        >
+          <b>в TUN-режиме правила сейчас не работают.</b> между приложением
+          и Mihomo стоит tun2socks, и Mihomo видит соединения от него,
+          а не от исходного процесса. переключи режим на <b>proxy</b>
+          чтобы правила применились. полное решение для TUN придёт с
+          этапом 13.L (Mihomo native TUN)
+        </div>
+      )}
+
       <div className="settings-row-hint" style={{ marginBottom: 10 }}>
         правила вида <b>«&lt;exe&gt; → action»</b> применяются Mihomo
         к процессам по имени исполняемого файла. например, можно
         пустить telegram через VPN, а steam — направить direct.
-        имя exe берётся из диспетчера задач (телеграм.exe, steam.exe)
+        имя exe берётся из диспетчера задач (телеграм.exe, steam.exe).
+        работают только в <b>proxy-режиме</b>
       </div>
 
       {rules.length > 0 && (
