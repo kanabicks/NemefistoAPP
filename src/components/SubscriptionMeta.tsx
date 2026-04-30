@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 
 /**
@@ -50,11 +51,12 @@ export function SubscriptionMeta() {
   const meta = useSubscriptionStore((s) => s.meta);
   if (!meta) return null;
 
-  const { used, total, expireAt, title } = meta;
+  const { used, total, expireAt, title, premiumUrl } = meta;
   const hasTraffic = total > 0 || used > 0;
   const hasExpiry = expireAt != null;
   const hasTitle = !!title;
-  if (!hasTraffic && !hasExpiry && !hasTitle) return null;
+  const hasPremium = !!premiumUrl;
+  if (!hasTraffic && !hasExpiry && !hasTitle && !hasPremium) return null;
 
   const ratio = total > 0 ? Math.min(1, used / total) : 0;
   const percent = Math.round(ratio * 100);
@@ -66,9 +68,19 @@ export function SubscriptionMeta() {
 
   return (
     <div className="sub-meta">
-      {hasTitle && (
+      {(hasTitle || hasPremium) && (
         <div className="sub-meta-title">
-          <span>{title}</span>
+          {hasTitle && <span>{title}</span>}
+          {hasPremium && (
+            <button
+              type="button"
+              className="sub-meta-premium"
+              onClick={() => premiumUrl && void openUrl(premiumUrl)}
+              title="перейти на премиум"
+            >
+              премиум ↗
+            </button>
+          )}
         </div>
       )}
       {(hasTraffic || hasExpiry) && (

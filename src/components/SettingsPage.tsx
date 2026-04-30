@@ -15,6 +15,7 @@ import {
 } from "../stores/settingsStore";
 import { APP_VERSION } from "../lib/constants";
 import { openDashboard, openSupport } from "../lib/openExternal";
+import { useEffectiveSettings } from "../lib/hooks/useEffectiveSettings";
 import { Toggle } from "./Toggle";
 
 /**
@@ -29,6 +30,7 @@ import { Toggle } from "./Toggle";
  */
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const s = useSettingsStore();
+  const eff = useEffectiveSettings();
   const subUrl = useSubscriptionStore((x) => x.url);
   const subMeta = useSubscriptionStore((x) => x.meta);
   const subHwid = useSubscriptionStore((x) => x.hwid);
@@ -323,14 +325,21 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               недоступны (управляется пресетом). */}
           <div className="settings-row">
             <div>
-              <div className="settings-row-label">пресет</div>
+              <div className="settings-row-label">
+                пресет
+                {eff.fromSubscription.preset && (
+                  <span className="hint-badge" style={{ marginLeft: 8 }}>
+                    из подписки
+                  </span>
+                )}
+              </div>
               <div className="settings-row-hint">
                 готовая уникальная стилизация
               </div>
             </div>
             <select
               className="select-field"
-              value={s.preset}
+              value={eff.preset}
               onChange={(e) => s.set("preset", e.target.value as Preset)}
             >
               <option value="none">без пресета</option>
@@ -346,22 +355,33 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               что значение задаёт пресет. Это сохраняет UX-понятность:
               видно что и как переопределяется, а не «пропали настройки». */}
           {(() => {
-            const presetActive = s.preset !== "none";
-            const effectiveBg = presetActive ? PRESET_BACKGROUND[s.preset] : s.background;
-            const effectiveStyle = presetActive ? PRESET_BUTTON_STYLE[s.preset] : s.buttonStyle;
+            const presetActive = eff.preset !== "none";
+            const effectiveBg = presetActive
+              ? PRESET_BACKGROUND[eff.preset]
+              : eff.background;
+            const effectiveStyle = presetActive
+              ? PRESET_BUTTON_STYLE[eff.preset]
+              : eff.buttonStyle;
             const presetHint = "управляется пресетом";
             return (
               <>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">тема</div>
+                    <div className="settings-row-label">
+                      тема
+                      {!presetActive && eff.fromSubscription.theme && (
+                        <span className="hint-badge" style={{ marginLeft: 8 }}>
+                          из подписки
+                        </span>
+                      )}
+                    </div>
                     <div className="settings-row-hint">
                       {presetActive ? presetHint : "палитра приложения и кристалла"}
                     </div>
                   </div>
                   <select
                     className="select-field"
-                    value={s.theme}
+                    value={eff.theme}
                     disabled={presetActive}
                     onChange={(e) => s.set("theme", e.target.value as Theme)}
                   >
@@ -374,7 +394,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">фон</div>
+                    <div className="settings-row-label">
+                      фон
+                      {!presetActive && eff.fromSubscription.background && (
+                        <span className="hint-badge" style={{ marginLeft: 8 }}>
+                          из подписки
+                        </span>
+                      )}
+                    </div>
                     <div className="settings-row-hint">
                       {presetActive ? presetHint : "3d-сцена за интерфейсом"}
                     </div>
@@ -393,7 +420,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">стиль кнопки</div>
+                    <div className="settings-row-label">
+                      стиль кнопки
+                      {!presetActive && eff.fromSubscription.buttonStyle && (
+                        <span className="hint-badge" style={{ marginLeft: 8 }}>
+                          из подписки
+                        </span>
+                      )}
+                    </div>
                     <div className="settings-row-hint">
                       {presetActive ? presetHint : "оформление главной кнопки connect"}
                     </div>

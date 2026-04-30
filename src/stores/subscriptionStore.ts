@@ -10,17 +10,27 @@ export type ProxyEntry = {
   raw: Record<string, unknown>;
 };
 
-/** Метаданные подписки из стандартных HTTP-заголовков
- *  (3x-ui / Marzban / x-ui / sing-box).
+/** Метаданные подписки из HTTP-заголовков.
  *
+ *  Стандартные (де-факто индустрии — 3x-ui / Marzban / x-ui / sing-box):
  *  - used/total: байты, total=0 → безлимит;
  *  - expireAt: unix-timestamp в секундах, null → бессрочно;
  *  - title: имя подписки (`profile-title`);
  *  - webPageUrl: URL личного кабинета (`profile-web-page-url`);
  *  - supportUrl: URL поддержки (`support-url`);
- *  - updateIntervalHours: желаемый интервал автообновления в часах
- *    (`profile-update-interval`); применяется только если пользователь
- *    не менял настройку вручную. */
+ *  - updateIntervalHours: интервал автообновления в часах
+ *    (`profile-update-interval`);
+ *  - announce / announceUrl: текст и опциональная ссылка для объявления
+ *    от провайдера;
+ *  - premiumUrl: URL премиум-страницы.
+ *
+ *  X-Nemefisto-* (наше расширение, server-driven UX, 8.C):
+ *  - theme / background / buttonStyle / preset / mode / engine — задают
+ *    дефолты; применяются только если пользователь не менял эти
+ *    настройки вручную (override-логика).
+ *
+ *  Все enum-значения валидируются на бэкенде по whitelist; неизвестные
+ *  становятся null. */
 export type SubscriptionMeta = {
   used: number;
   total: number;
@@ -29,6 +39,15 @@ export type SubscriptionMeta = {
   webPageUrl: string | null;
   supportUrl: string | null;
   updateIntervalHours: number | null;
+  announce: string | null;
+  announceUrl: string | null;
+  premiumUrl: string | null;
+  theme: string | null;
+  background: string | null;
+  buttonStyle: string | null;
+  preset: string | null;
+  mode: string | null;
+  engine: string | null;
 };
 
 /** Сырой ответ команды fetch_subscription — Rust возвращает snake_case. */
@@ -40,6 +59,15 @@ type SubscriptionMetaRaw = {
   web_page_url: string | null;
   support_url: string | null;
   update_interval_hours: number | null;
+  announce: string | null;
+  announce_url: string | null;
+  premium_url: string | null;
+  theme: string | null;
+  background: string | null;
+  button_style: string | null;
+  preset: string | null;
+  mode: string | null;
+  engine: string | null;
 };
 type FetchSubscriptionRaw = {
   servers: ProxyEntry[];
@@ -81,6 +109,15 @@ const normalizeMeta = (
         webPageUrl: raw.web_page_url,
         supportUrl: raw.support_url,
         updateIntervalHours: raw.update_interval_hours,
+        announce: raw.announce,
+        announceUrl: raw.announce_url,
+        premiumUrl: raw.premium_url,
+        theme: raw.theme,
+        background: raw.background,
+        buttonStyle: raw.button_style,
+        preset: raw.preset,
+        mode: raw.mode,
+        engine: raw.engine,
       }
     : null;
 

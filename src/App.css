@@ -754,11 +754,111 @@ input, textarea { font: inherit; cursor: text; }
 .sub-meta-title {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--fg);
   letter-spacing: 0.01em;
+}
+.sub-meta-premium {
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  cursor: none;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.sub-meta-premium:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* ── Announce banner (объявление от провайдера) ──────────────────────── */
+.announce-banner {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 12px);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  overflow: hidden;
+  animation: announce-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes announce-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.announce-banner-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: none;
+  text-align: left;
+  min-width: 0;
+}
+.announce-banner-body:disabled {
+  cursor: default;
+}
+.announce-banner.is-clickable .announce-banner-body:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme="light"] .announce-banner.is-clickable .announce-banner-body:hover,
+:root[data-preset="cupertino"] .announce-banner.is-clickable .announce-banner-body:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.announce-banner-icon {
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+}
+.announce-banner-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.announce-banner-arrow {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.announce-banner-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: none;
+  transition: background 0.15s, color 0.15s;
+}
+.announce-banner-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+}
+:root[data-theme="light"] .announce-banner-close:hover,
+:root[data-preset="cupertino"] .announce-banner-close:hover {
+  background: rgba(0, 0, 0, 0.06);
 }
 .hint-badge {
   display: inline-block;

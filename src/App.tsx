@@ -10,6 +10,7 @@ import { BackgroundLayers } from "./components/effects/BackgroundLayers";
 import { Scene3D } from "./components/effects/Scene3D";
 import { CustomCursor } from "./components/effects/CustomCursor";
 import { WideAmbient } from "./components/effects/WideAmbient";
+import { AnnounceBanner } from "./components/AnnounceBanner";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
@@ -128,6 +129,7 @@ function App() {
 
       <div className="app">
         <div className="frame">
+          <AnnounceBanner />
           <Header onOpenSettings={() => setSettingsOpen(true)} />
 
           {/* main-grid:

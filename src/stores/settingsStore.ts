@@ -92,6 +92,13 @@ export type Settings = {
    * Любое другое значение переопределяет всё разом.
    */
   preset: Preset;
+  /** Override-флаги для server-driven UX (8.C, X-Nemefisto-*). Если
+   *  false — соответствующее значение из заголовка подписки имеет
+   *  приоритет над юзер-настройкой. Сбрасываются через reset(). */
+  themeTouched: boolean;
+  backgroundTouched: boolean;
+  buttonStyleTouched: boolean;
+  presetTouched: boolean;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -111,6 +118,10 @@ const DEFAULTS: Settings = {
   background: "crystal",
   buttonStyle: "glass",
   preset: "none",
+  themeTouched: false,
+  backgroundTouched: false,
+  buttonStyleTouched: false,
+  presetTouched: false,
 };
 
 const KEY = "nemefisto.settings.v1";
@@ -143,11 +154,13 @@ export const useSettingsStore = create<Store>((setState, get) => ({
   ...load(),
   set: (key, value) => {
     const next: Settings = { ...get(), [key]: value };
-    // Override-флаг: пользователь явно поменял интервал → перестаём
-    // подхватывать значение из заголовка подписки.
-    if (key === "autoRefreshHours") {
-      next.autoRefreshHoursTouched = true;
-    }
+    // Override-флаги: пользователь явно поменял настройку → перестаём
+    // подхватывать значение из заголовка подписки. См. 8.C override-логику.
+    if (key === "autoRefreshHours") next.autoRefreshHoursTouched = true;
+    if (key === "theme") next.themeTouched = true;
+    if (key === "background") next.backgroundTouched = true;
+    if (key === "buttonStyle") next.buttonStyleTouched = true;
+    if (key === "preset") next.presetTouched = true;
     save(next);
     setState(next);
   },

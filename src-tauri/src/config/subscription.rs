@@ -36,6 +36,31 @@ pub struct SubscriptionMeta {
     /// `profile-update-interval`. Применяется только если пользователь
     /// не менял настройку вручную (override-логика).
     pub update_interval_hours: Option<u32>,
+    /// Текстовое объявление от провайдера (`announce`, ≤200 символов).
+    /// Поддерживает префикс `base64:...`.
+    pub announce: Option<String>,
+    /// URL-ссылка для объявления (`announce-url`). Если задана —
+    /// объявление становится кликабельным.
+    pub announce_url: Option<String>,
+    /// URL страницы премиума (`premium-url`). UI показывает кнопку
+    /// «премиум» в карточке подписки если задана.
+    pub premium_url: Option<String>,
+    /// Дефолтная тема UI (`X-Nemefisto-Theme`): dark/light/midnight/
+    /// sunset/sand. Применяется если пользователь не менял.
+    pub theme: Option<String>,
+    /// 3D-фон (`X-Nemefisto-Background`): crystal/tunnel/globe/particles.
+    pub background: Option<String>,
+    /// Стиль кнопки питания (`X-Nemefisto-Button-Style`):
+    /// glass/flat/neon/metallic.
+    pub button_style: Option<String>,
+    /// Готовая тема-пресет (`X-Nemefisto-Preset`): none/fluent/cupertino/
+    /// vice/arcade/glacier.
+    pub preset: Option<String>,
+    /// Режим VPN по умолчанию (`X-Nemefisto-Mode`): proxy/tun.
+    pub mode: Option<String>,
+    /// Желаемое VPN-ядро (`X-Nemefisto-Engine`): xray/mihomo. Зарезер-
+    /// вировано для этапа 8.B.
+    pub engine: Option<String>,
 }
 
 /// Кешированный список серверов и метаданных из последней успешной
@@ -87,6 +112,29 @@ pub fn parse_subscription_userinfo(raw: &str) -> SubscriptionMeta {
         web_page_url: None,
         support_url: None,
         update_interval_hours: None,
+        announce: None,
+        announce_url: None,
+        premium_url: None,
+        theme: None,
+        background: None,
+        button_style: None,
+        preset: None,
+        mode: None,
+        engine: None,
+    }
+}
+
+/// Возвращает Some(s) если значение заголовка `s` входит в whitelist
+/// `allowed`, иначе None. Регистронезависимое сравнение.
+fn validate_enum(value: &str, allowed: &[&str]) -> Option<String> {
+    let v = value.trim().to_lowercase();
+    if v.is_empty() {
+        return None;
+    }
+    if allowed.iter().any(|a| *a == v) {
+        Some(v)
+    } else {
+        None
     }
 }
 
@@ -191,8 +239,18 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
             web_page_url: None,
             support_url: None,
             update_interval_hours: None,
+            announce: None,
+            announce_url: None,
+            premium_url: None,
+            theme: None,
+            background: None,
+            button_style: None,
+            preset: None,
+            mode: None,
+            engine: None,
         });
 
+    // Стандартные заголовки (8.C, шаг 2)
     meta.title = header_str("profile-title");
     meta.web_page_url = header_str("profile-web-page-url");
     meta.support_url = header_str("support-url");
@@ -202,6 +260,35 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
         .and_then(|s| s.trim().parse::<u32>().ok())
         .filter(|n| *n > 0);
 
+    // Стандартные заголовки (8.C, шаг 3 — объявления и премиум)
+    meta.announce = header_str("announce");
+    meta.announce_url = header_str("announce-url");
+    meta.premium_url = header_str("premium-url");
+
+    // Заголовки X-Nemefisto-* (наше расширение). Все enum-значения
+    // валидируются по whitelist; неизвестные → None.
+    let header_enum = |name: &str, allowed: &[&str]| -> Option<String> {
+        header_str(name).and_then(|v| validate_enum(&v, allowed))
+    };
+    meta.theme = header_enum(
+        "x-nemefisto-theme",
+        &["dark", "light", "midnight", "sunset", "sand"],
+    );
+    meta.background = header_enum(
+        "x-nemefisto-background",
+        &["crystal", "tunnel", "globe", "particles"],
+    );
+    meta.button_style = header_enum(
+        "x-nemefisto-button-style",
+        &["glass", "flat", "neon", "metallic"],
+    );
+    meta.preset = header_enum(
+        "x-nemefisto-preset",
+        &["none", "fluent", "cupertino", "vice", "arcade", "glacier"],
+    );
+    meta.mode = header_enum("x-nemefisto-mode", &["proxy", "tun"]);
+    meta.engine = header_enum("x-nemefisto-engine", &["xray", "mihomo"]);
+
     // Если все поля пустые/нулевые — возвращаем None чтобы UI не рендерил
     // пустую плашку.
     let has_any = meta.used > 0
@@ -210,7 +297,16 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
         || meta.title.is_some()
         || meta.web_page_url.is_some()
         || meta.support_url.is_some()
-        || meta.update_interval_hours.is_some();
+        || meta.update_interval_hours.is_some()
+        || meta.announce.is_some()
+        || meta.announce_url.is_some()
+        || meta.premium_url.is_some()
+        || meta.theme.is_some()
+        || meta.background.is_some()
+        || meta.button_style.is_some()
+        || meta.preset.is_some()
+        || meta.mode.is_some()
+        || meta.engine.is_some();
 
     if has_any {
         Some(meta)

@@ -4,8 +4,8 @@ import type { VpnStatus } from "../../stores/vpnStore";
 import {
   PRESET_BACKGROUND,
   PRESET_SCENE_PALETTE,
-  useSettingsStore,
 } from "../../stores/settingsStore";
+import { useEffectiveSettings } from "../../lib/hooks/useEffectiveSettings";
 
 /**
  * Three.js фон с переключаемыми сценами.
@@ -24,12 +24,12 @@ import {
  */
 export function Scene3D({ status }: { status: VpnStatus }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const theme = useSettingsStore((s) => s.theme);
-  const background = useSettingsStore((s) => s.background);
-  const preset = useSettingsStore((s) => s.preset);
+  // Effective-значения учитывают override-логику из заголовков подписки
+  // (X-Nemefisto-Theme/Background/Preset).
+  const { theme, background, preset } = useEffectiveSettings();
 
-  // Effective значения зависят от preset: если активен — берём из него,
-  // иначе — из обычных настроек темы/фона.
+  // Если активен пресет — фон берётся из его таблицы; иначе — из обычной
+  // настройки фона.
   const effectiveBackground = preset === "none" ? background : PRESET_BACKGROUND[preset];
 
   const targetRef = useRef({

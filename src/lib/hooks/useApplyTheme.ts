@@ -1,9 +1,12 @@
 import { useEffect } from "react";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useEffectiveSettings } from "./useEffectiveSettings";
 
 /**
- * Синхронизирует значение `theme` или `preset` из settings store с
- * атрибутом на <html>. Один из двух взаимоисключающих:
+ * Синхронизирует effective `theme` или `preset` с атрибутом на <html>.
+ * Effective = override-логика из useEffectiveSettings (юзер-настройка
+ * перебивает заголовок подписки, иначе используется заголовок).
+ *
+ * Один из двух взаимоисключающих атрибутов:
  *  - preset !== "none" → `data-preset="..."`, `data-theme` снят;
  *  - иначе             → `data-theme="..."`, `data-preset` снят.
  *
@@ -12,8 +15,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
  * но переопределяет более широкий набор переменных (палитра + glow + ...).
  */
 export function useApplyTheme() {
-  const theme = useSettingsStore((s) => s.theme);
-  const preset = useSettingsStore((s) => s.preset);
+  const { theme, preset } = useEffectiveSettings();
 
   useEffect(() => {
     const root = document.documentElement;
