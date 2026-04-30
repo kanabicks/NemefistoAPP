@@ -8,6 +8,7 @@ use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::config::mihomo_config::AppRule;
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::xray_config::{self, AntiDpiOptions};
 use crate::config::{mihomo_config, HwidState, ProxyEntry, SubscriptionState};
@@ -282,6 +283,7 @@ pub async fn connect(
     anti_dpi: Option<AntiDpiOptions>,
     tun_masking: Option<bool>,
     kill_switch: Option<bool>,
+    app_rules: Option<Vec<AppRule>>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
@@ -375,12 +377,18 @@ pub async fn connect(
         let auth_pair = socks_auth
             .as_ref()
             .map(|(u, p)| (u.as_str(), p.as_str()));
+        // 8.D: per-process правила. Mihomo получает их через
+        // PROCESS-NAME matcher. Xray-ветка ниже их игнорирует —
+        // на Windows нет нативной поддержки в Xray (требует kernel-driver,
+        // см. план 13.G WFP per-app routing).
+        let rules_slice: &[AppRule] = app_rules.as_deref().unwrap_or(&[]);
         let cfg = mihomo_config::build(
             &entry,
             default_socks,
             listen,
             anti_dpi.as_ref(),
             auth_pair,
+            rules_slice,
         )
         .map_err(|e| e.to_string())?;
         // На всякий случай гасим Xray если он был активен от прошлой сессии

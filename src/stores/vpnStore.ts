@@ -149,6 +149,12 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     const tunMasking = useSettingsStore.getState().tunMasking;
     const killSwitch = useSettingsStore.getState().killSwitch;
     const antiDpi = buildEffectiveAntiDpi();
+    // 8.D: per-process правила. Подаём в Rust в camelCase
+    // (`exe`/`action`/`comment`); serde на стороне Rust десериализует
+    // в `AppRule`. Если правил нет — пустой массив, ветка mihomo
+    // воспримет его как «no PROCESS-NAME правил» и не включит
+    // дорогой `find-process-mode: always`.
+    const appRules = useSettingsStore.getState().appRules;
     // 8.B/8.C: эффективный engine. Если пользователь явно не менял
     // (engineTouched=false) и подписка прислала X-Nemefisto-Engine —
     // берём из заголовка; иначе — пользовательский выбор.
@@ -171,6 +177,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         antiDpi,
         tunMasking,
         killSwitch,
+        appRules,
       });
       set({
         status: "running",

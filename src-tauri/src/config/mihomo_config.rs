@@ -21,10 +21,28 @@
 //! 13.I bandwidth-метра и smart auto-failover (13.C).
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 
 use super::server::ProxyEntry;
 use super::xray_config::AntiDpiOptions;
+
+/// Per-process routing rule (этап 8.D). Принимается из фронта через
+/// `connect()` и транслируется в Mihomo `PROCESS-NAME,<exe>,<action>`.
+///
+/// Frontend кладёт массив таких объектов в payload `connect`; serde
+/// разбирает поля через camelCase rename. Xray-движок игнорирует
+/// эти правила (UI предупреждает заранее).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppRule {
+    pub exe: String,
+    /// `"proxy"` | `"direct"` | `"block"` — мапится в `PROXY` / `DIRECT` /
+    /// `REJECT` правил Mihomo соответственно.
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
 
 /// Результат генерации: YAML-текст + порт `mixed-port` (SOCKS5 + HTTP).
 pub struct MihomoConfig {
@@ -37,12 +55,14 @@ pub struct MihomoConfig {
 /// `listen` — `127.0.0.1` (loopback) или `0.0.0.0` (LAN).
 /// `socks_auth` — `Some((user, pass))` если включён auth для inbound (9.G);
 /// иначе `None` (proxy-режим на loopback, без аутентификации).
+/// `app_rules` — per-process правила (этап 8.D); пустой slice = no-op.
 pub fn build(
     entry: &ProxyEntry,
     mixed_port: u16,
     listen: &str,
     anti_dpi: Option<&AntiDpiOptions>,
     socks_auth: Option<(&str, &str)>,
+    app_rules: &[AppRule],
 ) -> Result<MihomoConfig> {
     let proxy = proxy_for_entry(entry)
         .with_context(|| format!("не удалось собрать mihomo-proxy для «{}»", entry.name))?;
@@ -72,6 +92,14 @@ pub fn build(
     root.insert("mode".into(), "rule".into());
     root.insert("log-level".into(), "info".into());
     root.insert("ipv6".into(), false.into());
+
+    // 8.D: per-process routing требует `find-process-mode: always` —
+    // Mihomo при каждом новом соединении проверяет какой процесс его
+    // создал (через WMI / iptables-conntrack lookup на других ОС).
+    // Включаем только если правила непустые — иначе лишний overhead.
+    if !app_rules.is_empty() {
+        root.insert("find-process-mode".into(), "always".into());
+    }
 
     // External controller — чтобы потенциально можно было дёргать API
     // (для 13.I bandwidth-метра, 13.C smart failover). Secret —
@@ -106,12 +134,25 @@ pub fn build(
         Value::Sequence(vec![Value::Mapping(group)]),
     );
 
-    // На v1 — всё через прокси. Routing-профили (этап 11) добавят
-    // более тонкие правила (geosite/geoip/process-name) позже.
-    root.insert(
-        "rules".into(),
-        Value::Sequence(vec![Value::String("MATCH,PROXY".to_string())]),
-    );
+    // 8.D: per-process правила (если заданы) идут перед `MATCH,PROXY`,
+    // чтобы перехватить трафик конкретных процессов до общего fallback'a.
+    // Action нормализуется: proxy→PROXY, direct→DIRECT, block→REJECT.
+    let mut rules: Vec<Value> = Vec::new();
+    for r in app_rules {
+        if r.exe.trim().is_empty() {
+            continue;
+        }
+        let target = match r.action.as_str() {
+            "direct" => "DIRECT",
+            "block" => "REJECT",
+            _ => "PROXY", // дефолт + явный "proxy"
+        };
+        rules.push(Value::String(format!("PROCESS-NAME,{},{}", r.exe.trim(), target)));
+    }
+    // Routing-профили (этап 11) добавят geosite/geoip позже. Пока —
+    // всё что не попало в PROCESS-NAME правила идёт через прокси.
+    rules.push(Value::String("MATCH,PROXY".to_string()));
+    root.insert("rules".into(), Value::Sequence(rules));
 
     let yaml = serde_yaml::to_string(&Value::Mapping(root))
         .context("сериализация mihomo YAML")?;

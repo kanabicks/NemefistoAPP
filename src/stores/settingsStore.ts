@@ -16,6 +16,27 @@ export type ButtonStyle = "glass" | "flat" | "neon" | "metallic";
 export type Engine = "xray" | "mihomo";
 
 /**
+ * Правило per-process routing (этап 8.D). Применяется только в Mihomo
+ * через нативный matcher `PROCESS-NAME` + `find-process-mode: always`.
+ * В Xray такие правила работать не умеют (на Windows нет нативной
+ * поддержки) — UI показывает баннер «работает только в Mihomo».
+ *
+ * - **exe** — имя исполняемого файла без пути, в нижнем регистре
+ *   (Mihomo сравнивает case-insensitive). Например `telegram.exe`.
+ * - **action** — куда направить трафик процесса:
+ *   - `proxy` — через VPN (даже если по другим правилам шёл бы direct);
+ *   - `direct` — мимо VPN (даже если по гео-правилам шёл бы через proxy);
+ *   - `block` — REJECT (соединение разрывается, процесс не имеет сети).
+ * - **comment** — необязательная заметка пользователя для UI.
+ */
+export type AppRuleAction = "proxy" | "direct" | "block";
+export type AppRule = {
+  exe: string;
+  action: AppRuleAction;
+  comment?: string;
+};
+
+/**
  * Готовые «темы-пресеты» — отдельная ось настройки, не комбинация
  * существующих theme/background/buttonStyle. У каждого пресета своя
  * уникальная палитра (CSS-переменные через `data-preset` на <html>),
@@ -170,6 +191,10 @@ export type Settings = {
    *  Когда пользователь явно правит поле в UI → флаг ставится в true,
    *  и используется ровно то значение что вписано. */
   userAgentTouched: boolean;
+
+  /** Правила per-process routing (этап 8.D). Применяются только в
+   *  Mihomo. См. тип `AppRule` выше. Пустой массив — no-op. */
+  appRules: AppRule[];
 };
 
 /**
@@ -248,6 +273,7 @@ const DEFAULTS: Settings = {
   engine: "xray",
   engineTouched: false,
   userAgentTouched: false,
+  appRules: [],
 };
 
 const KEY = "nemefisto.settings.v1";

@@ -8,6 +8,8 @@ import {
   PRESET_BACKGROUND,
   PRESET_BUTTON_STYLE,
   useSettingsStore,
+  type AppRule,
+  type AppRuleAction,
   type Background,
   type ButtonStyle,
   type Engine,
@@ -703,6 +705,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           </div>
         </section>
 
+        {/* ── Правила приложений (8.D) ─────────────────────────────────── */}
+        <AppRulesSection mihomoActive={mihomoActive} />
+
+
         {/* ── Туннель ──────────────────────────────────────────────────── */}
         <section className="settings-section">
           <div className="settings-section-title">туннель</div>
@@ -816,6 +822,152 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── App rules (per-process routing, 8.D) ─────────────────────────────────────
+
+/**
+ * Секция Settings → «правила приложений (Mihomo)». Список правил
+ * `<exe-name> → PROXY|DIRECT|BLOCK` + форма добавления нового.
+ *
+ * Mihomo нативно умеет PROCESS-NAME matcher; Xray на Windows — нет
+ * (планируется через WFP в 13.G). Если активен Xray — баннер сверху
+ * предупреждает что правила игнорируются. Хранятся всегда — при
+ * переключении движка на Mihomo сразу применятся.
+ */
+function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
+  const rules = useSettingsStore((s) => s.appRules);
+  const set = useSettingsStore((s) => s.set);
+
+  const [draftExe, setDraftExe] = useState("");
+  const [draftAction, setDraftAction] = useState<AppRuleAction>("direct");
+  const [draftComment, setDraftComment] = useState("");
+
+  const addRule = () => {
+    const exe = draftExe.trim().toLowerCase();
+    if (!exe) return;
+    // Дедупликация по exe — одна запись на исполняемый файл, при
+    // повторном добавлении обновляется action/comment.
+    const filtered = rules.filter((r) => r.exe.toLowerCase() !== exe);
+    const next: AppRule[] = [
+      ...filtered,
+      {
+        exe,
+        action: draftAction,
+        comment: draftComment.trim() || undefined,
+      },
+    ];
+    set("appRules", next);
+    setDraftExe("");
+    setDraftComment("");
+  };
+
+  const removeRule = (exe: string) => {
+    set(
+      "appRules",
+      rules.filter((r) => r.exe !== exe)
+    );
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">правила приложений</div>
+
+      {!mihomoActive && (
+        <div
+          className="settings-row-hint"
+          style={{
+            marginBottom: 8,
+            padding: "6px 10px",
+            background: "rgba(255,183,77,0.06)",
+            borderRadius: 4,
+            borderLeft: "2px solid #ffb74d",
+          }}
+        >
+          активен xray — правила сейчас не применяются (на windows
+          per-process routing работает только в mihomo через
+          PROCESS-NAME matcher). переключи движок чтобы заработало
+        </div>
+      )}
+
+      <div className="settings-row-hint" style={{ marginBottom: 10 }}>
+        правила вида <b>«&lt;exe&gt; → action»</b> применяются Mihomo
+        к процессам по имени исполняемого файла. например, можно
+        пустить telegram через VPN, а steam — направить direct.
+        имя exe берётся из диспетчера задач (телеграм.exe, steam.exe)
+      </div>
+
+      {rules.length > 0 && (
+        <div className="app-rules-list">
+          {rules.map((r) => (
+            <div key={r.exe} className="app-rule-row">
+              <span className="app-rule-exe">{r.exe}</span>
+              <span
+                className={`app-rule-badge action-${r.action}`}
+                title={
+                  r.action === "proxy"
+                    ? "через VPN"
+                    : r.action === "direct"
+                    ? "напрямую, мимо VPN"
+                    : "блокируется"
+                }
+              >
+                {r.action}
+              </span>
+              {r.comment && (
+                <span className="app-rule-comment">{r.comment}</span>
+              )}
+              <button
+                type="button"
+                className="app-rule-del"
+                onClick={() => removeRule(r.exe)}
+                title="удалить правило"
+                aria-label="удалить"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="app-rule-add">
+        <input
+          type="text"
+          className="input"
+          value={draftExe}
+          onChange={(e) => setDraftExe(e.target.value)}
+          placeholder="telegram.exe"
+          onKeyDown={(e) => e.key === "Enter" && addRule()}
+        />
+        <select
+          className="select-field"
+          value={draftAction}
+          onChange={(e) => setDraftAction(e.target.value as AppRuleAction)}
+        >
+          <option value="direct">direct</option>
+          <option value="proxy">proxy</option>
+          <option value="block">block</option>
+        </select>
+        <input
+          type="text"
+          className="input"
+          value={draftComment}
+          onChange={(e) => setDraftComment(e.target.value)}
+          placeholder="заметка (опционально)"
+          onKeyDown={(e) => e.key === "Enter" && addRule()}
+        />
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={addRule}
+          disabled={!draftExe.trim()}
+        >
+          добавить
+        </button>
+      </div>
+    </section>
   );
 }
 
