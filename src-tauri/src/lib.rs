@@ -10,9 +10,10 @@ use tauri::Manager;
 use config::hwid::load_or_create;
 use config::{HwidState, SubscriptionState};
 use ipc::commands::{
-    connect, discard_proxy_backup, disconnect, fetch_subscription, get_hwid, get_servers,
-    get_subscription_meta, has_proxy_backup, is_xray_running, ping_servers, read_xray_log,
-    restore_proxy_backup,
+    autostart_disable, autostart_enable, autostart_is_enabled, connect, discard_proxy_backup,
+    disconnect, fetch_subscription, get_hwid, get_servers, get_subscription_meta,
+    has_proxy_backup, is_xray_running, ping_servers, read_xray_log, restore_proxy_backup,
+    secure_storage_delete, secure_storage_get, secure_storage_set,
 };
 use vpn::XrayState;
 
@@ -36,6 +37,11 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let _ = app.deep_link().register("nemefisto");
             }
+            // 6.C: запускаем watcher смены сети. Polling default-route
+            // каждые 5 сек; при смене интерфейса emit-ится событие
+            // `network-changed` во фронт, который при активном VPN
+            // делает reconnect.
+            platform::network_watcher::start(app.handle().clone());
             Ok(())
         })
         // Очищаем системный прокси и убиваем Xray при закрытии окна
@@ -59,6 +65,12 @@ pub fn run() {
             has_proxy_backup,
             restore_proxy_backup,
             discard_proxy_backup,
+            secure_storage_get,
+            secure_storage_set,
+            secure_storage_delete,
+            autostart_is_enabled,
+            autostart_enable,
+            autostart_disable,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка инициализации Tauri runtime")

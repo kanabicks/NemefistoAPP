@@ -4,6 +4,7 @@
 //! `tun.rs` и `routing.rs`. Здесь — только switch + конверсия ошибок в
 //! `Response::Error`.
 
+use super::firewall;
 use super::protocol::{Request, Response};
 use super::tun;
 
@@ -40,6 +41,14 @@ pub async fn handle(req: Request) -> Response {
         Request::TunStop => match tun::stop().await {
             Ok(()) => Response::Ok,
             Err(e) => Response::err(format!("tun_stop: {e:#}")),
+        },
+        Request::KillSwitchEnable { server_ip } => match firewall::enable(&server_ip).await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("kill_switch_enable: {e:#}")),
+        },
+        Request::KillSwitchDisable => match firewall::disable().await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("kill_switch_disable: {e:#}")),
         },
     }
 }

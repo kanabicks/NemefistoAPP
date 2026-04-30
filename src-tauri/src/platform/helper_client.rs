@@ -42,6 +42,13 @@ pub enum HelperRequest {
         tun_name_override: Option<String>,
     },
     TunStop,
+    /// Включить kill switch (этап 6.D): Windows Firewall блокирует
+    /// весь outbound кроме allowlist (loopback / LAN / VPN-сервер /
+    /// public DNS).
+    KillSwitchEnable {
+        server_ip: String,
+    },
+    KillSwitchDisable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,6 +135,27 @@ pub async fn tun_start(
         tun_name_override,
     })
     .await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Включить kill switch — Windows Firewall блокирует весь не-VPN
+/// трафик. См. этап 6.D.
+pub async fn kill_switch_enable(server_ip: String) -> Result<()> {
+    let resp = send(HelperRequest::KillSwitchEnable { server_ip }).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Выключить kill switch (восстановить default-allow). Идемпотентно.
+pub async fn kill_switch_disable() -> Result<()> {
+    let resp = send(HelperRequest::KillSwitchDisable).await?;
     match resp {
         HelperResponse::Ok => Ok(()),
         HelperResponse::Error { message } => bail!("{message}"),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
@@ -149,6 +149,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               onChange={(v) => s.set("connectOnOpen", v)}
             />
           </div>
+
+          {/* 6.B — Autostart через Windows Task Scheduler. Состояние
+              хранится в самой ОС (а не в localStorage), чтобы оно
+              переживало переустановку и было видно пользователю в
+              «Управление компьютером → Планировщик заданий». */}
+          <AutostartRow />
         </section>
 
         {/* ── Авто-обновление ──────────────────────────────────────────── */}
@@ -624,6 +630,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               onChange={(v) => s.set("tunMasking", v)}
             />
           </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">kill switch</div>
+              <div className="settings-row-hint">
+                блокирует весь интернет если vpn упадёт — защита от
+                утечек при reconnect/краше xray. ⚠️ если приложение
+                крашнется, интернет останется заблокирован до ручной
+                очистки firewall в admin-powershell
+              </div>
+            </div>
+            <Toggle
+              on={s.killSwitch}
+              onChange={(v) => s.set("killSwitch", v)}
+            />
+          </div>
         </section>
 
         {/* ── Логи Xray ────────────────────────────────────────────────── */}
@@ -797,5 +819,54 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Toggle автозапуска (этап 6.B). Состояние читается прямо из Windows
+ *  Task Scheduler, не из settings store, потому что user может удалить
+ *  task через стандартный UI Windows и тогда настройка должна это
+ *  отражать.*/
+function AutostartRow() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const ok = await invoke<boolean>("autostart_is_enabled");
+        setEnabled(ok);
+      } catch {
+        setEnabled(false);
+      }
+    })();
+  }, []);
+
+  const toggle = async (v: boolean) => {
+    setBusy(true);
+    try {
+      await invoke(v ? "autostart_enable" : "autostart_disable");
+      setEnabled(v);
+    } catch (e) {
+      console.warn("[autostart] не удалось переключить:", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-row">
+      <div>
+        <div className="settings-row-label">запуск с системой</div>
+        <div className="settings-row-hint">
+          приложение само запустится при входе в windows (через task
+          scheduler, без UAC)
+        </div>
+      </div>
+      <Toggle
+        on={enabled === true}
+        onChange={toggle}
+        disabled={busy || enabled === null}
+      />
+    </div>
   );
 }

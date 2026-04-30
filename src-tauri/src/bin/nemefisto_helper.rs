@@ -14,6 +14,7 @@
 #[cfg(windows)]
 mod nemefisto_helper {
     pub mod dispatch;
+    pub mod firewall;
     pub mod pipe;
     pub mod protocol;
     pub mod routing;

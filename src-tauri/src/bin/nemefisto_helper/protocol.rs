@@ -38,6 +38,15 @@ pub enum Request {
     },
     /// Остановить tun2socks и откатить добавленные routes.
     TunStop,
+    /// Включить kill switch — Windows Firewall блокирует весь outbound
+    /// кроме allowlist (loopback / LAN / `server_ip` / public DNS).
+    /// Этап 6.D / 13.D.
+    KillSwitchEnable {
+        server_ip: String,
+    },
+    /// Выключить kill switch — восстановить default-allow policy и
+    /// удалить наши firewall rules.
+    KillSwitchDisable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

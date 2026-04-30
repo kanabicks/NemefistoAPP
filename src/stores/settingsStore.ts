@@ -140,6 +140,13 @@ export type Settings = {
    *  `nemefisto-<pid>`. Защита от детекта VPN приложениями типа
    *  МАХ/ВК/Госуслуг по `GetAdaptersAddresses`. */
   tunMasking: boolean;
+
+  /** Kill switch (этап 6.D / 13.D). Если on — при connect Windows
+   *  Firewall переводится в режим default-block-outbound с allowlist
+   *  для VPN-сервера, loopback, LAN, public DNS. Защита от утечек
+   *  при reconnect / краше Xray. ⚠️ Если приложение крашнется в этом
+   *  режиме, интернет останется заблокирован до ручной очистки firewall. */
+  killSwitch: boolean;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -179,6 +186,7 @@ const DEFAULTS: Settings = {
   antiDpiResolveBootstrap: "1.1.1.1",
   antiDpiTouched: false,
   tunMasking: false,
+  killSwitch: false,
 };
 
 const KEY = "nemefisto.settings.v1";

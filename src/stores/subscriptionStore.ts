@@ -105,6 +105,10 @@ type SubscriptionStore = {
   servers: ProxyEntry[];
   /** Метаданные подписки или null если сервер их не прислал. */
   meta: SubscriptionMeta | null;
+  /** Unix-ms времени последнего успешного fetchSubscription. null —
+   *  ни разу не обновлялась за всю жизнь приложения (например, серверы
+   *  пришли только из кеша при старте). 12.B */
+  lastFetchedAt: number | null;
   /** Пинги по индексам серверов: ms или null если offline / timeout. */
   pings: (number | null)[];
   pingsLoading: boolean;
@@ -118,6 +122,10 @@ type SubscriptionStore = {
   setUrl: (url: string) => void;
   setHwid: (hwid: string) => void;
   loadDeviceHwid: () => Promise<void>;
+  /** Прочитать URL/HWID из Windows Credential Manager. При первом запуске
+   *  мигрирует значения из localStorage → keyring и удаляет их из
+   *  localStorage. См. этап 6.A. */
+  loadSecureCreds: () => Promise<void>;
   fetchSubscription: () => Promise<void>;
   loadCached: () => Promise<void>;
   pingAll: () => Promise<void>;
@@ -159,7 +167,15 @@ const normalizeMeta = (
       }
     : null;
 
+/** Ключи в Windows Credential Manager (этап 6.A). Чувствительные данные
+ *  переехали из localStorage в защищённое хранилище ОС. localStorage
+ *  ключи остаются как fallback на время миграции. */
+const URL_KEYRING = "subscription_url";
+const HWID_KEYRING = "hwid_override";
+
 const URL_KEY = "nemefisto.subscription.url";
+const LAST_FETCH_KEY = "nemefisto.subscription.lastFetchedAt";
+const KEYRING_MIGRATION_KEY = "nemefisto.migrated.keyring.v1";
 // Версионируем ключ override-HWID: при апгрейде клиента старое значение
 // (когда мы вручную подсовывали Happ-овский HWID для отладки) автоматически
 // перестаёт читаться. Override — теперь advanced-only, по умолчанию используется
@@ -184,6 +200,34 @@ const saveToStorage = (key: string, value: string) => {
   }
 };
 
+/** Записать значение в Windows Credential Manager. Возвращает true при
+ *  успехе. Ошибки не критичны — на платформах без keyring (или приватных
+ *  пользователях) тихо проваливаемся. */
+const keyringSet = async (key: string, value: string): Promise<boolean> => {
+  try {
+    await invoke("secure_storage_set", { key, value });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const keyringGet = async (key: string): Promise<string> => {
+  try {
+    return await invoke<string>("secure_storage_get", { key });
+  } catch {
+    return "";
+  }
+};
+
+const keyringDelete = async (key: string): Promise<void> => {
+  try {
+    await invoke("secure_storage_delete", { key });
+  } catch {
+    // ignore
+  }
+};
+
 // Чистим устаревший ключ override-HWID. Версионирование выше уже отрезает
 // его от чтения, но удаляем для гигиены localStorage.
 const runMigrations = () => {
@@ -198,9 +242,23 @@ const runMigrations = () => {
 };
 runMigrations();
 
+/** Прочитать unix-ms из localStorage. Возвращает null если ключа нет
+ *  или значение некорректное. */
+const loadTimestamp = (key: string): number | null => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+};
+
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   servers: [],
   meta: null,
+  lastFetchedAt: loadTimestamp(LAST_FETCH_KEY),
   pings: [],
   pingsLoading: false,
   loading: false,
@@ -210,12 +268,21 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   hwid: loadFromStorage(HWID_KEY),
 
   setUrl: (url) => {
-    saveToStorage(URL_KEY, url);
     set({ url });
+    // Чувствительные значения пишем в Windows Credential Manager.
+    // localStorage больше НЕ используется как источник правды — оставляем
+    // пустым, чтобы старые версии приложения не подсунули устаревший URL.
+    saveToStorage(URL_KEY, "");
+    void keyringSet(URL_KEYRING, url);
   },
   setHwid: (hwid) => {
-    saveToStorage(HWID_KEY, hwid);
     set({ hwid });
+    saveToStorage(HWID_KEY, "");
+    if (hwid.trim()) {
+      void keyringSet(HWID_KEYRING, hwid);
+    } else {
+      void keyringDelete(HWID_KEYRING);
+    }
   },
 
   async loadDeviceHwid() {
@@ -224,6 +291,50 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       set({ deviceHwid: id });
     } catch {
       // не критично — UI покажет пустую строку
+    }
+  },
+
+  async loadSecureCreds() {
+    // Этап 6.A: читаем URL/HWID из Windows Credential Manager. Если в
+    // keyring пусто, но в localStorage есть — мигрируем (один раз) и
+    // зачищаем localStorage. Маркер миграции защищает от повторного
+    // запуска (если вдруг пользователь вернёт старую версию и оставит
+    // там URL — на следующем апгрейде не будем перезатирать keyring).
+    let migrated = false;
+    try {
+      migrated = !!localStorage.getItem(KEYRING_MIGRATION_KEY);
+    } catch {
+      // приватный режим — мигрируем каждый раз, не критично
+    }
+
+    let urlFromKeyring = await keyringGet(URL_KEYRING);
+    let hwidFromKeyring = await keyringGet(HWID_KEYRING);
+
+    if (!migrated) {
+      const legacyUrl = loadFromStorage(URL_KEY);
+      const legacyHwid = loadFromStorage(HWID_KEY);
+      if (!urlFromKeyring && legacyUrl) {
+        await keyringSet(URL_KEYRING, legacyUrl);
+        urlFromKeyring = legacyUrl;
+      }
+      if (!hwidFromKeyring && legacyHwid) {
+        await keyringSet(HWID_KEYRING, legacyHwid);
+        hwidFromKeyring = legacyHwid;
+      }
+      saveToStorage(URL_KEY, "");
+      saveToStorage(HWID_KEY, "");
+      try {
+        localStorage.setItem(KEYRING_MIGRATION_KEY, "1");
+      } catch {
+        // ignore
+      }
+    }
+
+    if (urlFromKeyring) {
+      set({ url: urlFromKeyring });
+    }
+    if (hwidFromKeyring) {
+      set({ hwid: hwidFromKeyring });
     }
   },
 
@@ -239,10 +350,13 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         userAgent: userAgent.trim() || null,
         sendHwid,
       });
+      const now = Date.now();
+      saveToStorage(LAST_FETCH_KEY, String(now));
       set({
         servers: result.servers,
         meta: normalizeMeta(result.meta),
         pings: [],
+        lastFetchedAt: now,
         loading: false,
       });
       // Авто-пинг сразу после получения списка

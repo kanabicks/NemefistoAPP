@@ -280,6 +280,7 @@ pub async fn connect(
     allow_lan: Option<bool>,
     anti_dpi: Option<AntiDpiOptions>,
     tun_masking: Option<bool>,
+    kill_switch: Option<bool>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     sub: State<'_, SubscriptionState>,
@@ -434,6 +435,35 @@ pub async fn connect(
         }
     }
 
+    // 6.D — kill switch: если включён, поднимаем firewall блокировку.
+    // Делается ПОСЛЕ успешного Xray/TUN — чтобы при ошибке connect
+    // не оставить пользователя с заблокированным интернетом.
+    if kill_switch.unwrap_or(false) {
+        // server_host для allowlist — берём из tun_params (уже резолвили
+        // выше) или из ProxyEntry. Резолвим в IP уже на стороне helper'а
+        // если нужно.
+        let server_host = extract_server_host(&entry).unwrap_or_else(|| entry.server.clone());
+        // Гарантируем что helper-сервис запущен (если не активен TUN-режим
+        // — у нас не было ensure_running).
+        if !tun_mode {
+            if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+                let _ = xray.stop();
+                let _ = platform::proxy::clear_system_proxy();
+                return Err(format!("kill switch: helper-сервис недоступен: {e}"));
+            }
+        }
+        if let Err(e) = platform::helper_client::kill_switch_enable(server_host).await {
+            // При ошибке откатываем всё — интернет НЕ должен оставаться
+            // в полу-заблокированном состоянии.
+            let _ = xray.stop();
+            let _ = platform::proxy::clear_system_proxy();
+            if tun_mode {
+                let _ = platform::helper_client::tun_stop().await;
+            }
+            return Err(format!("kill switch не поднялся: {e}"));
+        }
+    }
+
     // В UI возвращаем креды только в LAN-режиме — там клиенты должны
     // ввести их вручную. В TUN-режиме они уже переданы tun2socks; в
     // proxy-режиме их вообще нет (loopback noauth).
@@ -455,16 +485,23 @@ pub async fn connect(
     })
 }
 
-/// Отключиться: остановить TUN (если был активен), Xray и сбросить системный прокси.
+/// Отключиться: остановить TUN (если был активен), Xray, сбросить системный
+/// прокси, выключить kill switch (если был активен).
 ///
-/// Все три операции выполняются независимо: ошибка одной не отменяет других.
-/// `tun_stop` идемпотентен — игнорирует «не запущен» / «helper недоступен».
+/// Все операции выполняются независимо: ошибка одной не отменяет других.
+/// `tun_stop` и `kill_switch_disable` идемпотентны — игнорируют
+/// «не запущен» / «helper недоступен». Это важно: при отключении мы
+/// должны гарантировать что интернет вернётся, даже если helper исчез.
 #[tauri::command]
 pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
-    // 1. TUN: всегда пытаемся; ошибки тихо проглатываем (helper может не стоять)
+    // 1. TUN
     let _ = platform::helper_client::tun_stop().await;
+    // 2. Kill switch — всегда вызываем, чтобы убрать остатки если
+    //    включён был в прошлый сеанс (на случай если краш / повторный
+    //    запуск). Helper тихо вернёт ok если он не был enabled.
+    let _ = platform::helper_client::kill_switch_disable().await;
 
-    // 2. Xray + system proxy
+    // 3. Xray + system proxy
     let xray_err = xray.stop().err();
     let proxy_err = platform::proxy::clear_system_proxy().err().map(|e| e.to_string());
 
@@ -505,6 +542,49 @@ pub fn restore_proxy_backup() -> Result<(), String> {
 #[tauri::command]
 pub fn discard_proxy_backup() {
     platform::proxy::discard_backup();
+}
+
+// ─── Secure storage (6.A — Credential Manager) ────────────────────────────────
+
+/// Прочитать значение из Windows Credential Manager. Возвращает пустую
+/// строку если ключа нет — фронту так удобнее обрабатывать.
+#[tauri::command]
+pub fn secure_storage_get(key: String) -> Result<String, String> {
+    platform::secure_storage::get(&key)
+        .map(|v| v.unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+/// Записать значение в Windows Credential Manager.
+#[tauri::command]
+pub fn secure_storage_set(key: String, value: String) -> Result<(), String> {
+    platform::secure_storage::set(&key, &value).map_err(|e| e.to_string())
+}
+
+/// Удалить значение из Windows Credential Manager.
+#[tauri::command]
+pub fn secure_storage_delete(key: String) -> Result<(), String> {
+    platform::secure_storage::delete(&key).map_err(|e| e.to_string())
+}
+
+// ─── Autostart (6.B) ──────────────────────────────────────────────────────────
+
+/// Зарегистрирован ли task автозапуска в Windows Task Scheduler.
+#[tauri::command]
+pub fn autostart_is_enabled() -> bool {
+    platform::autostart::is_enabled()
+}
+
+/// Включить автозапуск приложения с системой (создаёт task ONLOGON).
+#[tauri::command]
+pub fn autostart_enable() -> Result<(), String> {
+    platform::autostart::enable().map_err(|e| e.to_string())
+}
+
+/// Выключить автозапуск (удаляет task).
+#[tauri::command]
+pub fn autostart_disable() -> Result<(), String> {
+    platform::autostart::disable().map_err(|e| e.to_string())
 }
 
 /// Вернуть HWID устройства (Windows MachineGuid либо локально сохранённый UUID).

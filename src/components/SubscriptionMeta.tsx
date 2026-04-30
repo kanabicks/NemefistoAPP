@@ -29,6 +29,22 @@ function formatBytes(b: number): string {
   return Math.round(b) + " Б";
 }
 
+/** Относительное время «N единиц назад» для last-fetched timestamp.
+ *  Если >7 дней — «давно», если меньше минуты — «только что». 12.B */
+function formatRelative(unixMs: number): string {
+  const diff = Date.now() - unixMs;
+  if (diff < 0) return "только что"; // защита от расхождения часов
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "только что";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} мин назад`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} ч назад`;
+  const day = Math.floor(hour / 24);
+  if (day < 7) return `${day} дн назад`;
+  return "давно";
+}
+
 function formatExpiry(unixSeconds: number): { text: string; warn: boolean } {
   const now = Date.now() / 1000;
   const diff = unixSeconds - now;
@@ -49,14 +65,22 @@ function formatExpiry(unixSeconds: number): { text: string; warn: boolean } {
 
 export function SubscriptionMeta() {
   const meta = useSubscriptionStore((s) => s.meta);
-  if (!meta) return null;
+  const lastFetchedAt = useSubscriptionStore((s) => s.lastFetchedAt);
+  if (!meta && !lastFetchedAt) return null;
 
-  const { used, total, expireAt, title, premiumUrl } = meta;
+  const used = meta?.used ?? 0;
+  const total = meta?.total ?? 0;
+  const expireAt = meta?.expireAt ?? null;
+  const title = meta?.title ?? null;
+  const premiumUrl = meta?.premiumUrl ?? null;
   const hasTraffic = total > 0 || used > 0;
   const hasExpiry = expireAt != null;
   const hasTitle = !!title;
   const hasPremium = !!premiumUrl;
-  if (!hasTraffic && !hasExpiry && !hasTitle && !hasPremium) return null;
+  const hasFetchTime = !!lastFetchedAt;
+  if (!hasTraffic && !hasExpiry && !hasTitle && !hasPremium && !hasFetchTime) {
+    return null;
+  }
 
   const ratio = total > 0 ? Math.min(1, used / total) : 0;
   const percent = Math.round(ratio * 100);
@@ -111,6 +135,11 @@ export function SubscriptionMeta() {
             className={`sub-meta-bar-fill ${barCls}`}
             style={{ width: `${percent}%` }}
           />
+        </div>
+      )}
+      {hasFetchTime && (
+        <div className="sub-meta-fetch">
+          обновлено {formatRelative(lastFetchedAt!)}
         </div>
       )}
     </div>

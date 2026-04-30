@@ -36,6 +36,9 @@ futures = "0.3"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-service = "0.7"
+# Защищённое хранилище для секретов (URL подписки, HWID-override).
+# Использует Windows Credential Manager через keyring-rs (этап 6.A).
+keyring = "3"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

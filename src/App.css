@@ -1047,6 +1047,13 @@ input, textarea { font: inherit; cursor: text; }
 .sub-meta-bar-fill.is-danger {
   background: #f06060;
 }
+.sub-meta-fetch {
+  font-size: 10px;
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+  text-align: right;
+  margin-top: 2px;
+}
 
 /* ── Server pill ──────────────────────────────────────────────────────── */
 .server-pill {

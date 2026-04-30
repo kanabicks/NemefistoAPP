@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { useVpnStore } from "./stores/vpnStore";
 import { useSubscriptionStore } from "./stores/subscriptionStore";
@@ -48,6 +49,7 @@ function App() {
   const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
   const loadCached = useSubscriptionStore((s) => s.loadCached);
   const loadDeviceHwid = useSubscriptionStore((s) => s.loadDeviceHwid);
+  const loadSecureCreds = useSubscriptionStore((s) => s.loadSecureCreds);
   const pingAll = useSubscriptionStore((s) => s.pingAll);
 
   // Settings
@@ -70,20 +72,48 @@ function App() {
     refresh();
     loadCached();
     loadDeviceHwid();
-    if (refreshOnOpen) {
-      void fetchSubscription();
-    } else if (pingOnOpen) {
-      // если не обновляем подписку, всё равно запускаем пинги по кешу
-      void pingAll();
-    }
+    // Этап 6.A: подтягиваем URL/HWID из Windows Credential Manager
+    // (с миграцией из localStorage при первом запуске). Делаем до
+    // refreshOnOpen, чтобы fetchSubscription использовал актуальный URL.
+    void loadSecureCreds().then(() => {
+      if (refreshOnOpen) {
+        void fetchSubscription();
+      } else if (pingOnOpen) {
+        void pingAll();
+      }
+    });
 
     // Подписка на deep-link события (nemefisto://add | connect | ...)
     let unlisten: (() => void) | undefined;
     initDeepLinks().then((u) => {
       unlisten = u;
     });
+
+    // 6.C: слушаем смену сетевого окружения. Если VPN был активен —
+    // делаем reconnect: маршруты и xray sockopt.interface привязаны к
+    // прежнему интерфейсу, после смены трафик не доходит. Reconnect
+    // на свежем default-route чинит это автоматически.
+    let unlistenNetwork: (() => void) | undefined;
+    void listen<{ from: string | null; to: string | null }>(
+      "network-changed",
+      async (event) => {
+        const v = useVpnStore.getState();
+        if (v.status === "running") {
+          console.log("[network-watcher] reconnect:", event.payload);
+          await v.disconnect();
+          // Маленькая пауза чтобы старые маршруты помылись и
+          // platform::network успел отдать новый интерфейс.
+          await new Promise((r) => setTimeout(r, 800));
+          await v.connect();
+        }
+      }
+    ).then((fn) => {
+      unlistenNetwork = fn;
+    });
+
     return () => {
       unlisten?.();
+      unlistenNetwork?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // только один раз на mount

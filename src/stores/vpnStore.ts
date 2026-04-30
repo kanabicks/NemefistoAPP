@@ -147,6 +147,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
 
     const allowLan = useSettingsStore.getState().allowLan;
     const tunMasking = useSettingsStore.getState().tunMasking;
+    const killSwitch = useSettingsStore.getState().killSwitch;
     const antiDpi = buildEffectiveAntiDpi();
     set({ status: "starting", errorMessage: null });
     try {
@@ -156,6 +157,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         allowLan,
         antiDpi,
         tunMasking,
+        killSwitch,
       });
       set({
         status: "running",
