@@ -1053,7 +1053,34 @@ input, textarea { font: inherit; cursor: text; }
   letter-spacing: 0.04em;
   text-align: right;
   margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
+.sub-meta-refresh {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg-mute);
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, transform 0.4s;
+  flex-shrink: 0;
+}
+.sub-meta-refresh:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.sub-meta-refresh:disabled { cursor: not-allowed; opacity: 0.4; }
+.sub-meta-refresh.is-loading { animation: spin 1s linear infinite; }
 
 /* ── Server pill ──────────────────────────────────────────────────────── */
 .server-pill {

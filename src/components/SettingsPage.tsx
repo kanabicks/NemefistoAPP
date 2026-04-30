@@ -42,6 +42,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const fetchSubscription = useSubscriptionStore((x) => x.fetchSubscription);
   const subLoading = useSubscriptionStore((x) => x.loading);
   const subError = useSubscriptionStore((x) => x.error);
+  // 8.B: для smart-reconnect при смене движка нужны connect/disconnect
+  // и текущий статус — иначе пользователь меняет engine, подписка
+  // refetch'ится, но активная сессия остаётся на старом движке.
+  const vpnStatus = useVpnStore((s) => s.status);
+  const vpnConnect = useVpnStore((s) => s.connect);
+  const vpnDisconnect = useVpnStore((s) => s.disconnect);
   const [hwidCopied, setHwidCopied] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -671,13 +677,24 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               onChange={(e) => {
                 const next = e.target.value as Engine;
                 s.set("engine", next);
-                // 8.B: при смене движка сразу перезапрашиваем подписку,
-                // чтобы получить конфиг под новый формат (Xray JSON
-                // vs Clash YAML — see effectiveUserAgent). UA свопается
-                // автоматически если пользователь не правил его вручную.
-                if (subUrl.trim()) {
-                  void fetchSubscription();
-                }
+                if (!subUrl.trim()) return;
+                // 8.B: при смене движка нужно три действия атомарно —
+                // (1) если активна VPN-сессия, погасить её (она бежит
+                //     на старом движке);
+                // (2) перезапросить подписку с новым UA, чтобы получить
+                //     конфиг под нужный формат (xray-json vs clash YAML);
+                // (3) если до смены был connected — поднять сессию
+                //     обратно уже на новом движке.
+                // Без шага 3 пользователь вынужден сам тыкать connect
+                // после смены — UX плохой. Без шага 1 disconnect
+                // происходил бы при следующем connect, но трафик в
+                // паузе уходит мимо VPN.
+                const wasRunning = vpnStatus === "running";
+                void (async () => {
+                  if (wasRunning) await vpnDisconnect();
+                  await fetchSubscription();
+                  if (wasRunning) await vpnConnect();
+                })();
               }}
             >
               <option value="xray">Xray</option>

@@ -66,6 +66,9 @@ function formatExpiry(unixSeconds: number): { text: string; warn: boolean } {
 export function SubscriptionMeta() {
   const meta = useSubscriptionStore((s) => s.meta);
   const lastFetchedAt = useSubscriptionStore((s) => s.lastFetchedAt);
+  const subUrl = useSubscriptionStore((s) => s.url);
+  const subLoading = useSubscriptionStore((s) => s.loading);
+  const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
   if (!meta && !lastFetchedAt) return null;
 
   const used = meta?.used ?? 0;
@@ -137,9 +140,25 @@ export function SubscriptionMeta() {
           />
         </div>
       )}
-      {hasFetchTime && (
+      {(hasFetchTime || subUrl.trim()) && (
         <div className="sub-meta-fetch">
-          обновлено {formatRelative(lastFetchedAt!)}
+          {hasFetchTime ? (
+            <span>обновлено {formatRelative(lastFetchedAt!)}</span>
+          ) : (
+            <span>не обновлялась</span>
+          )}
+          {subUrl.trim() && (
+            <button
+              type="button"
+              className={`sub-meta-refresh${subLoading ? " is-loading" : ""}`}
+              onClick={() => void fetchSubscription()}
+              disabled={subLoading}
+              title="обновить подписку"
+              aria-label="обновить подписку"
+            >
+              ↻
+            </button>
+          )}
         </div>
       )}
     </div>
