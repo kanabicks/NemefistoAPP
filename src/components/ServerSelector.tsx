@@ -45,6 +45,32 @@ export function ServerSelector() {
   const sort = useSettingsStore((s) => s.sort);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // 12.C: фильтры в drawer
+  // - searchQuery: case-insensitive подстрока в name (включая флаг-эмодзи)
+  // - selectedProtocols: набор включённых чипов-протоколов; пустой = все
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedProtocols, setSelectedProtocols] = useState<Set<string>>(
+    new Set()
+  );
+
+  // Список протоколов в подписке (для рендера чипов). Скрываем чипы,
+  // которых нет в текущей подписке — нет смысла показывать "tuic" если
+  // у пользователя нет ни одного TUIC-сервера.
+  const availableProtocols = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of servers) set.add(s.protocol);
+    return Array.from(set).sort();
+  }, [servers]);
+
+  const toggleProtocol = (p: string) => {
+    setSelectedProtocols((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+  };
   // Delayed unmount: после клика «закрыть» rows должны отыграть leave-
   // анимацию, прежде чем DOM удалится. drawerMounted держит элементы
   // дополнительно ~CLOSE_DURATION_MS пока drawerOpen=false.
@@ -72,9 +98,23 @@ export function ServerSelector() {
   const selectedServer =
     selectedIndex !== null ? servers[selectedIndex] : null;
 
-  // Сортировка серверов согласно настройкам
+  // Сортировка + фильтры в drawer (12.C). Сначала фильтруем по поиску
+  // и протоколу, потом сортируем — чтобы топ-результат поиска не
+  // прятался за неотфильтрованным сервером.
   const sortedIndices = useMemo(() => {
-    const idx = servers.map((_, i) => i);
+    const q = searchQuery.trim().toLowerCase();
+    const protoFilter = selectedProtocols;
+
+    let idx = servers.map((_, i) => i);
+    if (q || protoFilter.size > 0) {
+      idx = idx.filter((i) => {
+        const s = servers[i];
+        if (q && !s.name.toLowerCase().includes(q)) return false;
+        if (protoFilter.size > 0 && !protoFilter.has(s.protocol)) return false;
+        return true;
+      });
+    }
+
     if (sort === "none") return idx;
     if (sort === "name") {
       return idx.sort((a, b) =>
@@ -92,7 +132,7 @@ export function ServerSelector() {
       });
     }
     return idx;
-  }, [servers, sort, pings]);
+  }, [servers, sort, pings, searchQuery, selectedProtocols]);
 
   if (servers.length === 0) return null;
 
@@ -137,7 +177,13 @@ export function ServerSelector() {
           {drawerMounted && (
             <>
               <div className="server-list-head">
-                <span>{servers.length} nodes</span>
+                <span>
+                  {sortedIndices.length}
+                  {sortedIndices.length !== servers.length && (
+                    <> / {servers.length}</>
+                  )}{" "}
+                  nodes
+                </span>
                 <button
                   type="button"
                   onClick={() => pingAll()}
@@ -149,6 +195,36 @@ export function ServerSelector() {
                   ↻
                 </button>
               </div>
+
+              {/* 12.C: поиск + чипы протоколов. Скрываем секцию полностью
+                  если серверов <8 — фильтр не нужен на маленьком списке. */}
+              {servers.length >= 8 && (
+                <div className="server-filter">
+                  <input
+                    type="text"
+                    className="server-filter-search"
+                    placeholder="поиск по имени"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {availableProtocols.length > 1 && (
+                    <div className="server-filter-chips">
+                      {availableProtocols.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className={`chip${
+                            selectedProtocols.has(p) ? " is-active" : ""
+                          }`}
+                          onClick={() => toggleProtocol(p)}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="server-list" ref={listRef}>
                 {sortedIndices.map((i, idx) => {
                   const s = servers[i];

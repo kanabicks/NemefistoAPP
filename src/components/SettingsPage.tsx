@@ -1047,12 +1047,31 @@ function LogsBlock() {
 
 // ── Reset block ──────────────────────────────────────────────────────────────
 
+/**
+ * Блок «сброс» (этап 12.A). Две раздельные кнопки:
+ * - **сбросить настройки** — только `settingsStore.reset()`, подписка
+ *   и HWID-override остаются. Полезно когда подкрутил тему/anti-DPI
+ *   до сломанного состояния, а перенастраивать подписку не хочется.
+ * - **удалить всё** — settings + подписка + HWID + dismissed-set
+ *   объявлений. Это полный wipe localStorage.
+ *
+ * Двойной confirm-step для каждой — чтобы случайный клик не уничтожил
+ * данные. Active-confirm подсвечивает только одну из двух — пользователь
+ * понимает что именно собирается сделать.
+ */
 function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
-  const [confirm, setConfirm] = useState(false);
+  type Pending = null | "settings" | "all";
+  const [pending, setPending] = useState<Pending>(null);
   const disconnect = useVpnStore((s) => s.disconnect);
   const settings = useSettingsStore();
 
-  const doReset = async () => {
+  const doResetSettings = () => {
+    settings.reset();
+    setPending(null);
+    onAfterReset();
+  };
+
+  const doResetAll = async () => {
     try {
       await disconnect();
     } catch {
@@ -1072,34 +1091,70 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
   return (
     <section className="settings-section">
       <div className="settings-section-title">сброс</div>
-      {!confirm ? (
-        <button
-          type="button"
-          onClick={() => setConfirm(true)}
-          className="btn-danger"
-          style={{ alignSelf: "flex-start" }}
-        >
-          сбросить приложение
-        </button>
-      ) : (
-        <div className="warn-box" style={{ borderColor: "rgba(217,119,87,0.6)" }}>
+
+      {pending === null && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setPending("settings")}
+            className="btn-ghost"
+          >
+            сбросить настройки
+          </button>
+          <button
+            type="button"
+            onClick={() => setPending("all")}
+            className="btn-danger"
+          >
+            удалить всё
+          </button>
+        </div>
+      )}
+
+      {pending === "settings" && (
+        <div className="warn-box" style={{ borderColor: "rgba(217,119,87,0.4)" }}>
           <span className="warn-box-text">
-            это удалит подписку, hwid-override, все настройки и отключит туннель.
+            настройки вернутся к дефолтным (тема, anti-DPI, движок,
+            правила приложений). <b>подписка и hwid останутся.</b>
             продолжить?
           </span>
           <button
             type="button"
-            onClick={() => setConfirm(false)}
+            onClick={() => setPending(null)}
             className="btn-ghost"
           >
             отмена
           </button>
           <button
             type="button"
-            onClick={doReset}
+            onClick={doResetSettings}
             className="btn-danger"
           >
             да, сбросить
+          </button>
+        </div>
+      )}
+
+      {pending === "all" && (
+        <div className="warn-box" style={{ borderColor: "rgba(217,119,87,0.6)" }}>
+          <span className="warn-box-text">
+            <b>это удалит абсолютно всё:</b> подписку, hwid-override,
+            все настройки, dismissed-объявления. отключит туннель и
+            перезагрузит приложение
+          </span>
+          <button
+            type="button"
+            onClick={() => setPending(null)}
+            className="btn-ghost"
+          >
+            отмена
+          </button>
+          <button
+            type="button"
+            onClick={doResetAll}
+            className="btn-danger"
+          >
+            да, удалить всё
           </button>
         </div>
       )}

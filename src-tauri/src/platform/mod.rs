@@ -9,3 +9,4 @@ pub mod network;
 pub mod network_watcher;
 pub mod proxy;
 pub mod secure_storage;
+pub mod tray;

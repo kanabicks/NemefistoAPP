@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { useVpnStore } from "./stores/vpnStore";
@@ -111,12 +112,47 @@ function App() {
       unlistenNetwork = fn;
     });
 
+    // 13.A: tray menu делегирует «toggle VPN» в фронт через event
+    // `tray-action`. Здесь всю логику уже знает vpnStore (engine
+    // selection, anti-DPI, kill-switch и т.д.), не дублируем на бэкенде.
+    let unlistenTray: (() => void) | undefined;
+    void listen<string>("tray-action", async (event) => {
+      if (event.payload === "toggle-vpn") {
+        const v = useVpnStore.getState();
+        if (v.status === "running") {
+          await v.disconnect();
+        } else if (v.status === "stopped" || v.status === "error") {
+          if (v.selectedIndex !== null) {
+            await v.connect();
+          }
+        }
+        // starting / stopping — игнорируем клик чтобы не дёргать.
+      }
+    }).then((fn) => {
+      unlistenTray = fn;
+    });
+
     return () => {
       unlisten?.();
       unlistenNetwork?.();
+      unlistenTray?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // только один раз на mount
+
+  // 13.A: при любом изменении статуса / выбранного сервера обновляем
+  // tray (текст пункта «Подключить/Отключить» + tooltip иконки).
+  useEffect(() => {
+    const serverName =
+      selectedIndex !== null && servers[selectedIndex]
+        ? servers[selectedIndex].name
+        : null;
+    void invoke("tray_set_status", {
+      status,
+      serverName,
+      hasSelection: selectedIndex !== null,
+    });
+  }, [status, selectedIndex, servers]);
 
   // ── Авто-подключение к последнему выбранному при старте ────────────────────
   const [didAutoConnect, setDidAutoConnect] = useState(false);

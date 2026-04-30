@@ -598,6 +598,22 @@ pub fn is_xray_running(
     xray.is_running() || mihomo.is_running()
 }
 
+/// Обновить tray-icon под текущий VPN-статус (этап 13.A).
+///
+/// Фронт вызывает при каждом изменении `vpnStore.status`. Backend
+/// меняет текст пункта «Подключить/Отключить» в меню трея и tooltip
+/// иконки. Фронт также сообщает имя выбранного сервера и есть ли
+/// вообще выбор — по этому решаем enabled-state кнопки.
+#[tauri::command]
+pub fn tray_set_status(
+    status: String,
+    server_name: Option<String>,
+    has_selection: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    platform::tray::set_status(&app, &status, server_name.as_deref(), has_selection)
+}
+
 // ─── Crash recovery (9.D) ─────────────────────────────────────────────────────
 
 /// Существует ли backup-файл системного прокси с прошлой сессии.

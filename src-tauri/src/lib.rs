@@ -13,7 +13,7 @@ use ipc::commands::{
     autostart_disable, autostart_enable, autostart_is_enabled, connect, discard_proxy_backup,
     disconnect, fetch_subscription, get_hwid, get_servers, get_subscription_meta,
     has_proxy_backup, is_xray_running, ping_servers, read_xray_log, restore_proxy_backup,
-    secure_storage_delete, secure_storage_get, secure_storage_set,
+    secure_storage_delete, secure_storage_get, secure_storage_set, tray_set_status,
 };
 use vpn::{MihomoState, XrayState};
 
@@ -43,16 +43,18 @@ pub fn run() {
             // `network-changed` во фронт, который при активном VPN
             // делает reconnect.
             platform::network_watcher::start(app.handle().clone());
+            // 13.A: системный трей. Создаём один раз; меню обновляется
+            // через `tray_set_status` команду из фронта при смене VPN-статуса.
+            platform::tray::init(app.handle())?;
             Ok(())
         })
-        // Очищаем системный прокси и убиваем Xray при закрытии окна
+        // 13.A: закрытие окна → сворачиваем в трей, не выходим из приложения.
+        // Outright выход возможен только через пункт «Выйти» в меню трея —
+        // там же делается полный shutdown (Xray/Mihomo/proxy/exit).
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let xray = window.state::<XrayState>();
-                let _ = xray.stop();
-                let mihomo = window.state::<MihomoState>();
-                let _ = mihomo.stop();
-                let _ = platform::proxy::clear_system_proxy();
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -74,6 +76,7 @@ pub fn run() {
             autostart_is_enabled,
             autostart_enable,
             autostart_disable,
+            tray_set_status,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка инициализации Tauri runtime")

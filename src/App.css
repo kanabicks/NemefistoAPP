@@ -1392,6 +1392,60 @@ input, textarea { font: inherit; cursor: text; }
   flex-shrink: 0;
 }
 
+/* ── Фильтры в drawer (12.C) ─────────────────────────────────────────── */
+.server-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+.server-filter-search {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.server-filter-search:focus {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.06);
+}
+.server-filter-search::placeholder {
+  color: var(--fg-mute);
+}
+.server-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.server-filter-chips .chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg-mute);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+.server-filter-chips .chip:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+.server-filter-chips .chip.is-active {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--accent);
+}
+
 /* ── App rules (8.D per-process routing) ────────────────────────────── */
 .app-rules-list {
   display: flex;
