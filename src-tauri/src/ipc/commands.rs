@@ -167,14 +167,45 @@ fn resolve_tun2socks_path() -> Option<PathBuf> {
     candidates.into_iter().find(|c| c.is_file())
 }
 
+/// Сгенерировать замаскированное имя TUN-адаптера (этап 12.E).
+/// Случайно выбирается шаблон + случайный суффикс. Это не криптостойкая
+/// генерация — цель в том чтобы имя адаптера выглядело как обычный
+/// системный сетевой интерфейс (детектится приложениями типа МАХ/ВК
+/// через `GetAdaptersAddresses` по имени).
+fn generate_masked_tun_name() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Дешёвая псевдослучайность из времени старта — для уникальности от
+    // запуска к запуску её хватает, криптостойкость не требуется.
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let pattern = seed % 3;
+    let n = 99 + (seed / 3) % 100; // 99..198
+    match pattern {
+        0 => format!("wlan{n}"),
+        1 => format!("Local Area Connection {}", n - 99),
+        _ => format!("Ethernet {}", n - 99),
+    }
+}
+
 // ─── Результаты команд ────────────────────────────────────────────────────────
 
 /// Возвращается фронтенду после успешного подключения.
+///
+/// `socks_username` / `socks_password` — заполнены только если включён
+/// `auth: password` на SOCKS5 inbound (этап 9.G). Используется в LAN-
+/// режиме чтобы UI показал креды для копирования; в TUN-режиме они
+/// уже переданы в tun2socks и пользователю не нужны.
 #[derive(Serialize)]
 pub struct ConnectResult {
     pub socks_port: u16,
     pub http_port: u16,
     pub server_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socks_username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socks_password: Option<String>,
 }
 
 // ─── Подписка ─────────────────────────────────────────────────────────────────
@@ -248,6 +279,7 @@ pub async fn connect(
     mode: String,
     allow_lan: Option<bool>,
     anti_dpi: Option<AntiDpiOptions>,
+    tun_masking: Option<bool>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     sub: State<'_, SubscriptionState>,
@@ -263,8 +295,22 @@ pub async fn connect(
 
     let default_socks = find_free_port(1080);
     let default_http = find_free_port(1087);
-    let listen = if allow_lan.unwrap_or(false) { "0.0.0.0" } else { "127.0.0.1" };
+    let lan = allow_lan.unwrap_or(false);
+    let listen = if lan { "0.0.0.0" } else { "127.0.0.1" };
     let tun_mode = mode == "tun";
+
+    // 9.G — SOCKS5/HTTP inbound auth. Включаем для TUN-режима всегда
+    // (защита от использования прокси посторонними процессами на машине)
+    // и для LAN-режима (защита от любого устройства в Wi-Fi сети). В
+    // loopback proxy-режиме оставляем noauth — Windows registry для
+    // системного прокси не умеет user:pass@host:port, и браузеры будут
+    // получать 407 auth challenge на каждый запрос.
+    let socks_auth = if tun_mode || lan {
+        let pass = uuid::Uuid::new_v4().to_string();
+        Some(("nemefisto".to_string(), pass))
+    } else {
+        None
+    };
 
     // Для TUN-режима получаем имя физического интерфейса. В Xray-конфиге
     // direct-outbound получит `streamSettings.sockopt.interface = <name>` —
@@ -309,6 +355,9 @@ pub async fn connect(
         );
         (patched, default_socks, default_http)
     } else {
+        let auth_pair = socks_auth
+            .as_ref()
+            .map(|(u, p)| (u.as_str(), p.as_str()));
         let cfg = xray_config::build(
             &entry,
             default_socks,
@@ -317,6 +366,7 @@ pub async fn connect(
             tun_mode,
             physic_iface.as_deref(),
             anti_dpi.as_ref(),
+            auth_pair,
         )
         .map_err(|e| e.to_string())?;
         (cfg.json, cfg.socks_port, cfg.http_port)
@@ -348,11 +398,26 @@ pub async fn connect(
 
             // tun_params гарантировано Some — установлено выше
             let (server_host, tun2socks_path) = tun_params.unwrap();
+            // Для маскировки TUN-имени (12.E) генерируем нейтральное имя
+            // только для этого запуска. Helper создаст адаптер с ним.
+            let tun_name_override = if tun_masking.unwrap_or(false) {
+                Some(generate_masked_tun_name())
+            } else {
+                None
+            };
+            // SOCKS5 креды (9.G): tun2socks подключится с auth.
+            let (auth_user, auth_pass) = match &socks_auth {
+                Some((u, p)) => (Some(u.clone()), Some(p.clone())),
+                None => (None, None),
+            };
             if let Err(e) = platform::helper_client::tun_start(
                 socks_port,
                 server_host,
                 "1.1.1.1".to_string(),
                 tun2socks_path,
+                auth_user,
+                auth_pass,
+                tun_name_override,
             )
             .await
             {
@@ -369,10 +434,24 @@ pub async fn connect(
         }
     }
 
+    // В UI возвращаем креды только в LAN-режиме — там клиенты должны
+    // ввести их вручную. В TUN-режиме они уже переданы tun2socks; в
+    // proxy-режиме их вообще нет (loopback noauth).
+    let (resp_user, resp_pass) = if lan {
+        match socks_auth {
+            Some((u, p)) => (Some(u), Some(p)),
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     Ok(ConnectResult {
         socks_port,
         http_port,
         server_name: entry.name,
+        socks_username: resp_user,
+        socks_password: resp_pass,
     })
 }
 

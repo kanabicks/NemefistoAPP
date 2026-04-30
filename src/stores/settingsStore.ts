@@ -133,6 +133,13 @@ export type Settings = {
    *  false — настройки из заголовков подписки `fragmentation-*` /
    *  `noises-*` / `server-address-resolve-*` имеют приоритет. */
   antiDpiTouched: boolean;
+
+  /** Маскировка имени TUN-адаптера (этап 12.E). Если on — каждое
+   *  подключение в TUN-режиме создаёт адаптер с нейтральным именем
+   *  (wlan99 / Local Area Connection N / Ethernet N) вместо
+   *  `nemefisto-<pid>`. Защита от детекта VPN приложениями типа
+   *  МАХ/ВК/Госуслуг по `GetAdaptersAddresses`. */
+  tunMasking: boolean;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -171,6 +178,7 @@ const DEFAULTS: Settings = {
   antiDpiResolveDoH: "https://cloudflare-dns.com/dns-query",
   antiDpiResolveBootstrap: "1.1.1.1",
   antiDpiTouched: false,
+  tunMasking: false,
 };
 
 const KEY = "nemefisto.settings.v1";

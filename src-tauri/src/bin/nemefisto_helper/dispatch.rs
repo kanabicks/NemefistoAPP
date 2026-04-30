@@ -20,7 +20,20 @@ pub async fn handle(req: Request) -> Response {
             server_host,
             dns,
             tun2socks_path,
-        } => match tun::start(socks_port, &server_host, &dns, &tun2socks_path).await {
+            socks_username,
+            socks_password,
+            tun_name_override,
+        } => match tun::start(
+            socks_port,
+            &server_host,
+            &dns,
+            &tun2socks_path,
+            socks_username.as_deref(),
+            socks_password.as_deref(),
+            tun_name_override.as_deref(),
+        )
+        .await
+        {
             Ok(()) => Response::Ok,
             Err(e) => Response::err(format!("tun_start: {e:#}")),
         },

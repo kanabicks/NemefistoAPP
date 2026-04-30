@@ -25,6 +25,16 @@ pub enum Request {
         server_host: String,
         dns: String,
         tun2socks_path: String,
+        /// SOCKS5 auth (этап 9.G): tun2socks использует
+        /// `socks5://user:pass@host:port` если оба заданы. Иначе noauth.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        socks_username: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        socks_password: Option<String>,
+        /// Маскировка TUN-имени (этап 12.E): если задано, helper создаёт
+        /// адаптер с этим именем. Иначе — стандартный `nemefisto-<pid>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tun_name_override: Option<String>,
     },
     /// Остановить tun2socks и откатить добавленные routes.
     TunStop,

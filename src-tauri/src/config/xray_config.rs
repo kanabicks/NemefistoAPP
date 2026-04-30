@@ -57,6 +57,7 @@ pub fn build(
     tun_mode: bool,
     physic_iface: Option<&str>,
     anti_dpi: Option<&AntiDpiOptions>,
+    socks_auth: Option<(&str, &str)>,
 ) -> Result<XrayConfig> {
     let mut outbound = build_outbound(entry)
         .with_context(|| format!("ошибка построения outbound для «{}»", entry.name))?;
@@ -183,6 +184,27 @@ pub fn build(
         "settings": {}
     }));
 
+    // Inbound settings для SOCKS5: либо noauth (loopback proxy-режим),
+    // либо password-auth (TUN или LAN, см. этап 9.G).
+    let socks_settings = match socks_auth {
+        Some((user, pass)) => json!({
+            "auth": "password",
+            "udp": true,
+            "accounts": [{ "user": user, "pass": pass }]
+        }),
+        None => json!({
+            "auth": "noauth",
+            "udp": true
+        }),
+    };
+    // Аналогично для HTTP inbound (Xray использует поле accounts тут же).
+    let http_settings = match socks_auth {
+        Some((user, pass)) => json!({
+            "accounts": [{ "user": user, "pass": pass }]
+        }),
+        None => json!({}),
+    };
+
     let config = json!({
         "log": {
             "loglevel": "warning"
@@ -194,10 +216,7 @@ pub fn build(
                 "listen": listen,
                 "port": socks_port,
                 "protocol": "socks",
-                "settings": {
-                    "auth": "noauth",
-                    "udp": true
-                },
+                "settings": socks_settings,
                 "sniffing": {
                     "enabled": true,
                     "destOverride": ["http", "tls"]
@@ -208,7 +227,7 @@ pub fn build(
                 "listen": listen,
                 "port": http_port,
                 "protocol": "http",
-                "settings": {},
+                "settings": http_settings,
                 "sniffing": {
                     "enabled": true,
                     "destOverride": ["http", "tls"]

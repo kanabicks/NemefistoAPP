@@ -89,6 +89,10 @@ type ConnectResult = {
   socks_port: number;
   http_port: number;
   server_name: string;
+  /** SOCKS5 username/password для LAN-режима (этап 9.G).
+   *  Заполнено только когда LAN активен; UI показывает их с copy-кнопкой. */
+  socks_username?: string | null;
+  socks_password?: string | null;
 };
 
 type VpnState = {
@@ -98,6 +102,10 @@ type VpnState = {
   selectedIndex: number | null;
   socksPort: number | null;
   httpPort: number | null;
+  /** SOCKS5 креды показываемые в LAN-режиме (этап 9.G).
+   *  null когда LAN выключен или connect ещё не выполнялся. */
+  socksUsername: string | null;
+  socksPassword: string | null;
 
   setMode: (mode: VpnMode) => void;
   selectServer: (index: number) => void;
@@ -113,6 +121,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   selectedIndex: null,
   socksPort: null,
   httpPort: null,
+  socksUsername: null,
+  socksPassword: null,
 
   setMode: (mode) => set({ mode }),
   selectServer: (index) => set({ selectedIndex: index }),
@@ -136,6 +146,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     if (selectedIndex === null) return;
 
     const allowLan = useSettingsStore.getState().allowLan;
+    const tunMasking = useSettingsStore.getState().tunMasking;
     const antiDpi = buildEffectiveAntiDpi();
     set({ status: "starting", errorMessage: null });
     try {
@@ -144,11 +155,14 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         mode,
         allowLan,
         antiDpi,
+        tunMasking,
       });
       set({
         status: "running",
         socksPort: result.socks_port,
         httpPort: result.http_port,
+        socksUsername: result.socks_username ?? null,
+        socksPassword: result.socks_password ?? null,
         errorMessage: null,
       });
     } catch (e) {
@@ -164,6 +178,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         status: "stopped",
         socksPort: null,
         httpPort: null,
+        socksUsername: null,
+        socksPassword: null,
         errorMessage: null,
       });
     } catch (e) {

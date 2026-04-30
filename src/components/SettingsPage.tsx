@@ -600,12 +600,28 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <div className="settings-row-label">подключения из LAN</div>
               <div className="settings-row-hint">
                 inbound слушает 0.0.0.0 — другие устройства в сети могут
-                использовать этот прокси
+                использовать этот прокси (логин/пароль показываются после connect)
               </div>
             </div>
             <Toggle
               on={s.allowLan}
               onChange={(v) => s.set("allowLan", v)}
+            />
+          </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">маскировка TUN-имени</div>
+              <div className="settings-row-hint">
+                имя адаптера выглядит как обычный сетевой интерфейс
+                (wlan99 / Local Area Connection / Ethernet). помогает
+                от приложений-шпионов которые детектят VPN по имени
+                адаптера через GetAdaptersAddresses
+              </div>
+            </div>
+            <Toggle
+              on={s.tunMasking}
+              onChange={(v) => s.set("tunMasking", v)}
             />
           </div>
         </section>

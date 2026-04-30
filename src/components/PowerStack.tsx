@@ -16,6 +16,8 @@ export function PowerStack({ canConnect }: { canConnect: boolean }) {
   const mode = useVpnStore((s) => s.mode);
   const socksPort = useVpnStore((s) => s.socksPort);
   const httpPort = useVpnStore((s) => s.httpPort);
+  const socksUsername = useVpnStore((s) => s.socksUsername);
+  const socksPassword = useVpnStore((s) => s.socksPassword);
   const connect = useVpnStore((s) => s.connect);
   const disconnect = useVpnStore((s) => s.disconnect);
   // Effective-значения учитывают override из заголовков подписки.
@@ -62,12 +64,40 @@ export function PowerStack({ canConnect }: { canConnect: boolean }) {
             socks5 127.0.0.1:{socksPort} · http :{httpPort}
           </div>
         )}
+        {/* В LAN-режиме показываем сгенерированные креды для SOCKS5 inbound,
+            чтобы пользователь мог скопировать и ввести в браузере на другом
+            устройстве в сети. См. этап 9.G. */}
+        {isRunning && socksUsername && socksPassword && (
+          <LanCredentials user={socksUsername} pass={socksPassword} />
+        )}
         {!isRunning && (
           <div className="power-detail" style={{ marginTop: 6 }}>
             режим — {MODE_LABEL[mode]}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Маленькая плашка с SOCKS5-кредами для LAN-режима + кнопка копирования. */
+function LanCredentials({ user, pass }: { user: string; pass: string }) {
+  return (
+    <div className="lan-creds" style={{ marginTop: 8 }}>
+      <div className="lan-creds-label">логин/пароль для LAN</div>
+      <button
+        type="button"
+        className="lan-creds-row"
+        onClick={() => {
+          void navigator.clipboard.writeText(`${user}:${pass}`);
+        }}
+        title="скопировать user:pass"
+      >
+        <span className="lan-creds-user">{user}</span>
+        <span className="lan-creds-sep">:</span>
+        <span className="lan-creds-pass">{pass}</span>
+        <span className="lan-creds-copy">⎘</span>
+      </button>
     </div>
   );
 }

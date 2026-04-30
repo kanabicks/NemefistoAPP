@@ -83,6 +83,9 @@ pub async fn start(
     server_host: &str,
     dns: &str,
     tun2socks_path: &str,
+    socks_username: Option<&str>,
+    socks_password: Option<&str>,
+    tun_name_override: Option<&str>,
 ) -> Result<()> {
     let mut t = Timing::new();
     let mut g = STATE.lock().await;
@@ -97,8 +100,14 @@ pub async fn start(
         bail!("tun2socks не найден по пути: {tun2socks_path}");
     }
 
-    // Уникальное имя TUN-адаптера на эту сессию (не конфликтует с zombie).
-    let tun_name = format!("{TUN_NAME_PREFIX}{}", std::process::id());
+    // Имя TUN-адаптера. По умолчанию — `nemefisto-<pid>` для уникальности
+    // и упрощения cleanup-а. Если пользователь включил «маскировку TUN»
+    // (12.E), main-app передаёт сюда замаскированное имя из набора
+    // wlan99 / Local Area Connection N / Ethernet N — оно уже содержит
+    // случайный суффикс и от запуска к запуску разное.
+    let tun_name = tun_name_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{TUN_NAME_PREFIX}{}", std::process::id()));
     eprintln!("[helper-tun] имя TUN-адаптера: {tun_name}");
 
     // 2. Резолв server_ip
@@ -138,8 +147,23 @@ pub async fn start(
 
     // 5. Спавн tun2socks. Лог пишем в файл — увидим причину если интерфейс
     //    не поднимется. Уровень debug для диагностики.
+    //    Если для SOCKS5 inbound заданы креды (этап 9.G), передаём
+    //    `socks5://user:pass@127.0.0.1:port`; иначе noauth.
+    let proxy_url = match (socks_username, socks_password) {
+        (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
+            format!("socks5://{user}:{pass}@127.0.0.1:{socks_port}")
+        }
+        _ => format!("socks5://127.0.0.1:{socks_port}"),
+    };
     eprintln!(
-        "[helper-tun] запускаем tun2socks → socks5://127.0.0.1:{socks_port}, лог: {}",
+        "[helper-tun] запускаем tun2socks → {} (auth: {}), лог: {}",
+        // Замокировано для логов чтобы пароль не попадал в plaintext-лог
+        if socks_username.is_some() {
+            format!("socks5://***:***@127.0.0.1:{socks_port}")
+        } else {
+            format!("socks5://127.0.0.1:{socks_port}")
+        },
+        socks_username.is_some(),
         log_path.display()
     );
     // ВНИМАНИЕ: НЕ ПЕРЕДАЁМ `-interface` сюда. tun2socks подключается
@@ -155,7 +179,7 @@ pub async fn start(
             "-device",
             &format!("tun://{tun_name}"),
             "-proxy",
-            &format!("socks5://127.0.0.1:{socks_port}"),
+            &proxy_url,
             "-loglevel",
             "debug",
         ])

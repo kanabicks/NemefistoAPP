@@ -27,6 +27,19 @@ pub enum HelperRequest {
         server_host: String,
         dns: String,
         tun2socks_path: String,
+        /// SOCKS5 auth (этап 9.G): если задан, tun2socks подключится с
+        /// учётными данными `socks5://user:pass@127.0.0.1:port`. Xray
+        /// принимает auth: password только когда обе строки заданы.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        socks_username: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        socks_password: Option<String>,
+        /// Маскировка TUN-имени (этап 12.E): если задано — helper создаёт
+        /// адаптер с этим именем вместо стандартного `nemefisto-<pid>`.
+        /// UI должен сгенерировать имя случайным образом, чтобы оно было
+        /// разным от запуска к запуску.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tun_name_override: Option<String>,
     },
     TunStop,
 }
@@ -90,17 +103,29 @@ pub async fn ping() -> Result<()> {
 
 /// Поднять TUN-режим: helper запустит tun2socks, добавит маршруты,
 /// настроит DNS на TUN-интерфейсе.
+///
+/// Опционально:
+/// - `socks_username` / `socks_password` — для SOCKS5 auth (9.G);
+///   передаётся в tun2socks как `socks5://user:pass@host:port`.
+/// - `tun_name_override` — кастомное имя TUN-адаптера для маскировки
+///   от детекта приложений по имени интерфейса (12.E).
 pub async fn tun_start(
     socks_port: u16,
     server_host: String,
     dns: String,
     tun2socks_path: String,
+    socks_username: Option<String>,
+    socks_password: Option<String>,
+    tun_name_override: Option<String>,
 ) -> Result<()> {
     let resp = send(HelperRequest::TunStart {
         socks_port,
         server_host,
         dns,
         tun2socks_path,
+        socks_username,
+        socks_password,
+        tun_name_override,
     })
     .await?;
     match resp {
