@@ -10,9 +10,9 @@ use tokio::net::TcpStream;
 
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::xray_config::{self, AntiDpiOptions};
-use crate::config::{HwidState, ProxyEntry, SubscriptionState};
+use crate::config::{mihomo_config, HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
-use crate::vpn::{find_free_port, ping_entry, random_high_port, XrayState};
+use crate::vpn::{find_free_port, ping_entry, random_high_port, MihomoState, XrayState};
 
 /// Имя файла с triplet-суффиксом — формат, в котором лежит исходный
 /// бинарь в `binaries/`, и в котором Tauri (большинство версий) кладёт
@@ -277,12 +277,14 @@ pub fn get_subscription_meta(sub: State<'_, SubscriptionState>) -> Option<Subscr
 pub async fn connect(
     server_index: usize,
     mode: String,
+    engine: Option<String>,
     allow_lan: Option<bool>,
     anti_dpi: Option<AntiDpiOptions>,
     tun_masking: Option<bool>,
     kill_switch: Option<bool>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
+    mihomo: State<'_, MihomoState>,
     sub: State<'_, SubscriptionState>,
 ) -> Result<ConnectResult, String> {
     // Клонируем ProxyEntry, чтобы сразу освободить lock на список серверов
@@ -294,12 +296,31 @@ pub async fn connect(
             .ok_or_else(|| format!("сервер #{server_index} не найден в списке"))?
     };
 
+    // 8.B — выбор движка. Дефолт xray. Проверяем что сервер поддерживает
+    // выбранное ядро; иначе возвращаем понятную ошибку (UI должен предложить
+    // переключить движок до повторного клика).
+    let chosen_engine = engine.as_deref().unwrap_or("xray");
+    if !entry.engine_compat.iter().any(|e| e == chosen_engine) {
+        return Err(format!(
+            "сервер «{}» несовместим с движком {}; поддерживается: {}",
+            entry.name,
+            chosen_engine,
+            entry.engine_compat.join(", ")
+        ));
+    }
+
     // 9.H — рандомизация портов inbound. Старт с псевдослучайных значений
     // в диапазоне [30000, 60000) вместо фиксированных 1080/1087, чтобы
     // сторонний процесс на машине не мог дёшево детектнуть VPN-клиент
     // сканированием стандартных портов. См. https://habr.com/ru/news/1020902/.
+    // У Mihomo один mixed-port на SOCKS5+HTTP, поэтому для него используем
+    // одно и то же значение для обоих "портов" (всё равно один сокет).
     let default_socks = find_free_port(random_high_port());
-    let default_http = find_free_port(random_high_port());
+    let default_http = if chosen_engine == "mihomo" {
+        default_socks
+    } else {
+        find_free_port(random_high_port())
+    };
     let lan = allow_lan.unwrap_or(false);
     let listen = if lan { "0.0.0.0" } else { "127.0.0.1" };
     let tun_mode = mode == "tun";
@@ -347,39 +368,63 @@ pub async fn connect(
         None
     };
 
-    // xray-json: патчим внешний конфиг (порты + listen)
-    // иначе: генерируем конфиг из ProxyEntry
-    let (config_json, socks_port, http_port) = if entry.protocol == "xray-json" {
-        let patched = xray_config::patch_xray_json(
-            entry.raw.clone(),
-            default_socks,
-            default_http,
-            listen,
-            tun_mode,
-            physic_iface.as_deref(),
-        );
-        (patched, default_socks, default_http)
-    } else {
+    // 8.B: разветвление по движку. Под Mihomo генерим YAML и запускаем
+    // mihomo sidecar; под Xray — текущий путь с JSON и xray sidecar.
+    // socks_port и http_port одинаковые для Mihomo (один mixed-port).
+    let (socks_port, http_port) = if chosen_engine == "mihomo" {
         let auth_pair = socks_auth
             .as_ref()
             .map(|(u, p)| (u.as_str(), p.as_str()));
-        let cfg = xray_config::build(
+        let cfg = mihomo_config::build(
             &entry,
             default_socks,
-            default_http,
             listen,
-            tun_mode,
-            physic_iface.as_deref(),
             anti_dpi.as_ref(),
             auth_pair,
         )
         .map_err(|e| e.to_string())?;
-        (cfg.json, cfg.socks_port, cfg.http_port)
-    };
+        // На всякий случай гасим Xray если он был активен от прошлой сессии
+        // на другом движке (не должно бывать, но дешёвая страховка).
+        let _ = xray.stop();
+        mihomo.start_with_config(&app, &cfg.yaml, cfg.mixed_port)?;
+        (cfg.mixed_port, cfg.mixed_port)
+    } else {
+        // xray-json: патчим внешний конфиг (порты + listen)
+        // иначе: генерируем конфиг из ProxyEntry
+        let (config_json, sp, hp) = if entry.protocol == "xray-json" {
+            let patched = xray_config::patch_xray_json(
+                entry.raw.clone(),
+                default_socks,
+                default_http,
+                listen,
+                tun_mode,
+                physic_iface.as_deref(),
+            );
+            (patched, default_socks, default_http)
+        } else {
+            let auth_pair = socks_auth
+                .as_ref()
+                .map(|(u, p)| (u.as_str(), p.as_str()));
+            let cfg = xray_config::build(
+                &entry,
+                default_socks,
+                default_http,
+                listen,
+                tun_mode,
+                physic_iface.as_deref(),
+                anti_dpi.as_ref(),
+                auth_pair,
+            )
+            .map_err(|e| e.to_string())?;
+            (cfg.json, cfg.socks_port, cfg.http_port)
+        };
 
-    // Запускаем Xray ДО поднятия TUN — иначе резолв server-а в Xray уйдёт
-    // через TUN, а tun2socks не сможет соединиться с upstream-Xray.
-    xray.start_with_config(&app, &config_json, socks_port, http_port)?;
+        // Запускаем Xray ДО поднятия TUN — иначе резолв server-а в Xray уйдёт
+        // через TUN, а tun2socks не сможет соединиться с upstream-Xray.
+        let _ = mihomo.stop();
+        xray.start_with_config(&app, &config_json, sp, hp)?;
+        (sp, hp)
+    };
 
     match mode.as_str() {
         "proxy" => {
@@ -398,6 +443,7 @@ pub async fn connect(
             // ставится с AutoStart и больше UAC не запрашивает.
             if let Err(e) = platform::helper_bootstrap::ensure_running().await {
                 let _ = xray.stop();
+                let _ = mihomo.stop();
                 return Err(format!("helper-сервис недоступен: {e}"));
             }
 
@@ -426,8 +472,9 @@ pub async fn connect(
             )
             .await
             {
-                // Откатываем Xray если TUN не поднялся
+                // Откатываем активный движок если TUN не поднялся
                 let _ = xray.stop();
+                let _ = mihomo.stop();
                 return Err(format!(
                     "TUN-режим не запустился: {e}\n\nПроверьте services.msc → NemefistoHelper, и что tun2socks.exe + wintun.dll лежат рядом друг с другом."
                 ));
@@ -435,6 +482,7 @@ pub async fn connect(
         }
         other => {
             let _ = xray.stop();
+            let _ = mihomo.stop();
             return Err(format!("неизвестный режим: {other}"));
         }
     }
@@ -452,6 +500,7 @@ pub async fn connect(
         if !tun_mode {
             if let Err(e) = platform::helper_bootstrap::ensure_running().await {
                 let _ = xray.stop();
+                let _ = mihomo.stop();
                 let _ = platform::proxy::clear_system_proxy();
                 return Err(format!("kill switch: helper-сервис недоступен: {e}"));
             }
@@ -460,6 +509,7 @@ pub async fn connect(
             // При ошибке откатываем всё — интернет НЕ должен оставаться
             // в полу-заблокированном состоянии.
             let _ = xray.stop();
+            let _ = mihomo.stop();
             let _ = platform::proxy::clear_system_proxy();
             if tun_mode {
                 let _ = platform::helper_client::tun_stop().await;
@@ -497,7 +547,10 @@ pub async fn connect(
 /// «не запущен» / «helper недоступен». Это важно: при отключении мы
 /// должны гарантировать что интернет вернётся, даже если helper исчез.
 #[tauri::command]
-pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
+pub async fn disconnect(
+    xray: State<'_, XrayState>,
+    mihomo: State<'_, MihomoState>,
+) -> Result<(), String> {
     // 1. TUN
     let _ = platform::helper_client::tun_stop().await;
     // 2. Kill switch — всегда вызываем, чтобы убрать остатки если
@@ -505,11 +558,16 @@ pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
     //    запуск). Helper тихо вернёт ok если он не был enabled.
     let _ = platform::helper_client::kill_switch_disable().await;
 
-    // 3. Xray + system proxy
+    // 3. Оба движка (один точно не запущен — stop() для него no-op)
+    //    + system proxy. Параллельно выполняем чтобы быстрый disconnect.
     let xray_err = xray.stop().err();
+    let mihomo_err = mihomo.stop().err();
     let proxy_err = platform::proxy::clear_system_proxy().err().map(|e| e.to_string());
 
     if let Some(e) = xray_err {
+        return Err(e);
+    }
+    if let Some(e) = mihomo_err {
         return Err(e);
     }
     if let Some(e) = proxy_err {
@@ -518,10 +576,18 @@ pub async fn disconnect(xray: State<'_, XrayState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Запущен ли Xray прямо сейчас.
+/// Запущен ли VPN-движок (Xray или Mihomo) прямо сейчас.
+///
+/// Имя оставлено `is_xray_running` для совместимости с фронтом — после
+/// этапа 8.B функция возвращает true если запущен **любой** из двух
+/// поддерживаемых движков. Семантика «работает ли VPN», не привязка к
+/// конкретному ядру.
 #[tauri::command]
-pub fn is_xray_running(xray: State<'_, XrayState>) -> bool {
-    xray.is_running()
+pub fn is_xray_running(
+    xray: State<'_, XrayState>,
+    mihomo: State<'_, MihomoState>,
+) -> bool {
+    xray.is_running() || mihomo.is_running()
 }
 
 // ─── Crash recovery (9.D) ─────────────────────────────────────────────────────

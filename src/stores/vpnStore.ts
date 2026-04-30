@@ -149,11 +149,24 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     const tunMasking = useSettingsStore.getState().tunMasking;
     const killSwitch = useSettingsStore.getState().killSwitch;
     const antiDpi = buildEffectiveAntiDpi();
+    // 8.B/8.C: эффективный engine. Если пользователь явно не менял
+    // (engineTouched=false) и подписка прислала X-Nemefisto-Engine —
+    // берём из заголовка; иначе — пользовательский выбор.
+    const settings = useSettingsStore.getState();
+    const meta = useSubscriptionStore.getState().meta;
+    const headerEngine = meta?.engine === "xray" || meta?.engine === "mihomo"
+      ? meta.engine
+      : null;
+    const engine: "xray" | "mihomo" =
+      !settings.engineTouched && headerEngine
+        ? headerEngine
+        : settings.engine;
     set({ status: "starting", errorMessage: null });
     try {
       const result = await invoke<ConnectResult>("connect", {
         serverIndex: selectedIndex,
         mode,
+        engine,
         allowLan,
         antiDpi,
         tunMasking,

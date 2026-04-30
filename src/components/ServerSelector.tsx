@@ -5,6 +5,28 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { PingBadge } from "./PingBadge";
 
 /**
+ * Маленький бейдж рядом с пингом — показывает движок-совместимость
+ * сервера (этап 8.B). Скрывается если совместимы оба ядра (общий случай) —
+ * чтобы не захламлять список. Видим только для эксклюзивных протоколов:
+ * TUIC/AnyTLS/Mieru → "M" (mihomo only), готовый Xray JSON → "X" (xray only).
+ */
+function EngineBadge({ compat }: { compat?: string[] }) {
+  if (!compat || compat.length === 0 || compat.length > 1) return null;
+  const e = compat[0];
+  if (e !== "xray" && e !== "mihomo") return null;
+  const label = e === "xray" ? "X" : "M";
+  const title =
+    e === "xray"
+      ? "поддерживается только Xray"
+      : "поддерживается только Mihomo";
+  return (
+    <span className="engine-badge" title={title} data-engine={e}>
+      {label}
+    </span>
+  );
+}
+
+/**
  * Список серверов из подписки + текущий выбранный показан как pill.
  *
  * Pill кликабелен → разворачивается drawer со списком всех серверов.
@@ -150,6 +172,7 @@ export function ServerSelector() {
                         {String(i + 1).padStart(2, "0")}
                       </span>
                       <span className="server-row-name">{s.name}</span>
+                      <EngineBadge compat={s.engine_compat} />
                       <PingBadge ms={pings[i]} loading={pingsLoading} />
                       {selectedIndex === i && (
                         <span className="server-row-check">✓</span>

@@ -35,8 +35,8 @@
     "targets": ["nsis"],
     "category": "Network",
     "publisher": "Nemefisto",
-    "shortDescription": "VPN-клиент на Xray-core",
-    "longDescription": "Лёгкий VPN-клиент для Windows на базе Xray-core. Поддержка VLESS, VMess, Trojan, Shadowsocks. Подключение в один клик через системный прокси или TUN.",
+    "shortDescription": "VPN-клиент на Xray-core и Mihomo",
+    "longDescription": "Лёгкий VPN-клиент для Windows на базе Xray-core и Mihomo. Поддержка VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard, AnyTLS. Подключение в один клик через системный прокси или TUN.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -46,7 +46,8 @@
     ],
     "externalBin": [
       "binaries/xray",
-      "binaries/tun2socks"
+      "binaries/tun2socks",
+      "binaries/mihomo"
     ],
     "resources": {
       "binaries/wintun.dll": "wintun.dll",

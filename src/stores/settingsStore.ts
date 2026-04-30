@@ -6,6 +6,16 @@ export type Background = "crystal" | "tunnel" | "globe" | "particles";
 export type ButtonStyle = "glass" | "flat" | "neon" | "metallic";
 
 /**
+ * VPN-движок (этап 8.B). Выбирается per-session, не миксуется.
+ * - **xray** (default) — REALITY/Vision/XHTTP, низколатентный обход DPI;
+ *   поддержка hy2 / wireguard / xhttp / httpupgrade с 8.A.1.
+ * - **mihomo** — TUIC, AnyTLS, Mieru, native PROCESS-NAME routing.
+ *   Используется когда сервер из подписки `engine_compat = ["mihomo"]`
+ *   либо пользователь явно выбрал.
+ */
+export type Engine = "xray" | "mihomo";
+
+/**
  * Готовые «темы-пресеты» — отдельная ось настройки, не комбинация
  * существующих theme/background/buttonStyle. У каждого пресета своя
  * уникальная палитра (CSS-переменные через `data-preset` на <html>),
@@ -147,6 +157,12 @@ export type Settings = {
    *  при reconnect / краше Xray. ⚠️ Если приложение крашнется в этом
    *  режиме, интернет останется заблокирован до ручной очистки firewall. */
   killSwitch: boolean;
+
+  /** Активный VPN-движок (этап 8.B). См. тип `Engine` выше. */
+  engine: Engine;
+  /** Override-флаг для server-driven UX. Если false — заголовок
+   *  `X-Nemefisto-Engine` подписки имеет приоритет над юзер-выбором. */
+  engineTouched: boolean;
 };
 
 export const DEFAULT_USER_AGENT = "Happ/2.7.0";
@@ -187,6 +203,8 @@ const DEFAULTS: Settings = {
   antiDpiTouched: false,
   tunMasking: false,
   killSwitch: false,
+  engine: "xray",
+  engineTouched: false,
 };
 
 const KEY = "nemefisto.settings.v1";
@@ -226,6 +244,7 @@ export const useSettingsStore = create<Store>((setState, get) => ({
     if (key === "background") next.backgroundTouched = true;
     if (key === "buttonStyle") next.buttonStyleTouched = true;
     if (key === "preset") next.presetTouched = true;
+    if (key === "engine") next.engineTouched = true;
     // Любая правка anti-DPI поля → touched (override от заголовков
     // подписки больше не применяется).
     if (

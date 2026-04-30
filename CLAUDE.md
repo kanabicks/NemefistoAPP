@@ -860,20 +860,98 @@ Xray + tun2socks), меньше точек отказа, проще архите
 Альтернативный путь реализации в рамках 8.B. Решение принимается
 при разработке 8.B.
 
+### 13.M — SSID-based auto-mode (от koala-clash)
+
+**Уникальная фича для путешественников.** Пользователь добавляет
+«доверенные» Wi-Fi сети (домашний/рабочий) в whitelist; при подключении
+к ним VPN автоматически выключается или переходит в `direct`-режим.
+Уехал из дома — снова включается.
+
+Реализация:
+- Расширяем `network_watcher.rs`: помимо имени интерфейса читаем SSID
+  через `netsh wlan show interfaces` (Windows) — парсим строку
+  `SSID                   : <name>`. На macOS/Linux — отдельные команды,
+  пока пропускаем (готовимся к портированию).
+- При смене SSID emit-им событие `wifi-changed`, фронт принимает решение:
+  если новый SSID в `trustedSsids` — disconnect (или `direct`); если
+  ушли с trusted на unknown — auto-reconnect (если `autoConnectOnLeave`).
+- Settings → секция «доверенные Wi-Fi» → список с add/remove + dropdown
+  «при подключении к доверенной сети: ничего / отключить VPN /
+  только заблокированные сайты».
+- Effort: ~1 ч. Value: ⭐⭐⭐⭐⭐.
+
+### 13.N — Global shortcuts (от koala-clash)
+
+Системные горячие клавиши через `tauri-plugin-global-shortcut`:
+- `Ctrl+Shift+V` — toggle connect/disconnect;
+- `Ctrl+Shift+T` — переключить proxy↔TUN режим;
+- `Ctrl+Shift+M` — показать/скрыть главное окно.
+
+Каждая клавиша конфигурируется в Settings (input для записи комбинации,
+toggle on/off). Effort: ~30 мин. Value: ⭐⭐⭐.
+
+### 13.O — Floating window (от koala-clash)
+
+Опциональное мини-окно 120×42 px, прозрачное, alwaysOnTop, skipTaskbar.
+Показывает значок статуса + текущую скорость ↑/↓. Включается toggle'ом
+в Settings. Drag-handle для перетаскивания, позиция персистится в
+localStorage. Хорошо работает в паре с **13.I** bandwidth-метром
+(одна реализация — два места отображения).
+
+Реализация: второе Tauri-окно с `decorations: false, transparent: true,
+always_on_top: true, skip_taskbar: true`. Effort: ~1.5–2 ч. Value: ⭐⭐⭐.
+
+### 13.P — Слияние нескольких подписок (от Prizrak-Box)
+
+Пользователь может добавить 2-5 подписок одновременно; клиент сливает
+все серверы в один список с тегом источника. Полезно тем, у кого
+запасные подписки на случай блокировки основной.
+
+- `subscriptionStore` хранит массив `Subscription[]` вместо одной;
+- При импорте новой — добавляем, не заменяем;
+- Каждый сервер помечается `source: <subscription-id>`;
+- В UI server-list — group by source с заголовками-разделителями.
+
+Реализация: средний рефакторинг store. Effort: ~3 ч. Value: ⭐⭐⭐.
+Имеет смысл после 8.B (Mihomo) — у кого подписки на разные движки.
+
+### 13.Q — Auto-grouping правил для пустых подписок (от Prizrak-Box)
+
+Если подписка не задаёт routing (нет заголовка `routing`/`autorouting`,
+нет шаблона X-Nemefisto-Routes), применяем встроенный «минимальный»
+шаблон: `geosite:ru` + `geoip:ru` → DIRECT, всё остальное → PROXY,
+рекламные домены → BLOCK. Опция в Settings → «авто-применять
+минимальные правила РФ» (off по умолчанию для совместимости).
+
+Effort: ~1.5 ч (после этапа 11). Value: ⭐⭐⭐.
+
+### 13.R — TUN-only «strict mode» (от dropweb)
+
+Toggle в Settings скрывает выбор proxy-режима, оставляет только TUN.
+Для параноиков, которые не хотят оставлять SOCKS-прокси на loopback
+(пусть и с рандомным портом). UX-минимализм + чуть строже
+безопасность. Effort: ~30 мин. Value: ⭐⭐.
+
 ### Приоритет внутри этапа 13
 
 | Пункт | Value | Effort | Когда |
 |---|---|---|---|
 | 13.A системный трей | ⭐⭐⭐⭐⭐ | средний | сразу после 12 |
 | 13.B leak-test | ⭐⭐⭐⭐⭐ | низкий | сразу после 12 |
+| **13.M SSID auto-mode** | ⭐⭐⭐⭐⭐ | средний | quick-win |
 | 13.C smart failover | ⭐⭐⭐⭐ | средний | после 13.A/B |
 | 13.D kill switch | ⭐⭐⭐⭐ | высокий | в этапе 6 |
-| 13.K hy2 salamander | ⭐⭐⭐ | низкий | после 8.A.1 |
+| **13.N global shortcuts** | ⭐⭐⭐ | низкий | quick-win |
+| **13.O floating window** | ⭐⭐⭐ | средний | UX-полировка |
+| **13.P слияние подписок** | ⭐⭐⭐ | высокий | после 8.B |
+| **13.Q auto-grouping rules** | ⭐⭐⭐ | средний | после 11 |
+| 13.K hy2 salamander | ⭐⭐⭐ | низкий | после 8.A.1 (готово) |
 | 13.L Mihomo TUN | ⭐⭐⭐ | средний | в этапе 8.B |
 | 13.E история | ⭐⭐⭐ | низкий | в любой момент |
 | 13.F speed-test | ⭐⭐⭐ | средний | после 7-хвоста |
 | 13.I bandwidth | ⭐⭐ | низкий | UX-полировка |
 | 13.J Windows Hello | ⭐⭐ | низкий | UX-полировка |
+| **13.R TUN-only strict** | ⭐⭐ | низкий | UX-полировка |
 | 13.G WFP per-app | ⭐⭐⭐⭐ | очень высокий | долгосрочно |
 | 13.H DNS/WebRTC leak | ⭐⭐⭐ | средний | после 13.D |
 
@@ -884,6 +962,12 @@ Xray + tun2socks), меньше точек отказа, проще архите
 ### Готово
 - **8.A** + **8.A.1** — универсальный парсер подписок + hotfix Xray
   (hy2/wg/xhttp/httpupgrade).
+- **8.B** — Mihomo как второй sidecar (TUIC/AnyTLS/Mieru-ready).
+  YAML-конфиг через `config::mihomo_config::build()`, `mixed-port`
+  один на SOCKS5+HTTP, DNS включён всегда против leak'ов. UI: Settings
+  → секция «движок» с server-driven override-бейджем; engine-бейджи
+  X/M на server-cards для эксклюзивных протоколов; предупреждение в
+  anti-DPI секции что фрагментация/шумы — Xray-only.
 - **9.D** + **9.F** + **9.G** + **9.H** — proxy-backup/restore,
   уникальное имя TUN, SOCKS5 inbound auth для TUN/LAN, рандомизация
   портов inbound `[30000, 60000)`.
@@ -914,9 +998,9 @@ Xray + tun2socks), меньше точек отказа, проще архите
 - **12.D** backup/restore через deep-link (~1 ч);
 - **9.B** детект конкурирующих VPN-клиентов (~45 мин).
 
-**Variant C — Mihomo-движок (~3.5 ч)**:
-- **8.B** Mihomo как второй sidecar + UI-селект движка;
-- опционально **13.L** Mihomo built-in TUN вместо tun2socks.
+**Variant C — Mihomo-движок (~3.5 ч)** [готово, см. «Готово» выше]:
+- **8.B** Mihomo как второй sidecar + UI-селект движка ✅;
+- опционально **13.L** Mihomo built-in TUN вместо tun2socks (отложено).
 
 **Variant D — Routing-профили (~4–5 ч, 2 сессии)**:
 - **11.A**…**11.G** — geofiles, autorouting, deep-links, UI.
@@ -924,6 +1008,14 @@ Xray + tun2socks), меньше точек отказа, проще архите
 **Variant E — quick wins (~30–45 мин)**:
 - одна из коротких задач: 13.B leak-test, или 12.A+9.B, или 7-хвост
   «авто-выбор лучшего сервера».
+
+**Variant F — фишки от конкурентов (~2.5 ч)** [новое]:
+- **13.M** SSID auto-mode (~1 ч) — уникальная фича для путешественников;
+- **13.N** global shortcuts (~30 мин) — Ctrl+Shift+V toggle VPN;
+- **13.B** leak-test (~45 мин) — toast «твой IP сейчас X (страна)».
+
+**Variant G — Floating window (~2 ч)**:
+- **13.O** мини-окно поверх всего со статусом и скоростью.
 
 ### Долгосрочно (когда дойдут руки)
 - **8.D** per-process routing UI (нужен 8.B);
@@ -942,6 +1034,17 @@ Xray + tun2socks), меньше точек отказа, проще архите
 
 **dropweb** (форк FlClashX, mihomo-only):
 - Рандомизация портов — взяли (9.H, готово).
-- TUN-only «strict mode» — потенциально toggle в Settings, для
-  параноиков. Низкий приоритет (~30 мин).
+- TUN-only «strict mode» — записан как **13.R** (низкий приоритет).
 - Mihomo-only — не наш путь (теряем REALITY/XHTTP оптимизации Xray).
+
+**koala-clash** (Electron + mihomo, 551 ⭐):
+- SSID-based auto-mode — записан как **13.M** (высокий приоритет).
+- Global shortcuts — записан как **13.N** (низкий effort).
+- Floating window — записан как **13.O** (средний приоритет).
+- Multiple cores (stable+alpha) — будет в рамках 8.B.
+
+**Prizrak-Box** (Vue + Wails, mihomo-only, 229 ⭐):
+- Слияние нескольких подписок — записан как **13.P**.
+- Auto-grouping правил для пустых подписок — записан как **13.Q**.
+- Mieru протокол — после 8.B (только Mihomo).
+- DNS rewrite forced — частично закрыт нашим DoH-resolve (10.C).

@@ -1365,6 +1365,28 @@ input, textarea { font: inherit; cursor: text; }
   flex-shrink: 0;
 }
 
+/* ── Engine badge (8.B) ──────────────────────────────────────────────── */
+.engine-badge {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg-mute);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.engine-badge[data-engine="mihomo"] {
+  color: #ffb74d;
+  border-color: rgba(255, 183, 77, 0.3);
+}
+.engine-badge[data-engine="xray"] {
+  color: #81c784;
+  border-color: rgba(129, 199, 132, 0.3);
+}
+
 /* ── Пинги ───────────────────────────────────────────────────────────── */
 .ping {
   font-family: var(--mono);

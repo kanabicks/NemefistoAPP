@@ -15,7 +15,7 @@ use ipc::commands::{
     has_proxy_backup, is_xray_running, ping_servers, read_xray_log, restore_proxy_backup,
     secure_storage_delete, secure_storage_get, secure_storage_set,
 };
-use vpn::XrayState;
+use vpn::{MihomoState, XrayState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .manage(XrayState::new())
+        .manage(MihomoState::new())
         .manage(SubscriptionState::new())
         .setup(|app| {
             let hwid = load_or_create().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
@@ -49,6 +50,8 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let xray = window.state::<XrayState>();
                 let _ = xray.stop();
+                let mihomo = window.state::<MihomoState>();
+                let _ = mihomo.stop();
                 let _ = platform::proxy::clear_system_proxy();
             }
         })

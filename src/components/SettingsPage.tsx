@@ -9,6 +9,7 @@ import {
   useSettingsStore,
   type Background,
   type ButtonStyle,
+  type Engine,
   type Preset,
   type SortMode,
   type Theme,
@@ -42,6 +43,15 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const subError = useSubscriptionStore((x) => x.error);
   const [hwidCopied, setHwidCopied] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // 8.B: эффективный движок (с override-логикой для server-driven UX).
+  // Используется в anti-DPI секции, чтобы скрыть/предупредить о
+  // фрагментации/шумах, которые работают только в Xray.
+  const effectiveEngine: Engine =
+    !s.engineTouched && (subMeta?.engine === "mihomo" || subMeta?.engine === "xray")
+      ? (subMeta.engine as Engine)
+      : s.engine;
+  const mihomoActive = effectiveEngine === "mihomo";
 
   const copyHwid = async () => {
     if (!deviceHwid) return;
@@ -469,11 +479,34 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               )}
           </div>
 
+          {/* 8.B: фрагментация и шумы поддерживает только Xray (через
+              freedom-fragment outbound). При активном Mihomo показываем
+              подсказку — toggle'ы остаются (UI-консистентность), но при
+              connect Mihomo их просто игнорирует. doh-резолв работает
+              в обоих движках (через dns.nameserver/hosts). */}
+          {mihomoActive && (
+            <div
+              className="settings-row-hint"
+              style={{
+                marginBottom: 8,
+                padding: "6px 10px",
+                background: "rgba(255,183,77,0.06)",
+                borderRadius: 4,
+                borderLeft: "2px solid #ffb74d",
+              }}
+            >
+              активен mihomo — фрагментация и шумы будут проигнорированы
+              (поддерживаются только xray). doh-резолв продолжает работать
+              через dns mihomo
+            </div>
+          )}
+
           <div className="settings-row">
             <div>
               <div className="settings-row-label">фрагментация tcp</div>
               <div className="settings-row-hint">
                 режет tls clienthello на куски — обходит большинство dpi
+                {mihomoActive && " (только xray)"}
               </div>
             </div>
             <Toggle
@@ -596,6 +629,42 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </div>
             </>
           )}
+        </section>
+
+        {/* ── Движок (8.B) ─────────────────────────────────────────────── */}
+        <section className="settings-section">
+          <div className="settings-section-title">движок</div>
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">
+                vpn-ядро
+                {!s.engineTouched && subMeta?.engine && (
+                  <span className="from-sub-badge" title="из подписки">
+                    {" "}из подписки
+                  </span>
+                )}
+              </div>
+              <div className="settings-row-hint">
+                <b>xray</b> — REALITY/Vision/XHTTP, низкая латентность, оптимально для
+                vless/vmess/trojan/ss/hy2/wireguard. <b>mihomo</b> — нужен для
+                tuic / anytls / mieru и для per-process routing
+              </div>
+            </div>
+            <select
+              className="settings-select"
+              value={
+                !s.engineTouched && subMeta?.engine === "mihomo"
+                  ? "mihomo"
+                  : !s.engineTouched && subMeta?.engine === "xray"
+                  ? "xray"
+                  : s.engine
+              }
+              onChange={(e) => s.set("engine", e.target.value as Engine)}
+            >
+              <option value="xray">Xray</option>
+              <option value="mihomo">Mihomo</option>
+            </select>
+          </div>
         </section>
 
         {/* ── Туннель ──────────────────────────────────────────────────── */}
