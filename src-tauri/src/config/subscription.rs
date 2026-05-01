@@ -1558,7 +1558,7 @@ fn normalize_xray_socks(ob: &serde_json::Value, name: &str) -> Option<ProxyEntry
     })
 }
 
-// ─── Clash YAML fallback ──────────────────────────────────────────────────────
+// ─── Clash / Mihomo YAML ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct ClashConfig {
@@ -1566,9 +1566,53 @@ struct ClashConfig {
     proxies: Vec<serde_yaml::Value>,
 }
 
+/// 8.F: парсит подписку в формате Clash/Mihomo YAML.
+///
+/// Два режима:
+///
+/// 1. **Full mihomo config** — если YAML содержит `proxy-groups`,
+///    `proxy-providers` или непустой `rules` блок, мы считаем его
+///    «полным профилем» провайдера (с готовой маршрутизацией, DNS
+///    политиками, group-структурой). В этом случае возвращаем **один**
+///    синтетический `ProxyEntry { protocol: "mihomo-profile" }` с
+///    оригинальным YAML внутри `raw["yaml"]` — при connect mihomo
+///    получит этот YAML целиком (через `mihomo_config::patch_full_yaml`,
+///    который накладывает наш inbound/SOCKS-auth/external-controller).
+///    Доступ к нодам внутри групп — через mihomo external-controller
+///    API (`/proxies`, `/proxies/:group`) после connect.
+///
+/// 2. **Плоский список** — если есть только `proxies` секция (как
+///    обычные Clash-подписки до Mihomo-эры), парсим как раньше:
+///    каждый proxy → отдельный `ProxyEntry`.
 fn parse_clash_yaml(text: &str) -> Result<Vec<ProxyEntry>> {
+    // Парсим один раз в Mapping, чтобы можно было проверить наличие
+    // секций без двойного yaml-парсинга.
+    let value: serde_yaml::Value = serde_yaml::from_str(text)
+        .context("не удалось распарсить Clash/Mihomo YAML")?;
+    let map = value
+        .as_mapping()
+        .context("YAML root — не mapping")?;
+
+    let has_groups = map
+        .get("proxy-groups")
+        .and_then(|v| v.as_sequence())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_providers = map.contains_key("proxy-providers");
+    let has_rules = map
+        .get("rules")
+        .and_then(|v| v.as_sequence())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+
+    if has_groups || has_providers || has_rules {
+        // Full-profile path: одна карточка на всю подписку.
+        return Ok(vec![mihomo_profile_entry(text, map)?]);
+    }
+
+    // Плоский режим
     let config: ClashConfig =
-        serde_yaml::from_str(text).context("не удалось распарсить Clash YAML")?;
+        serde_yaml::from_value(value).context("не удалось распарсить proxies")?;
 
     let entries = config
         .proxies
@@ -1577,6 +1621,92 @@ fn parse_clash_yaml(text: &str) -> Result<Vec<ProxyEntry>> {
         .collect();
 
     Ok(entries)
+}
+
+/// 8.F: собирает синтетический ProxyEntry для full-mihomo-профиля.
+///
+/// Поля:
+/// - `protocol = "mihomo-profile"` — спец-маркер, по которому
+///   `vpn::mihomo` знает что нужно делать passthrough вместо `build()`.
+/// - `server = "<mihomo>"`, `port = 0` — placeholder'ы (UI не должен
+///   показывать их пользователю; для соединения используется raw_yaml).
+/// - `raw["yaml"]` — оригинальный текст подписки целиком.
+/// - `raw["groups"]` — выжимка metadata о proxy-groups для UI:
+///   массив `{name, type, proxies: [имена]}`. Используется в ProxiesPanel
+///   до подключения; после connect UI догружает live-данные через
+///   mihomo external-controller API.
+/// - `raw["proxy_count"]` — сколько нод в `proxies` секции (для toast'а
+///   «проф. содержит N нод»).
+/// - `engine_compat = ["mihomo"]` — Xray не умеет такие конфиги.
+fn mihomo_profile_entry(
+    raw_yaml: &str,
+    map: &serde_yaml::Mapping,
+) -> Result<ProxyEntry> {
+    let proxy_count = map
+        .get("proxies")
+        .and_then(|v| v.as_sequence())
+        .map(|s| s.len())
+        .unwrap_or(0);
+
+    let groups: Vec<serde_json::Value> = map
+        .get("proxy-groups")
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|g| {
+                    let m = g.as_mapping()?;
+                    let name = m.get("name").and_then(|v| v.as_str())?.to_string();
+                    let group_type = m
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("select")
+                        .to_string();
+                    let proxies = m
+                        .get("proxies")
+                        .and_then(|v| v.as_sequence())
+                        .map(|s| {
+                            s.iter()
+                                .filter_map(|p| p.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Some(serde_json::json!({
+                        "name": name,
+                        "type": group_type,
+                        "proxies": proxies,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Имя профиля: для начала используем generic-плейсхолдер. UI заменит
+    // его на `profile-title` из заголовков подписки если он там есть
+    // (существующий header_text в SubscriptionMeta).
+    let name = "Профиль Mihomo".to_string();
+
+    let mut raw = serde_json::Map::new();
+    raw.insert(
+        "yaml".to_string(),
+        serde_json::Value::String(raw_yaml.to_string()),
+    );
+    raw.insert(
+        "groups".to_string(),
+        serde_json::Value::Array(groups),
+    );
+    raw.insert(
+        "proxy_count".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(proxy_count)),
+    );
+
+    Ok(ProxyEntry {
+        name,
+        protocol: "mihomo-profile".to_string(),
+        server: "<mihomo>".to_string(),
+        port: 0,
+        raw: serde_json::Value::Object(raw),
+        engine_compat: engines_mihomo_only(),
+    })
 }
 
 fn yaml_proxy_to_entry(v: serde_yaml::Value) -> Result<ProxyEntry> {
@@ -1621,4 +1751,124 @@ fn yaml_proxy_to_entry(v: serde_yaml::Value) -> Result<ProxyEntry> {
         raw,
         engine_compat,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 8.F: full-mihomo YAML с proxy-groups (как в реальной подписке
+    /// от провайдера) должен распознаваться как один синтетический
+    /// `mihomo-profile` entry, а не плоский список.
+    #[test]
+    fn detects_full_mihomo_yaml_with_groups() {
+        let yaml = r#"
+mixed-port: 7890
+allow-lan: true
+mode: rule
+proxies: []
+proxy-groups:
+  - name: 'auto'
+    type: url-test
+    url: https://cp.cloudflare.com/generate_204
+    interval: 600
+    proxies: []
+  - name: 'select'
+    type: select
+    proxies:
+      - auto
+rules:
+  - DOMAIN-SUFFIX,example.com,DIRECT
+  - MATCH,select
+"#;
+        let entries = parse_clash_yaml(yaml).expect("should parse");
+        assert_eq!(entries.len(), 1, "expected single mihomo-profile entry");
+        let entry = &entries[0];
+        assert_eq!(entry.protocol, "mihomo-profile");
+        assert_eq!(entry.engine_compat, vec!["mihomo".to_string()]);
+        let raw = entry.raw.as_object().unwrap();
+        assert!(
+            raw.get("yaml")
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .contains("proxy-groups"),
+            "raw.yaml должен сохранять оригинал"
+        );
+        let groups = raw.get("groups").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0]["name"], "auto");
+        assert_eq!(groups[0]["type"], "url-test");
+        assert_eq!(groups[1]["name"], "select");
+        assert_eq!(groups[1]["type"], "select");
+        assert_eq!(groups[1]["proxies"][0], "auto");
+    }
+
+    /// Плоский YAML без proxy-groups должен парситься как раньше —
+    /// каждый proxy = отдельный entry. Это back-compat для старых
+    /// Clash-подписок.
+    #[test]
+    fn flat_proxies_yaml_still_works() {
+        let yaml = r#"
+proxies:
+  - name: server-1
+    type: vless
+    server: example.com
+    port: 443
+  - name: server-2
+    type: trojan
+    server: 1.2.3.4
+    port: 8443
+    password: secret
+"#;
+        let entries = parse_clash_yaml(yaml).expect("should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "server-1");
+        assert_eq!(entries[0].protocol, "vless");
+        assert_eq!(entries[1].name, "server-2");
+    }
+
+    /// Real-world пример из issue от пользователя: пустой proxies +
+    /// load-balance группа + select поверх + rules с PROCESS-NAME +
+    /// DOMAIN-SUFFIX правилами + DNS секцией. Должен распознаться как
+    /// один профиль.
+    #[test]
+    fn user_reported_full_yaml_passthrough() {
+        let yaml = r#"
+mixed-port: 7890
+mode: rule
+tun:
+  enable: true
+  stack: mixed
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+proxies:
+proxy-groups:
+  - name: 'Fastest'
+    type: load-balance
+    url: https://cp.cloudflare.com/generate_204
+    interval: 600
+    strategy: consistent-hashing
+    exclude-filter: 'US'
+    proxies:
+  - name: 'main'
+    type: 'select'
+    proxies:
+      - Fastest
+rules:
+  - IP-CIDR,1.2.3.4/32,DIRECT,no-resolve
+  - PROCESS-NAME,fortinet.exe,DIRECT
+  - MATCH,main
+"#;
+        let entries = parse_clash_yaml(yaml).expect("real example should parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].protocol, "mihomo-profile");
+        let raw = entries[0].raw.as_object().unwrap();
+        // proxies секция пустая → proxy_count = 0
+        assert_eq!(raw["proxy_count"], 0);
+        let groups = raw["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0]["type"], "load-balance");
+        assert_eq!(groups[1]["type"], "select");
+    }
 }

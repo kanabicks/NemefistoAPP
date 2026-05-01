@@ -36,6 +36,7 @@ use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::xray_config::{self, AntiDpiOptions};
 use crate::config::{mihomo_config, HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
+use crate::vpn;
 use crate::vpn::{find_free_port, ping_entry, random_high_port, MihomoState, XrayState};
 
 /// Имя файла с triplet-суффиксом — формат, в котором лежит исходный
@@ -349,6 +350,7 @@ pub async fn connect(
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    mihomo_api: State<'_, vpn::MihomoApiState>,
     sub: State<'_, SubscriptionState>,
     ks_ctx: State<'_, KillSwitchState>,
     routing_store: State<'_, crate::config::routing_store::RoutingStoreState>,
@@ -480,20 +482,56 @@ pub async fn connect(
                     None
                 }
             });
-        let cfg = mihomo_config::build(
-            &entry,
-            default_socks,
-            listen,
-            anti_dpi.as_ref(),
-            auth_pair,
-            rules_slice,
-            active_profile.as_ref(),
-        )
-        .map_err(|e| e.to_string())?;
+        // 8.F: full-mihomo-passthrough путь. Если в подписке прилетел
+        // полный mihomo YAML с proxy-groups — используем его целиком,
+        // патчем только наши inbound/auth/external-controller.
+        // Иначе — старый путь сборки конфига из ProxyEntry.
+        let controller_port = find_free_port(default_socks.saturating_add(1));
+        let controller_secret = uuid::Uuid::new_v4().to_string();
+
+        let cfg = if entry.protocol == "mihomo-profile" {
+            // raw["yaml"] всегда есть для mihomo-profile (см. subscription.rs)
+            let raw_yaml = entry
+                .raw
+                .get("yaml")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "mihomo-profile без raw.yaml".to_string())?;
+            let patch = mihomo_config::FullYamlPatch {
+                mixed_port: default_socks,
+                listen,
+                socks_auth: auth_pair,
+                external_controller_port: controller_port,
+                external_controller_secret: &controller_secret,
+                app_rules: rules_slice,
+                anti_dpi: anti_dpi.as_ref(),
+            };
+            mihomo_config::patch_full_yaml(raw_yaml, &patch)
+                .map_err(|e| format!("патч full-mihomo YAML: {e:#}"))?
+        } else {
+            mihomo_config::build(
+                &entry,
+                default_socks,
+                listen,
+                anti_dpi.as_ref(),
+                auth_pair,
+                rules_slice,
+                active_profile.as_ref(),
+            )
+            .map_err(|e| e.to_string())?
+        };
         // На всякий случай гасим Xray если он был активен от прошлой сессии
         // на другом движке (не должно бывать, но дешёвая страховка).
         let _ = xray.stop();
         mihomo.start_with_config(&app, &cfg.yaml, cfg.mixed_port)?;
+
+        // 8.F: сохраняем endpoint controller'а — UI достучится через
+        // mihomo_proxies / mihomo_select_proxy / mihomo_delay_test.
+        mihomo_api.set(vpn::ControllerEndpoint {
+            host: "127.0.0.1".to_string(),
+            port: controller_port,
+            secret: controller_secret,
+        });
+
         (cfg.mixed_port, cfg.mixed_port)
     } else {
         // xray-json: патчим внешний конфиг (порты + listen)
@@ -835,6 +873,7 @@ pub async fn connect(
 pub async fn disconnect(
     xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    mihomo_api: State<'_, vpn::MihomoApiState>,
     ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<(), String> {
     // 1. TUN
@@ -845,6 +884,9 @@ pub async fn disconnect(
     let _ = platform::helper_client::kill_switch_disable().await;
     // Очищаем контекст live-toggle — VPN больше не активен.
     *ks_ctx.0.lock().await = None;
+    // 8.F: чистим mihomo controller endpoint — UI больше не должен
+    // ходить в API мёртвого процесса.
+    mihomo_api.clear();
 
     // 3. Оба движка (один точно не запущен — stop() для него no-op)
     //    + system proxy. Параллельно выполняем чтобы быстрый disconnect.
@@ -1421,6 +1463,65 @@ pub fn export_diagnostics() -> Result<String, String> {
 #[tauri::command]
 pub fn count_recent_crashes() -> usize {
     platform::crash_dumps::count_recent_crashes()
+}
+
+// ─── 8.F — Mihomo controller API (proxy-groups UI) ───────────────────────────
+
+/// `GET /proxies` через mihomo external-controller. Возвращает список
+/// всех нод и групп с `now`/`all`/`history`/`type`.
+///
+/// Доступно только когда mihomo жив И мы знаем endpoint (заполняется
+/// в `connect()` для full-mihomo-профилей). Иначе — ошибка.
+#[tauri::command]
+pub async fn mihomo_proxies(
+    state: State<'_, vpn::MihomoApiState>,
+) -> Result<vpn::mihomo_api::ProxiesSnapshot, String> {
+    let ep = state
+        .get()
+        .ok_or_else(|| "mihomo controller не активен".to_string())?;
+    vpn::mihomo_api::fetch_proxies(&ep)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `PUT /proxies/:group` — выбрать ноду в select-группе. UI вызывает
+/// при клике на ноду; mihomo переключает activeNode без рестарта.
+#[tauri::command]
+pub async fn mihomo_select_proxy(
+    group: String,
+    name: String,
+    state: State<'_, vpn::MihomoApiState>,
+) -> Result<(), String> {
+    let ep = state
+        .get()
+        .ok_or_else(|| "mihomo controller не активен".to_string())?;
+    vpn::mihomo_api::select_proxy(&ep, &group, &name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `GET /proxies/:name/delay` — измерить latency. Используется в
+/// ProxiesPanel для кнопок «test now». URL и timeout берутся
+/// разумные дефолты.
+#[tauri::command]
+pub async fn mihomo_delay_test(
+    name: String,
+    state: State<'_, vpn::MihomoApiState>,
+) -> Result<Option<u32>, String> {
+    let ep = state
+        .get()
+        .ok_or_else(|| "mihomo controller не активен".to_string())?;
+    // cdn-cgi/trace — лёгкий 200 OK от Cloudflare, не подвержен
+    // throttle'у других сервисов; 5s timeout ловит только реально
+    // живые узлы.
+    vpn::mihomo_api::delay_test(
+        &ep,
+        &name,
+        "https://cp.cloudflare.com/generate_204",
+        5000,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // ─── 12.D — backup/restore настроек ─────────────────────────────────────────

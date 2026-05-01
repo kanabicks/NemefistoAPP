@@ -21,6 +21,7 @@ import {
   OnboardingTour,
   isOnboardingCompleted,
 } from "./components/OnboardingTour";
+import { ProxiesPanel } from "./components/ProxiesPanel";
 import { useBackupModalStore } from "./lib/backup";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
@@ -80,6 +81,15 @@ function App() {
   // Кнопка «личный кабинет» показывается только когда подписка
   // прислала `profile-web-page-url` (захардкоженный fallback убран).
   const hasDashboardUrl = useHasDashboardUrl();
+  // 8.F: показать ProxiesPanel когда подключён mihomo-profile.
+  const [proxiesPanelOpen, setProxiesPanelOpen] = useState(false);
+  const engine = useSettingsStore((x) => x.engine);
+  const isRunningStatus = status === "running";
+  const selectedServer =
+    selectedIndex !== null ? servers[selectedIndex] : null;
+  const isMihomoProfile = selectedServer?.protocol === "mihomo-profile";
+  const showProxiesPanelButton =
+    isRunningStatus && engine === "mihomo" && isMihomoProfile;
   const socksPort = useVpnStore((s) => s.socksPort);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -389,6 +399,20 @@ function App() {
             </button>
           )}
 
+          {/* 8.F: переход в ProxiesPanel — только когда активен
+              mihomo-profile (full YAML с proxy-groups). Показывается под
+              dashboard-link или вместо него. */}
+          {showProxiesPanelButton && (
+            <button
+              type="button"
+              onClick={() => setProxiesPanelOpen(true)}
+              className="dashboard-link"
+            >
+              <span>прокси-группы</span>
+              <span className="dashboard-link-arrow">→</span>
+            </button>
+          )}
+
           <Footer />
         </div>
       </div>
@@ -400,6 +424,9 @@ function App() {
       <CrashRecoveryDialog />
       <BackupPreview />
       <OnboardingHost />
+      {proxiesPanelOpen && (
+        <ProxiesPanel onClose={() => setProxiesPanelOpen(false)} />
+      )}
       <Toaster />
     </>
   );

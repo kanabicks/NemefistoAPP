@@ -40,6 +40,10 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 # 11.B: sha256 для verify-after-download geofiles. Только integrity-check,
 # не security-critical — но через крейт компактнее чем велосипед.
 sha2 = "0.10"
+# 8.F: percent-encoding для путей в URL mihomo external-controller API.
+# Имена групп могут содержать UTF-8 / emoji («🇪🇺 Fastest»), без encoding
+# reqwest падает с invalid URI.
+urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

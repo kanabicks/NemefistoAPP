@@ -15,10 +15,11 @@ use ipc::commands::{
     export_diagnostics, export_settings_to_documents, fetch_settings_backup, fetch_subscription,
     geofiles_refresh, geofiles_status, get_hwid, get_recovery_state, get_servers,
     get_subscription_meta, has_proxy_backup, hide_floating_window, is_xray_running,
-    kill_switch_apply, kill_switch_force_cleanup, kill_switch_heartbeat, leak_test, ping_servers,
-    read_xray_log, recover_network, restore_proxy_backup, routing_add_static, routing_add_url,
-    routing_list, routing_refresh, routing_remove, routing_set_active, secure_storage_delete,
-    secure_storage_get, secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
+    kill_switch_apply, kill_switch_force_cleanup, kill_switch_heartbeat, leak_test,
+    mihomo_delay_test, mihomo_proxies, mihomo_select_proxy, ping_servers, read_xray_log,
+    recover_network, restore_proxy_backup, routing_add_static, routing_add_url, routing_list,
+    routing_refresh, routing_remove, routing_set_active, secure_storage_delete, secure_storage_get,
+    secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
 };
 use vpn::{MihomoState, XrayState};
 
@@ -39,6 +40,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(XrayState::new())
         .manage(MihomoState::new())
+        .manage(vpn::MihomoApiState::new())
         .manage(SubscriptionState::new())
         .manage(KillSwitchState::new())
         .manage(config::routing_store::RoutingStoreState::new())
@@ -170,6 +172,9 @@ pub fn run() {
             export_settings_to_documents,
             fetch_settings_backup,
             count_recent_crashes,
+            mihomo_proxies,
+            mihomo_select_proxy,
+            mihomo_delay_test,
             detect_competing_vpns,
             check_routing_conflicts,
             routing_list,

@@ -669,3 +669,347 @@ fn build_socks_proxy(entry: &ProxyEntry) -> Result<Mapping> {
     }
     Ok(m)
 }
+
+// ─── 8.F: passthrough full mihomo YAML ───────────────────────────────────────
+
+/// Параметры patch'а — наши значения которые обязательно должны
+/// попасть в финальный YAML, даже если у провайдера в подписке стоят
+/// другие.
+pub struct FullYamlPatch<'a> {
+    /// Порт `mixed-port` (SOCKS5 + HTTP в одном). Перезаписываем
+    /// провайдерский — нам нужен наш random port для рандомизации
+    /// (9.H) и чтобы tun2socks-pipeline знал точный адрес.
+    pub mixed_port: u16,
+    /// `127.0.0.1` или `0.0.0.0` (LAN). Из настроек.
+    pub listen: &'a str,
+    /// SOCKS5 password-auth для inbound (9.G). Перезаписывает
+    /// провайдерскую `authentication`. None в proxy-режиме без auth.
+    pub socks_auth: Option<(&'a str, &'a str)>,
+    /// Порт для external-controller (mihomo HTTP API). Используется
+    /// для bandwidth-метра, smart failover, group-switching через
+    /// `mihomo_api`. Random secret генерится автоматически.
+    pub external_controller_port: u16,
+    pub external_controller_secret: &'a str,
+    /// Per-process правила пользователя (8.D). Добавляются ПЕРЕД
+    /// провайдерскими — наш override приоритетнее.
+    pub app_rules: &'a [AppRule],
+    /// Anti-DPI: пока full-passthrough игнорирует (mihomo-only — DoH
+    /// resolve можно поднять патчем `dns.nameserver` если нужен,
+    /// но в подписке-профиле обычно DNS уже сконфигурен. Если нужно
+    /// принудительно — пользователь явно включит в Settings).
+    pub anti_dpi: Option<&'a AntiDpiOptions>,
+}
+
+/// 8.F: применяет patch к полному mihomo-YAML из подписки и возвращает
+/// готовый текст для запуска. Стратегия — **сохранить максимум** того
+/// что прислал провайдер, перезаписав только то, что нам критично:
+///
+/// - `mixed-port` / `bind-address` — наш inbound порт (9.H рандомизация);
+/// - `socks-port` / `port` / `redir-port` — удаляем (используем только
+///   mixed-port, чтобы не разводить лишние порты);
+/// - `authentication` — наша SOCKS-auth (9.G), перезаписываем;
+/// - `external-controller` + `secret` — наши, иначе UI не достучится;
+/// - `tun.enable` → `false` — наш helper управляет WinTUN через
+///   tun2socks; mihomo built-in TUN был бы конфликтом (отложено в 13.L);
+/// - `log-level` → `info` если был `silent` (нам нужны логи);
+/// - `app_rules` пользователя (8.D) добавляются в начало `rules` блока.
+///
+/// **Сохраняется** провайдерское: `proxies`, `proxy-groups`,
+/// `proxy-providers`, `rule-providers`, `dns`, `hosts`, `rules`,
+/// `tun.exclude-address`, `tun.stack`, `tun.auto-route`,
+/// `nameserver-policy`, `fake-ip-filter` и т.д.
+pub fn patch_full_yaml(raw_yaml: &str, patch: &FullYamlPatch) -> Result<MihomoConfig> {
+    let mut value: Value = serde_yaml::from_str(raw_yaml)
+        .context("не удалось распарсить full mihomo YAML")?;
+    let root = value
+        .as_mapping_mut()
+        .context("YAML root — не mapping")?;
+
+    // ── inbound: единственный mixed-port на нашем порту ───────────────
+    root.insert(
+        "mixed-port".into(),
+        (patch.mixed_port as u64).into(),
+    );
+    // Удаляем дублирующие порты — mixed-port покрывает SOCKS5 и HTTP
+    root.remove(&Value::String("socks-port".into()));
+    root.remove(&Value::String("port".into()));
+    root.remove(&Value::String("redir-port".into()));
+    root.remove(&Value::String("tproxy-port".into()));
+
+    root.insert("allow-lan".into(), (patch.listen == "0.0.0.0").into());
+    root.insert(
+        "bind-address".into(),
+        Value::String(patch.listen.to_string()),
+    );
+
+    // ── SOCKS-auth (9.G) ──────────────────────────────────────────────
+    if let Some((user, pass)) = patch.socks_auth {
+        root.insert(
+            "authentication".into(),
+            Value::Sequence(vec![Value::String(format!("{user}:{pass}"))]),
+        );
+        // skip-auth-prefixes для loopback можно оставить если был —
+        // но обычно в подписочных конфигах его нет.
+    } else {
+        // Удаляем чужую auth — мы хотим контролировать кто подключается
+        // к нашему inbound. Если auth не задан, оставляем noauth (только
+        // loopback по умолчанию).
+        root.remove(&Value::String("authentication".into()));
+    }
+
+    // ── external-controller (для mihomo_api) ──────────────────────────
+    root.insert(
+        "external-controller".into(),
+        Value::String(format!("127.0.0.1:{}", patch.external_controller_port)),
+    );
+    root.insert(
+        "secret".into(),
+        Value::String(patch.external_controller_secret.to_string()),
+    );
+
+    // ── log-level ─────────────────────────────────────────────────────
+    let current_log = root
+        .get("log-level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("info");
+    if current_log == "silent" || current_log == "error" {
+        root.insert("log-level".into(), "info".into());
+    }
+
+    // ── tun.enable → false (наш tun2socks-pipeline) ───────────────────
+    // Если в подписке есть `tun:` секция — модифицируем enable=false,
+    // остальное (stack/exclude-address/auto-route) оставляем как есть
+    // на случай будущего 13.L. Mihomo при enable=false просто игнорит
+    // секцию.
+    if let Some(tun) = root
+        .get_mut(&Value::String("tun".into()))
+        .and_then(|v| v.as_mapping_mut())
+    {
+        tun.insert("enable".into(), false.into());
+    }
+
+    // ── ipv6 — оставляем как у провайдера ─────────────────────────────
+    // (он сам решает; обычно false для mihomo-профилей)
+
+    // ── find-process-mode для app-rules (8.D) ─────────────────────────
+    if !patch.app_rules.is_empty() {
+        root.insert("find-process-mode".into(), "always".into());
+    }
+
+    // ── Префиксные правила (наш приоритет) ────────────────────────────
+    let mut prefix_rules: Vec<Value> = Vec::new();
+    for r in patch.app_rules {
+        if r.exe.trim().is_empty() {
+            continue;
+        }
+        let target = match r.action.as_str() {
+            "direct" => "DIRECT",
+            "block" => "REJECT",
+            _ => "PROXY",
+        };
+        prefix_rules.push(Value::String(format!(
+            "PROCESS-NAME,{},{}",
+            r.exe.trim(),
+            target
+        )));
+    }
+
+    // Anti-DPI server-resolve через DoH: если включён, подставляем в
+    // dns.nameserver чтобы мiomo резолвил VPN-сервера через DoH.
+    if let Some(anti) = patch.anti_dpi {
+        if anti.server_resolve && !anti.server_resolve_doh.is_empty() {
+            let dns = root
+                .entry(Value::String("dns".into()))
+                .or_insert_with(|| Value::Mapping(Mapping::new()));
+            if let Some(dns_map) = dns.as_mapping_mut() {
+                dns_map.insert("enable".into(), true.into());
+                dns_map.insert(
+                    "nameserver".into(),
+                    Value::Sequence(vec![Value::String(
+                        anti.server_resolve_doh.clone(),
+                    )]),
+                );
+                if !anti.server_resolve_bootstrap.is_empty() {
+                    dns_map.insert(
+                        "default-nameserver".into(),
+                        Value::Sequence(vec![Value::String(
+                            anti.server_resolve_bootstrap.clone(),
+                        )]),
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Префиксные правила в начало rules ─────────────────────────────
+    if !prefix_rules.is_empty() {
+        let rules_entry = root
+            .entry(Value::String("rules".into()))
+            .or_insert_with(|| Value::Sequence(Vec::new()));
+        if let Some(seq) = rules_entry.as_sequence_mut() {
+            // Вставляем наши rules перед существующими — сохраняя порядок
+            let mut combined = prefix_rules;
+            combined.extend(seq.drain(..));
+            *seq = combined;
+        }
+    }
+
+    // mode=rule по умолчанию (если провайдер забыл) — иначе mihomo
+    // войдёт в global mode (всё через PROXY) и наши rules не сработают.
+    if !root.contains_key("mode") {
+        root.insert("mode".into(), "rule".into());
+    }
+
+    let yaml = serde_yaml::to_string(&value)
+        .context("сериализация патченного YAML")?;
+    Ok(MihomoConfig {
+        yaml,
+        mixed_port: patch.mixed_port,
+    })
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    fn base_patch<'a>() -> FullYamlPatch<'a> {
+        FullYamlPatch {
+            mixed_port: 31000,
+            listen: "127.0.0.1",
+            socks_auth: Some(("nemefisto", "secret-pass")),
+            external_controller_port: 31001,
+            external_controller_secret: "test-secret-uuid",
+            app_rules: &[],
+            anti_dpi: None,
+        }
+    }
+
+    /// 8.F: provider's mixed-port должен быть перезаписан нашим. Также
+    /// удаляем дублирующие SOCKS-port/redir-port чтобы mihomo не
+    /// поднимал лишние inbound'ы.
+    #[test]
+    fn patch_overrides_inbound_ports() {
+        let yaml = r#"
+mixed-port: 7890
+socks-port: 7891
+redir-port: 7892
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+"#;
+        let cfg = patch_full_yaml(yaml, &base_patch()).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let m = v.as_mapping().unwrap();
+        assert_eq!(m["mixed-port"].as_u64(), Some(31000));
+        assert!(!m.contains_key("socks-port"), "socks-port должен быть удалён");
+        assert!(!m.contains_key("redir-port"), "redir-port должен быть удалён");
+    }
+
+    /// 8.F: tun.enable → false; остальные поля tun секции (stack,
+    /// exclude-address) сохраняются для будущего 13.L.
+    #[test]
+    fn patch_disables_tun_keeping_other_fields() {
+        let yaml = r#"
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  exclude-address:
+    - 1.2.3.4/32
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+"#;
+        let cfg = patch_full_yaml(yaml, &base_patch()).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let tun = v.as_mapping().unwrap()["tun"].as_mapping().unwrap();
+        assert_eq!(tun["enable"].as_bool(), Some(false));
+        assert_eq!(tun["stack"].as_str(), Some("mixed"));
+        assert!(tun.contains_key("exclude-address"));
+    }
+
+    /// 8.F: app_rules (PROCESS-NAME) попадают в начало rules списка —
+    /// перед провайдерскими. Также set find-process-mode=always.
+    #[test]
+    fn patch_prepends_app_rules() {
+        let yaml = r#"
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+rules:
+  - DOMAIN-SUFFIX,example.com,DIRECT
+  - MATCH,select
+"#;
+        let mut p = base_patch();
+        let rules_owned = vec![AppRule {
+            exe: "telegram.exe".into(),
+            action: "proxy".into(),
+            comment: None,
+        }];
+        p.app_rules = &rules_owned;
+        let cfg = patch_full_yaml(yaml, &p).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let root = v.as_mapping().unwrap();
+        assert_eq!(root["find-process-mode"].as_str(), Some("always"));
+        let rules = root["rules"].as_sequence().unwrap();
+        assert!(
+            rules[0]
+                .as_str()
+                .unwrap()
+                .starts_with("PROCESS-NAME,telegram.exe"),
+            "первая rule должна быть наша app-rule"
+        );
+        assert_eq!(rules.last().unwrap().as_str(), Some("MATCH,select"));
+    }
+
+    /// 8.F: external-controller перезаписывается нашим (для mihomo_api).
+    /// Чужой secret игнорируется.
+    #[test]
+    fn patch_sets_external_controller() {
+        let yaml = r#"
+external-controller: 127.0.0.1:9999
+secret: provider-secret
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+"#;
+        let cfg = patch_full_yaml(yaml, &base_patch()).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let m = v.as_mapping().unwrap();
+        assert_eq!(
+            m["external-controller"].as_str(),
+            Some("127.0.0.1:31001")
+        );
+        assert_eq!(m["secret"].as_str(), Some("test-secret-uuid"));
+    }
+
+    /// 8.F: provider's authentication перезаписывается нашим SOCKS-auth.
+    #[test]
+    fn patch_overrides_authentication() {
+        let yaml = r#"
+authentication:
+  - bad-user:bad-pass
+  - other-user:other-pass
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+"#;
+        let cfg = patch_full_yaml(yaml, &base_patch()).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let auth = v.as_mapping().unwrap()["authentication"]
+            .as_sequence()
+            .unwrap();
+        assert_eq!(auth.len(), 1);
+        assert_eq!(auth[0].as_str(), Some("nemefisto:secret-pass"));
+    }
+}
