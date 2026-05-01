@@ -86,6 +86,16 @@ pub struct SubscriptionMeta {
     pub server_resolve_doh: Option<String>,
     /// Bootstrap-IP для DoH (`server-address-resolve-dns-ip`).
     pub server_resolve_bootstrap: Option<String>,
+
+    // ── 11.E — Routing-директивы из тела подписки (спец-строки) ────────
+    /// `://autorouting/{add|onadd}/{url}` найденная в теле подписки.
+    /// `(url, activate, interval_hours)` — interval по умолчанию 24ч.
+    /// UI применит через invoke `routing_add_url` + опционально
+    /// `routing_set_active` если `activate=true`.
+    pub routing_autorouting: Option<(String, bool)>,
+    /// `://routing/{add|onadd}/{base64-or-url}` — статический профиль.
+    /// `(payload, activate)`.
+    pub routing_static: Option<(String, bool)>,
 }
 
 /// Кешированный список серверов и метаданных из последней успешной
@@ -157,6 +167,8 @@ pub fn parse_subscription_userinfo(raw: &str) -> SubscriptionMeta {
         server_resolve_enable: None,
         server_resolve_doh: None,
         server_resolve_bootstrap: None,
+        routing_autorouting: None,
+        routing_static: None,
     }
 }
 
@@ -247,8 +259,189 @@ pub async fn fetch_and_parse(
         .await
         .context("не удалось прочитать тело ответа")?;
 
+    // 11.E: до парсинга серверов вытащим спец-строки (`://routing/...`,
+    // `#announce:`, и т.п.) — они могут затрагивать meta даже если
+    // подписка отдала минимальные заголовки. Применяем поверх
+    // header-meta (заголовки имеют приоритет если оба заданы).
+    let mut effective_meta = meta;
+    apply_inline_directives(&body, &mut effective_meta);
+
     let servers = parse_subscription_body(&body)?;
-    Ok((servers, meta))
+    Ok((servers, effective_meta))
+}
+
+/// 11.E — Вытащить из тела подписки спец-строки и применить к meta.
+///
+/// Распознаются:
+/// - `://autorouting/onadd/{url}` — поднять flag activate=true
+/// - `://autorouting/add/{url}` — без активации
+/// - `://routing/onadd/{base64-or-url}` — статический + activate
+/// - `://routing/add/{base64-or-url}` — статический без активации
+/// - `#announce: текст` или `#announce: base64:...`
+/// - `#announce-url: https://...`
+/// - `#profile-title: имя` (если из заголовков title не пришёл)
+/// - `#support-url: https://...`
+/// - `#profile-web-page-url: https://...`
+/// - `#profile-update-interval: <часы>`
+///
+/// Заголовки имеют приоритет: если поле уже было задано в meta — не
+/// перезаписываем (override-логика 8.C наоборот: header > inline body).
+fn apply_inline_directives(body: &str, meta_opt: &mut Option<SubscriptionMeta>) {
+    let mut found_routing_static: Option<(String, bool)> = None;
+    let mut found_routing_auto: Option<(String, bool)> = None;
+    let mut found_announce: Option<String> = None;
+    let mut found_announce_url: Option<String> = None;
+    let mut found_title: Option<String> = None;
+    let mut found_support: Option<String> = None;
+    let mut found_web: Option<String> = None;
+    let mut found_interval: Option<u32> = None;
+
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Routing-директивы. Префикс может быть как `://...`, так и
+        // `nemefisto://...` (для совместимости с deep-link форматом).
+        let routing_payload = line
+            .strip_prefix("nemefisto://")
+            .or_else(|| line.strip_prefix("://"));
+        if let Some(rest) = routing_payload {
+            let parts: Vec<&str> = rest.splitn(3, '/').collect();
+            if parts.len() == 3 {
+                match (parts[0], parts[1]) {
+                    ("autorouting", verb @ ("add" | "onadd")) => {
+                        let url = parts[2].trim().to_string();
+                        if !url.is_empty() {
+                            found_routing_auto = Some((url, verb == "onadd"));
+                        }
+                    }
+                    ("routing", verb @ ("add" | "onadd")) => {
+                        let payload = parts[2].trim().to_string();
+                        if !payload.is_empty() {
+                            found_routing_static = Some((payload, verb == "onadd"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        // `#key: value` директивы
+        let Some(rest) = line.strip_prefix('#') else {
+            continue;
+        };
+        let Some((key, value)) = rest.split_once(':') else {
+            continue;
+        };
+        let key = key.trim().to_lowercase();
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.as_str() {
+            "announce" => {
+                found_announce = decode_header_value(value);
+            }
+            "announce-url" => {
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    found_announce_url = Some(value.to_string());
+                }
+            }
+            "profile-title" => {
+                found_title = decode_header_value(value);
+            }
+            "support-url" => {
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    found_support = Some(value.to_string());
+                }
+            }
+            "profile-web-page-url" => {
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    found_web = Some(value.to_string());
+                }
+            }
+            "profile-update-interval" => {
+                if let Ok(n) = value.parse::<u32>() {
+                    if n > 0 {
+                        found_interval = Some(n);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Если хоть что-то найдено — гарантируем что meta существует.
+    let any = found_routing_static.is_some()
+        || found_routing_auto.is_some()
+        || found_announce.is_some()
+        || found_announce_url.is_some()
+        || found_title.is_some()
+        || found_support.is_some()
+        || found_web.is_some()
+        || found_interval.is_some();
+    if !any {
+        return;
+    }
+
+    let meta = meta_opt.get_or_insert_with(|| SubscriptionMeta {
+        used: 0,
+        total: 0,
+        expire_at: None,
+        title: None,
+        web_page_url: None,
+        support_url: None,
+        update_interval_hours: None,
+        announce: None,
+        announce_url: None,
+        premium_url: None,
+        theme: None,
+        background: None,
+        button_style: None,
+        preset: None,
+        mode: None,
+        engine: None,
+        fragmentation_enable: None,
+        fragmentation_packets: None,
+        fragmentation_length: None,
+        fragmentation_interval: None,
+        noises_enable: None,
+        noises_type: None,
+        noises_packet: None,
+        noises_delay: None,
+        server_resolve_enable: None,
+        server_resolve_doh: None,
+        server_resolve_bootstrap: None,
+        routing_autorouting: None,
+        routing_static: None,
+    });
+
+    // header > inline: только заполняем None'ы
+    if meta.routing_autorouting.is_none() {
+        meta.routing_autorouting = found_routing_auto;
+    }
+    if meta.routing_static.is_none() {
+        meta.routing_static = found_routing_static;
+    }
+    if meta.announce.is_none() {
+        meta.announce = found_announce;
+    }
+    if meta.announce_url.is_none() {
+        meta.announce_url = found_announce_url;
+    }
+    if meta.title.is_none() {
+        meta.title = found_title;
+    }
+    if meta.support_url.is_none() {
+        meta.support_url = found_support;
+    }
+    if meta.web_page_url.is_none() {
+        meta.web_page_url = found_web;
+    }
+    if meta.update_interval_hours.is_none() {
+        meta.update_interval_hours = found_interval;
+    }
 }
 
 /// Собирает SubscriptionMeta из набора HTTP-заголовков ответа.
@@ -295,6 +488,8 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
             server_resolve_enable: None,
             server_resolve_doh: None,
             server_resolve_bootstrap: None,
+            routing_autorouting: None,
+            routing_static: None,
         });
 
     // Стандартные заголовки (8.C, шаг 2)

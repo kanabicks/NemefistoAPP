@@ -64,6 +64,11 @@ export type SubscriptionMeta = {
   serverResolveEnable: boolean | null;
   serverResolveDoH: string | null;
   serverResolveBootstrap: string | null;
+  // 11.E: routing-директивы из спец-строк подписки. UI применяет
+  // через invoke routing_add_url / routing_add_static + опционально
+  // routing_set_active.
+  routingAutorouting: [string, boolean] | null;
+  routingStatic: [string, boolean] | null;
 };
 
 /** Сырой ответ команды fetch_subscription — Rust возвращает snake_case. */
@@ -95,6 +100,8 @@ type SubscriptionMetaRaw = {
   server_resolve_enable: boolean | null;
   server_resolve_doh: string | null;
   server_resolve_bootstrap: string | null;
+  routing_autorouting: [string, boolean] | null;
+  routing_static: [string, boolean] | null;
 };
 type FetchSubscriptionRaw = {
   servers: ProxyEntry[];
@@ -164,6 +171,8 @@ const normalizeMeta = (
         serverResolveEnable: raw.server_resolve_enable,
         serverResolveDoH: raw.server_resolve_doh,
         serverResolveBootstrap: raw.server_resolve_bootstrap,
+        routingAutorouting: raw.routing_autorouting,
+        routingStatic: raw.routing_static,
       }
     : null;
 
@@ -362,15 +371,54 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       });
       const now = Date.now();
       saveToStorage(LAST_FETCH_KEY, String(now));
+      const normalized = normalizeMeta(result.meta);
       set({
         servers: result.servers,
-        meta: normalizeMeta(result.meta),
+        meta: normalized,
         pings: [],
         lastFetchedAt: now,
         loading: false,
       });
       // Авто-пинг сразу после получения списка
       void get().pingAll();
+
+      // 11.E: если в подписке нашлись routing-директивы (`://routing/...`,
+      // `://autorouting/...` спец-строки) — применяем через bash-команды.
+      // Не блокируем основной flow — выполняем в фоне.
+      if (normalized?.routingAutorouting) {
+        const [autoUrl, activate] = normalized.routingAutorouting;
+        void invoke<string>("routing_add_url", {
+          url: autoUrl,
+          intervalHours: 24,
+        })
+          .then((id) =>
+            activate
+              ? invoke("routing_set_active", { id })
+              : Promise.resolve()
+          )
+          .catch((e) =>
+            console.warn("[subscription] routing_autorouting failed:", e)
+          );
+      }
+      if (normalized?.routingStatic) {
+        const [payload, activate] = normalized.routingStatic;
+        const isUrl = /^https?:\/\//i.test(payload);
+        const promise = isUrl
+          ? invoke<string>("routing_add_url", {
+              url: payload,
+              intervalHours: 8760, // эффективное «не обновлять»
+            })
+          : invoke<string>("routing_add_static", { payload });
+        void promise
+          .then((id) =>
+            activate
+              ? invoke("routing_set_active", { id })
+              : Promise.resolve()
+          )
+          .catch((e) =>
+            console.warn("[subscription] routing_static failed:", e)
+          );
+      }
     } catch (e) {
       set({ loading: false, error: String(e) });
     }

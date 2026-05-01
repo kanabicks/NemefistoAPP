@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { RoutingProfilesPanel } from "./RoutingProfilesPanel";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useRuntimeStore } from "../stores/runtimeStore";
@@ -922,18 +923,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "routing" && (
             <>
               <div className="settings-row-hint" style={{ marginBottom: 12 }}>
-                в этой секции будут гибкие правила маршрутизации трафика —
-                какие домены/IP идут через vpn, какие напрямую, какие
-                блокируются. сейчас правила определяются конфигом подписки
+                routing-профили задают какие домены/IP идут через VPN, какие
+                напрямую, какие блокируются. правила применяются к Xray и
+                Mihomo при connect. для xray-json конфигов из подписки
+                (с собственным routing) — НЕ применяются (приоритет у
+                подписки)
               </div>
-              <ComingSoonNote
-                title="routing-профили (geosite/geoip)"
-                desc="импорт правил по ссылке (например, Loyalsoldier/v2ray-rules-dat). автообновление с экономией трафика через .sha256"
-              />
-              <ComingSoonNote
-                title="auto-grouping для пустых подписок"
-                desc="если подписка не задаёт правила — применяется встроенный шаблон РФ: *.ru / vk / yandex / sber / госуслуги напрямую, остальное через VPN"
-              />
+              <RoutingProfilesPanel />
               <ComingSoonNote
                 title="WFP per-app routing"
                 desc="per-process правила в обоих движках через kernel-driver Windows Filtering Platform. альтернатива Mihomo PROCESS-NAME"

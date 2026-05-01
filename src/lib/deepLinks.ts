@@ -1,7 +1,9 @@
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useVpnStore } from "../stores/vpnStore";
+import { showToast } from "../stores/toastStore";
 
 /**
  * Поддерживаемые deep-link-ссылки:
@@ -136,8 +138,113 @@ export function handleDeepLink(rawUrl: string) {
       void focusMainWindow();
       break;
     }
+    case "routing":
+    case "autorouting": {
+      // 11.D расширенные deep-links для routing-профилей. Формат:
+      //   nemefisto://routing/{add|onadd}/{base64|url}
+      //   nemefisto://autorouting/{add|onadd}/{url}
+      // segments тут — [verb, ...payload]. queryUrl/queryData как
+      // альтернативные источники payload (для длинных base64).
+      const verb = (segments.shift() || "").toLowerCase();
+      if (verb !== "add" && verb !== "onadd") {
+        console.warn("[deep-link] routing: неизвестный verb:", verb);
+        return;
+      }
+      const raw = segments.join("/") || queryData || queryUrl || "";
+      const decodedRaw = decodeUriOrPassthrough(raw);
+      handleRoutingDeepLink(action, verb, decodedRaw);
+      void focusMainWindow();
+      break;
+    }
     default:
       console.warn("[deep-link] неизвестное действие:", action);
+  }
+}
+
+function decodeUriOrPassthrough(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * 11.D — обработчик routing/autorouting deep-links.
+ *
+ * - `routing/add/{base64-or-url}` — добавить статический профиль
+ *   (без активации). Если payload — URL, скачиваем JSON один раз и
+ *   сохраняем как Static.
+ * - `routing/onadd/{base64-or-url}` — то же + сразу активируем.
+ * - `autorouting/add/{url}` — добавить URL-источник с авто-обновлением
+ *   (default 24ч). Без активации.
+ * - `autorouting/onadd/{url}` — то же + активируем.
+ */
+async function handleRoutingDeepLink(
+  kind: "routing" | "autorouting",
+  verb: "add" | "onadd",
+  raw: string
+) {
+  if (!raw) {
+    showToast({
+      kind: "warning",
+      title: "routing deep-link",
+      message: "пустой payload",
+    });
+    return;
+  }
+
+  try {
+    let id: string;
+    if (kind === "autorouting") {
+      // payload должен быть URL
+      if (!/^https?:\/\//i.test(raw)) {
+        showToast({
+          kind: "error",
+          title: "autorouting",
+          message: "ожидался URL, получено:\n" + raw.slice(0, 80),
+        });
+        return;
+      }
+      id = await invoke<string>("routing_add_url", {
+        url: raw,
+        intervalHours: 24,
+      });
+    } else {
+      // routing: или base64-encoded JSON, или URL (тогда скачиваем
+      // одноразово через routing_add_url + interval=8760 = «раз в год»
+      // ≈ no-update; либо лучше: качаем один раз сами и кидаем в
+      // routing_add_static как JSON).
+      if (/^https?:\/\//i.test(raw)) {
+        // Одноразовое скачивание — используем routing_add_url с
+        // эффективным «no-update» интервалом (8760ч = 1 год).
+        id = await invoke<string>("routing_add_url", {
+          url: raw,
+          intervalHours: 8760,
+        });
+      } else {
+        // base64 / JSON
+        id = await invoke<string>("routing_add_static", { payload: raw });
+      }
+    }
+
+    if (verb === "onadd") {
+      await invoke("routing_set_active", { id });
+    }
+    showToast({
+      kind: "success",
+      title: "routing-профиль",
+      message:
+        verb === "onadd"
+          ? "добавлен и активирован"
+          : "добавлен (активируйте в Settings)",
+    });
+  } catch (e) {
+    showToast({
+      kind: "error",
+      title: "routing deep-link",
+      message: String(e),
+    });
   }
 }
 
