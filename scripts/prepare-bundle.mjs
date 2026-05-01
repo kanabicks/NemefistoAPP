@@ -39,6 +39,7 @@ const TRIPLET = "x86_64-pc-windows-msvc";
 
 const REQUIRED_RESOURCES = [
   "xray-x86_64-pc-windows-msvc.exe",
+  "mihomo-x86_64-pc-windows-msvc.exe",
   "tun2socks-x86_64-pc-windows-msvc.exe",
   "wintun.dll",
   "geoip.dat",

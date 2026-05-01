@@ -1,12 +1,17 @@
 import { useUtcClock } from "../lib/hooks/useUtcClock";
-import { openDashboard } from "../lib/openExternal";
+import { openDashboard, useHasDashboardUrl } from "../lib/openExternal";
 import { SettingsIcon, UserIcon } from "./icons";
 
 /**
  * Шапка приложения: лого + UTC-часы + кнопки личного кабинета и настроек.
+ *
+ * Кнопка личного кабинета показывается ТОЛЬКО если подписка прислала
+ * `profile-web-page-url` — без хедера кнопки нет (захардкоженный
+ * fallback на нашу страницу убран).
  */
 export function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
   const utcTime = useUtcClock();
+  const hasDashboardUrl = useHasDashboardUrl();
 
   return (
     <header className="header">
@@ -19,15 +24,17 @@ export function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
           <span className="blink">●</span>
           <span>{utcTime}</span>
         </div>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={openDashboard}
-          aria-label="личный кабинет"
-          title="личный кабинет (web.nemefisto.online)"
-        >
-          <UserIcon />
-        </button>
+        {hasDashboardUrl && (
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={openDashboard}
+            aria-label="личный кабинет"
+            title="личный кабинет"
+          >
+            <UserIcon />
+          </button>
+        )}
         <button
           type="button"
           className="icon-btn"

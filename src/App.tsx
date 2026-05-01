@@ -17,6 +17,10 @@ import { WideAmbient } from "./components/effects/WideAmbient";
 import { AnnounceBanner } from "./components/AnnounceBanner";
 import { CrashRecoveryDialog } from "./components/CrashRecoveryDialog";
 import { BackupPreviewModal } from "./components/BackupPreviewModal";
+import {
+  OnboardingTour,
+  isOnboardingCompleted,
+} from "./components/OnboardingTour";
 import { useBackupModalStore } from "./lib/backup";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
@@ -29,7 +33,7 @@ import { runLeakTest } from "./lib/leakTest";
 import { ModeSegment } from "./components/ModeSegment";
 import { Footer } from "./components/Footer";
 import { SettingsPage } from "./components/SettingsPage";
-import { openDashboard } from "./lib/openExternal";
+import { openDashboard, useHasDashboardUrl } from "./lib/openExternal";
 
 /**
  * Корневой компонент. Координирует:
@@ -73,6 +77,9 @@ function App() {
   const autoLeakTest = useSettingsStore((x) => x.autoLeakTest);
   const tunOnlyStrict = useSettingsStore((x) => x.tunOnlyStrict);
   const setSetting = useSettingsStore((x) => x.set);
+  // Кнопка «личный кабинет» показывается только когда подписка
+  // прислала `profile-web-page-url` (захардкоженный fallback убран).
+  const hasDashboardUrl = useHasDashboardUrl();
   const socksPort = useVpnStore((s) => s.socksPort);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -367,9 +374,11 @@ function App() {
           </div>
 
           {/* Быстрый доступ в личный кабинет с главного экрана.
-              Скрываем когда показан Welcome — там уже есть своя кнопка,
-              чтобы не было дублирования и UI помещался без скролла. */}
-          {servers.length > 0 && (
+              Скрываем когда:
+                - показан Welcome (там своя кнопка),
+                - подписка не прислала `profile-web-page-url` (нет URL —
+                  нет кнопки, см. openExternal.ts). */}
+          {servers.length > 0 && hasDashboardUrl && (
             <button
               type="button"
               onClick={openDashboard}
@@ -390,9 +399,25 @@ function App() {
 
       <CrashRecoveryDialog />
       <BackupPreview />
+      <OnboardingHost />
       <Toaster />
     </>
   );
+}
+
+/** 14.G — first-run onboarding. Показывается ровно один раз — после
+ *  пройденного шага флаг сохраняется в localStorage. Не показываем,
+ *  если у пользователя уже есть кешированные серверы (значит он уже
+ *  использовал приложение раньше — даже без флага онбординг бесполезен). */
+function OnboardingHost() {
+  const servers = useSubscriptionStore((s) => s.servers);
+  const [open, setOpen] = useState(() => {
+    if (isOnboardingCompleted()) return false;
+    if (servers.length > 0) return false;
+    return true;
+  });
+  if (!open) return null;
+  return <OnboardingTour onClose={() => setOpen(false)} />;
 }
 
 /** 12.D — рендерит preview-модалку, когда deep-link или кнопка

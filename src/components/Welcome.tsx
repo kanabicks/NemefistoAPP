@@ -1,9 +1,13 @@
 import { useSubscriptionStore } from "../stores/subscriptionStore";
-import { openDashboard } from "../lib/openExternal";
 
 /**
- * Карточка первого запуска: ввод URL подписки или вход в личный кабинет.
+ * Карточка первого запуска: ввод URL подписки.
  * Показывается когда `servers.length === 0`.
+ *
+ * Кнопка «войти в личный кабинет» убрана: до загрузки подписки мы не
+ * знаем `profile-web-page-url`, а захардкоженный fallback на нашу
+ * страницу для универсального клиента некорректен. После загрузки
+ * подписки с webPageUrl кнопка появится в Header / основном UI.
  */
 export function Welcome() {
   const subUrl = useSubscriptionStore((s) => s.url);
@@ -41,20 +45,6 @@ export function Welcome() {
         </button>
       </div>
       {subError && <pre className="hero-error">{subError}</pre>}
-      <div className="welcome-divider">
-        <span>или</span>
-      </div>
-      <button
-        type="button"
-        onClick={openDashboard}
-        className="btn-ghost"
-        style={{ alignSelf: "stretch", padding: "12px" }}
-      >
-        войти в личный кабинет →
-      </button>
-      <p className="hint" style={{ marginTop: 4 }}>
-        web.nemefisto.online · откроется в браузере
-      </p>
     </div>
   );
 }

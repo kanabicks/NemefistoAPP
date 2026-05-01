@@ -224,14 +224,16 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
                 {subError && <pre className="hero-error">{subError}</pre>}
-                <button
-                  type="button"
-                  onClick={openDashboard}
-                  className="btn-ghost"
-                  style={{ alignSelf: "flex-start", marginTop: 4 }}
-                >
-                  личный кабинет →
-                </button>
+                {subMeta?.webPageUrl && (
+                  <button
+                    type="button"
+                    onClick={openDashboard}
+                    className="btn-ghost"
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  >
+                    личный кабинет →
+                  </button>
+                )}
               </section>
 
               <section className="settings-section">
@@ -1232,14 +1234,24 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <span className="about-val">26.x</span>
                   <span className="about-key">mihomo</span>
                   <span className="about-val">v1.19.24</span>
-                  <span className="about-key">сайт</span>
-                  <button
-                    type="button"
-                    onClick={openDashboard}
-                    className="about-link"
-                  >
-                    web.nemefisto.online
-                  </button>
+                  {subMeta?.webPageUrl && (
+                    <>
+                      <span className="about-key">личный кабинет</span>
+                      <button
+                        type="button"
+                        onClick={openDashboard}
+                        className="about-link"
+                      >
+                        {(() => {
+                          try {
+                            return new URL(subMeta.webPageUrl).host;
+                          } catch {
+                            return "ссылка";
+                          }
+                        })()}
+                      </button>
+                    </>
+                  )}
                   <span className="about-key">поддержка</span>
                   <button
                     type="button"
