@@ -460,6 +460,44 @@ impl Drop for WfpEngine {
     }
 }
 
+/// Проверка остатков WFP-фильтров от прошлой сессии (read-only,
+/// не destructive). Используется в `get_recovery_state` для UI-сигнала
+/// «найдены orphan фильтры» (14.E).
+///
+/// Стратегия: открываем persistent engine (read-only access не нужен —
+/// все WFP-операции требуют тех же прав), пытаемся получить sublayer
+/// по нашему GUID. Если его нет — `FWP_E_SUBLAYER_NOT_FOUND`. Если
+/// есть — значит DYNAMIC session по какой-то причине не отработала
+/// (kernel-panic, force-kill процесса до того как OS закрыла handles
+/// и т.п.) и cleanup_provider при последнем старте не выполнился.
+///
+/// Возвращаем `true` только если sublayer реально присутствует.
+/// При любых других ошибках (engine не открылся, RPC fail) — `false`,
+/// чтобы не пугать пользователя ложным сигналом.
+pub fn has_orphan_filters() -> Result<bool> {
+    const FWP_E_SUBLAYER_NOT_FOUND: u32 = 0x8032_0006;
+    let engine = WfpEngine::open_persistent().context("orphan-check: open engine")?;
+    let mut sublayer_ptr: *mut FWPM_SUBLAYER0 = ptr::null_mut();
+    unsafe {
+        let rc = FwpmSubLayerGetByKey0(
+            engine.handle,
+            &NEMEFISTO_SUBLAYER_GUID,
+            &mut sublayer_ptr,
+        );
+        if rc == ERROR_SUCCESS {
+            // Sublayer существует — есть остатки. Освобождаем память.
+            if !sublayer_ptr.is_null() {
+                FwpmFreeMemory0(&mut (sublayer_ptr as *mut std::ffi::c_void));
+            }
+            Ok(true)
+        } else if rc == FWP_E_SUBLAYER_NOT_FOUND {
+            Ok(false)
+        } else {
+            bail!("FwpmSubLayerGetByKey0 failed: 0x{:08x}", rc)
+        }
+    }
+}
+
 /// Cleanup orphan-объектов с прошлых инкарнаций helper'а.
 ///
 /// Открывает persistent engine, под транзакцией удаляет sublayer и

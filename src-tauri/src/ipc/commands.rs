@@ -996,17 +996,42 @@ pub async fn recover_network() -> RecoveryReport {
 ///   обычно их сам чистит при старте, но если helper-сервис не
 ///   запущен — остаются).
 ///
-/// Если все four false — фронт диалог не показывает.
+/// Если все пять false — фронт диалог не показывает.
+///
+/// 14.E: добавлено поле `orphan_wfp_filters` — best-effort проверка
+/// через helper-сервис. Если helper не запущен или не отвечает —
+/// возвращаем false (значит проверить нельзя, лучше не пугать
+/// пользователя ложным сигналом).
 #[derive(Serialize)]
 pub struct RecoveryState {
     pub was_crashed: bool,
     pub proxy_orphan: bool,
     pub proxy_backup_present: bool,
     pub tun_orphan: bool,
+    pub orphan_wfp_filters: bool,
 }
 
 #[tauri::command]
-pub fn get_recovery_state() -> RecoveryState {
+pub async fn get_recovery_state() -> RecoveryState {
+    let proxy_orphan = platform::proxy::is_proxy_pointing_to_us();
+    let proxy_backup_present = platform::proxy::has_pending_backup();
+    let tun_orphan = platform::network::has_orphan_tun_adapters();
+
+    // 14.E: проверка orphan-фильтров через helper. Делаем с timeout и
+    // на любые ошибки (helper не отвечает, не установлен) возвращаем
+    // false. Pipe внутри helper_client уже имеет 1-секундный retry-loop;
+    // дополнительный timeout оборачивать не обязательно, но для
+    // надёжности в случае зависшего pipe — да.
+    let orphan_wfp_filters = match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        platform::helper_client::wfp_query_orphan(),
+    )
+    .await
+    {
+        Ok(Ok(has)) => has,
+        Ok(Err(_)) | Err(_) => false,
+    };
+
     RecoveryState {
         // session_lock мы вызывали в `lib.rs::setup` — но это уже после
         // того как мы перетёрли lockfile своим PID. Поэтому здесь
@@ -1014,12 +1039,14 @@ pub fn get_recovery_state() -> RecoveryState {
         // присутствует, либо прокси указывает на нас. Если ничего из
         // этого нет — was_crashed = false (даже если на самом деле
         // был краш в прошлый раз — нам нечего восстанавливать).
-        was_crashed: platform::proxy::has_pending_backup()
-            || platform::proxy::is_proxy_pointing_to_us()
-            || platform::network::has_orphan_tun_adapters(),
-        proxy_orphan: platform::proxy::is_proxy_pointing_to_us(),
-        proxy_backup_present: platform::proxy::has_pending_backup(),
-        tun_orphan: platform::network::has_orphan_tun_adapters(),
+        was_crashed: proxy_backup_present
+            || proxy_orphan
+            || tun_orphan
+            || orphan_wfp_filters,
+        proxy_orphan,
+        proxy_backup_present,
+        tun_orphan,
+        orphan_wfp_filters,
     }
 }
 
@@ -1330,8 +1357,15 @@ pub fn export_diagnostics() -> Result<String, String> {
     let _ = zip.start_file("competing-vpns.txt", opts);
     let _ = zip.write_all(competing_text.as_bytes());
 
-    // 4. recovery-state.json
-    let state = get_recovery_state();
+    // 4. recovery-state.json (без orphan_wfp_filters — оно требует
+    // helper round-trip, не нужно в синхронном export-flow)
+    let state = RecoveryState {
+        proxy_orphan: platform::proxy::is_proxy_pointing_to_us(),
+        proxy_backup_present: platform::proxy::has_pending_backup(),
+        tun_orphan: platform::network::has_orphan_tun_adapters(),
+        orphan_wfp_filters: false,
+        was_crashed: false,
+    };
     if let Ok(json) = serde_json::to_string_pretty(&state) {
         let _ = zip.start_file("recovery-state.json", opts);
         let _ = zip.write_all(json.as_bytes());

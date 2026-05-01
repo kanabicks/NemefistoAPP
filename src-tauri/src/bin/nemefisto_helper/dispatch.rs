@@ -7,6 +7,7 @@
 use super::firewall;
 use super::protocol::{Request, Response};
 use super::tun;
+use super::wfp;
 
 const HELPER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -89,5 +90,9 @@ pub async fn handle(req: Request) -> Response {
             super::tun::cleanup_orphan_resources().await;
             Response::Ok
         }
+        Request::WfpQueryOrphan => match wfp::has_orphan_filters() {
+            Ok(has_orphan) => Response::WfpOrphan { has_orphan },
+            Err(e) => Response::err(format!("wfp_query_orphan: {e:#}")),
+        },
     }
 }

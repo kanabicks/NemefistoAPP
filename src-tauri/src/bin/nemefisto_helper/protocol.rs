@@ -92,6 +92,12 @@ pub enum Request {
     /// «восстановить сеть» когда видимо, что что-то осталось от
     /// упавшей сессии. Безопасно вызывать только когда VPN не активен.
     OrphanCleanup,
+    /// 14.E: read-only проверка остатков WFP-фильтров от прошлой
+    /// сессии. Возвращает `Response::WfpOrphan { has_orphan }` —
+    /// фронт показывает в crash-recovery диалоге если true.
+    /// Не destructive: только читает существование sublayer'а с
+    /// нашим GUID.
+    WfpQueryOrphan,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,6 +107,9 @@ pub enum Response {
     Version { version: String },
     /// Успешный результат операции без полезной нагрузки.
     Ok,
+    /// 14.E: ответ на `WfpQueryOrphan`. `has_orphan` — есть ли
+    /// sublayer с нашим GUID в persistent WFP-store.
+    WfpOrphan { has_orphan: bool },
     /// Ошибка с описанием.
     Error { message: String },
 }
@@ -115,3 +124,36 @@ pub const PIPE_NAME: &str = r"\\.\pipe\nemefisto-helper";
 pub const SERVICE_NAME: &str = "NemefistoHelper";
 pub const SERVICE_DISPLAY_NAME: &str = "Nemefisto VPN Helper";
 pub const SERVICE_DESCRIPTION: &str = "Управление TUN-интерфейсом и системной маршрутизацией для Nemefisto VPN.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 14.E: проверка JSON-формата `WfpQueryOrphan` request — должен быть
+    /// `{"cmd":"wfp_query_orphan"}`. Если случайно изменить tag/rename_all
+    /// на helper-стороне — тест поймает.
+    #[test]
+    fn wfp_query_orphan_request_serializes() {
+        let req = Request::WfpQueryOrphan;
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"cmd":"wfp_query_orphan"}"#);
+    }
+
+    /// 14.E: `WfpOrphan` response с `has_orphan: true`.
+    #[test]
+    fn wfp_orphan_response_serializes() {
+        let resp = Response::WfpOrphan { has_orphan: true };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"result":"wfp_orphan","has_orphan":true}"#);
+    }
+
+    /// Roundtrip: Request → JSON → Request. Если serde-теги совпадают,
+    /// десериализация должна вернуть тот же variant.
+    #[test]
+    fn wfp_query_orphan_roundtrip() {
+        let req = Request::WfpQueryOrphan;
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Request::WfpQueryOrphan));
+    }
+}

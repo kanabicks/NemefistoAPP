@@ -28,6 +28,9 @@ type RecoveryState = {
   proxy_orphan: boolean;
   proxy_backup_present: boolean;
   tun_orphan: boolean;
+  /** 14.E: остатки WFP-фильтров от прошлой сессии (best-effort через
+   *  helper). Если helper не отвечает — false (не пугаем зря). */
+  orphan_wfp_filters: boolean;
 };
 
 type RecoveryReport = {
@@ -116,6 +119,11 @@ export function CrashRecoveryDialog() {
     });
   if (state.tun_orphan)
     findings.push({ key: "tun", label: "tun-адаптер `nemefisto-*` в системе" });
+  if (state.orphan_wfp_filters)
+    findings.push({
+      key: "wfp",
+      label: "wfp-фильтры kill switch остались от прошлой сессии",
+    });
 
   return (
     <div className="recovery-overlay" role="dialog" aria-modal="true">

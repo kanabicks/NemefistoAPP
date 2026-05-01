@@ -72,6 +72,9 @@ pub enum HelperRequest {
     /// Cleanup orphan TUN-адаптеров (`nemefisto-*`) и half-default
     /// маршрутов через `198.18.0.1`. Часть UI-кнопки «восстановить сеть».
     OrphanCleanup,
+    /// 14.E: read-only проверка остатков WFP-фильтров от прошлой
+    /// сессии. Helper смотрит существование sublayer с нашим GUID.
+    WfpQueryOrphan,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,6 +83,8 @@ pub enum HelperResponse {
     Pong,
     Version { version: String },
     Ok,
+    /// 14.E: ответ на `WfpQueryOrphan`.
+    WfpOrphan { has_orphan: bool },
     Error { message: String },
 }
 
@@ -241,6 +246,19 @@ pub async fn orphan_cleanup() -> Result<()> {
     let resp = send(HelperRequest::OrphanCleanup).await?;
     match resp {
         HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// 14.E: проверка остатков WFP-фильтров от прошлой сессии. Best-effort,
+/// без побочных эффектов. Возвращает `Ok(true)` если sublayer с нашим
+/// GUID существует в persistent WFP store. Используется для UI-сигнала
+/// в crash-recovery диалоге.
+pub async fn wfp_query_orphan() -> Result<bool> {
+    let resp = send(HelperRequest::WfpQueryOrphan).await?;
+    match resp {
+        HelperResponse::WfpOrphan { has_orphan } => Ok(has_orphan),
         HelperResponse::Error { message } => bail!("{message}"),
         other => bail!("неожиданный ответ helper: {other:?}"),
     }
