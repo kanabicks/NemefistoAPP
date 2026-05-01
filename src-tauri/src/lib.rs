@@ -12,11 +12,12 @@ use config::{HwidState, SubscriptionState};
 use ipc::commands::{
     autostart_disable, autostart_enable, autostart_is_enabled, check_routing_conflicts, connect,
     detect_competing_vpns, discard_proxy_backup, disconnect, export_diagnostics,
-    fetch_subscription, get_hwid, get_recovery_state, get_servers, get_subscription_meta,
-    has_proxy_backup, hide_floating_window, is_xray_running, kill_switch_apply,
-    kill_switch_force_cleanup, kill_switch_heartbeat, leak_test, ping_servers, read_xray_log,
-    recover_network, restore_proxy_backup, secure_storage_delete, secure_storage_get,
-    secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
+    fetch_subscription, geofiles_refresh, geofiles_status, get_hwid, get_recovery_state,
+    get_servers, get_subscription_meta, has_proxy_backup, hide_floating_window, is_xray_running,
+    kill_switch_apply, kill_switch_force_cleanup, kill_switch_heartbeat, leak_test, ping_servers,
+    read_xray_log, recover_network, restore_proxy_backup, routing_add_static, routing_add_url,
+    routing_list, routing_refresh, routing_remove, routing_set_active, secure_storage_delete,
+    secure_storage_get, secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
 };
 use vpn::{MihomoState, XrayState};
 
@@ -35,6 +36,7 @@ pub fn run() {
         .manage(MihomoState::new())
         .manage(SubscriptionState::new())
         .manage(KillSwitchState::new())
+        .manage(config::routing_store::RoutingStoreState::new())
         .setup(|app| {
             // Self-healing на старте: сначала захватываем lockfile, чтобы
             // понять упала ли прошлая сессия. Если да — синхронно (до
@@ -84,6 +86,19 @@ pub fn run() {
             // 13.O: измеритель скорости. Эмитит `bandwidth-tick` каждую
             // секунду — для floating-окна и опционально main-окна.
             platform::bandwidth::start(app.handle().clone());
+
+            // 11.C: scheduler авто-обновления routing-профилей и geofiles.
+            // Использует Notify wake-up для немедленной реакции на add/refresh.
+            // Сохранённый shutdown-sender утечёт — scheduler-task остановится
+            // при exit вместе с tokio runtime'ом.
+            {
+                let store_state =
+                    app.state::<config::routing_store::RoutingStoreState>();
+                let _shutdown = config::routing_store::spawn_scheduler(
+                    store_state.inner.clone(),
+                    store_state.wake.clone(),
+                );
+            }
             // 13.O: создаём floating-окно один раз, скрытым. Toggle
             // через команду `show_floating_window`/`hide_floating_window`
             // (из Settings → appearance).
@@ -149,6 +164,14 @@ pub fn run() {
             export_diagnostics,
             detect_competing_vpns,
             check_routing_conflicts,
+            routing_list,
+            routing_add_static,
+            routing_add_url,
+            routing_remove,
+            routing_set_active,
+            routing_refresh,
+            geofiles_refresh,
+            geofiles_status,
         ])
         .build(tauri::generate_context!())
         .expect("ошибка инициализации Tauri runtime")

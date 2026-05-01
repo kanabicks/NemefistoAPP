@@ -348,6 +348,7 @@ pub async fn connect(
     mihomo: State<'_, MihomoState>,
     sub: State<'_, SubscriptionState>,
     ks_ctx: State<'_, KillSwitchState>,
+    routing_store: State<'_, crate::config::routing_store::RoutingStoreState>,
 ) -> Result<ConnectResult, String> {
     // Pre-flight self-healing: если в системе остались наши orphan'ы от
     // упавшей сессии (системный прокси указывает на наш диапазон портов
@@ -450,6 +451,13 @@ pub async fn connect(
         // на Windows нет нативной поддержки в Xray (требует kernel-driver,
         // см. план 13.G WFP per-app routing).
         let rules_slice: &[AppRule] = app_rules.as_deref().unwrap_or(&[]);
+        // 11.F: routing-профиль если активен. Извлекаем snapshot — lock
+        // освобождается до вызова build (build синхронный, на снапшоте).
+        let active_profile = routing_store
+            .inner
+            .lock()
+            .ok()
+            .and_then(|g| g.active().map(|e| e.profile.clone()));
         let cfg = mihomo_config::build(
             &entry,
             default_socks,
@@ -457,6 +465,7 @@ pub async fn connect(
             anti_dpi.as_ref(),
             auth_pair,
             rules_slice,
+            active_profile.as_ref(),
         )
         .map_err(|e| e.to_string())?;
         // На всякий случай гасим Xray если он был активен от прошлой сессии
@@ -467,7 +476,7 @@ pub async fn connect(
     } else {
         // xray-json: патчим внешний конфиг (порты + listen)
         // иначе: генерируем конфиг из ProxyEntry
-        let (config_json, sp, hp) = if entry.protocol == "xray-json" {
+        let (mut config_json, sp, hp) = if entry.protocol == "xray-json" {
             let patched = xray_config::patch_xray_json(
                 entry.raw.clone(),
                 default_socks,
@@ -494,6 +503,20 @@ pub async fn connect(
             .map_err(|e| e.to_string())?;
             (cfg.json, cfg.socks_port, cfg.http_port)
         };
+
+        // 11.F: применить активный routing-профиль если есть. Для xray-json
+        // (custom config из подписки) — НЕ применяем, у пользователя свои
+        // правила в подписке которые приоритетнее.
+        if entry.protocol != "xray-json" {
+            let active_profile = routing_store
+                .inner
+                .lock()
+                .ok()
+                .and_then(|g| g.active().map(|e| e.profile.clone()));
+            if let Some(p) = active_profile.as_ref() {
+                xray_config::apply_routing_profile(&mut config_json, p);
+            }
+        }
 
         // Запускаем Xray ДО поднятия TUN — иначе резолв server-а в Xray уйдёт
         // через TUN, а tun2socks не сможет соединиться с upstream-Xray.
@@ -1284,6 +1307,153 @@ pub fn export_diagnostics() -> Result<String, String> {
 
     zip.finish().map_err(|e| e.to_string())?;
     Ok(zip_path.to_string_lossy().into_owned())
+}
+
+// ─── 11.C/D/E — управление routing-профилями ──────────────────────────────────
+
+use crate::config::routing_profile::{
+    parse_profile_input, ProfileSource, RoutingProfile,
+};
+use crate::config::routing_store::{
+    canonicalize_github_blob, fetch_profile_from_url, RoutingStoreSnapshot, RoutingStoreState,
+};
+
+/// Получить snapshot всех профилей и id активного. Один вызов на UI-mount.
+#[tauri::command]
+pub fn routing_list(state: State<'_, RoutingStoreState>) -> RoutingStoreSnapshot {
+    state
+        .inner
+        .lock()
+        .map(|g| g.snapshot())
+        .unwrap_or_default()
+}
+
+/// Добавить статический профиль из base64/JSON-строки. Возвращает id.
+#[tauri::command]
+pub fn routing_add_static(
+    payload: String,
+    state: State<'_, RoutingStoreState>,
+) -> Result<String, String> {
+    let profile = parse_profile_input(&payload).map_err(|e| e.to_string())?;
+    let id = state
+        .inner
+        .lock()
+        .map_err(|e| e.to_string())?
+        .add(profile, ProfileSource::Static)
+        .map_err(|e| e.to_string())?;
+    state.wake.notify_one();
+    Ok(id)
+}
+
+/// Скачать профиль по URL и добавить как autorouting (с авто-обновлением
+/// каждые `interval_hours`). При первом скачивании сразу применяется.
+#[tauri::command]
+pub async fn routing_add_url(
+    url: String,
+    interval_hours: u32,
+    state: State<'_, RoutingStoreState>,
+) -> Result<String, String> {
+    let profile = fetch_profile_from_url(&url).await.map_err(|e| e.to_string())?;
+    let canonical = canonicalize_github_blob(&url);
+    let id = {
+        let mut g = state.inner.lock().map_err(|e| e.to_string())?;
+        g.add(
+            profile,
+            ProfileSource::Autorouting {
+                url: canonical,
+                interval_hours: interval_hours.max(1),
+            },
+        )
+        .map_err(|e| e.to_string())?
+    };
+    state.wake.notify_one();
+    Ok(id)
+}
+
+/// Удалить профиль. Если он был активным — активный сбрасывается.
+#[tauri::command]
+pub fn routing_remove(
+    id: String,
+    state: State<'_, RoutingStoreState>,
+) -> Result<(), String> {
+    state
+        .inner
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// Сделать профиль активным (или сбросить активный если `id=None`).
+#[tauri::command]
+pub fn routing_set_active(
+    id: Option<String>,
+    state: State<'_, RoutingStoreState>,
+) -> Result<(), String> {
+    let mut g = state.inner.lock().map_err(|e| e.to_string())?;
+    g.set_active(id.as_deref()).map_err(|e| e.to_string())?;
+    drop(g);
+    state.wake.notify_one();
+    Ok(())
+}
+
+/// Принудительно обновить autorouting-профиль (не дожидаясь scheduler-tick).
+/// Для статического профиля — no-op.
+#[tauri::command]
+pub async fn routing_refresh(
+    id: String,
+    state: State<'_, RoutingStoreState>,
+) -> Result<(), String> {
+    let entry = {
+        let g = state.inner.lock().map_err(|e| e.to_string())?;
+        g.snapshot().entries.into_iter().find(|e| e.id == id)
+    };
+    let Some(entry) = entry else {
+        return Err(format!("профиль {id} не найден"));
+    };
+    match entry.source {
+        ProfileSource::Static => Ok(()),
+        ProfileSource::Autorouting { url, .. } => {
+            let profile = fetch_profile_from_url(&url).await.map_err(|e| e.to_string())?;
+            state
+                .inner
+                .lock()
+                .map_err(|e| e.to_string())?
+                .update_profile(&id, profile)
+                .map_err(|e| e.to_string())?;
+            state.wake.notify_one();
+            Ok(())
+        }
+    }
+}
+
+/// Принудительное обновление geofiles (.dat-файлов) — для UI-кнопки в
+/// разделе routing. Возвращает report что обновилось / что пропустилось
+/// по unchanged sha256 / какие были errors.
+#[tauri::command]
+pub async fn geofiles_refresh(
+    state: State<'_, RoutingStoreState>,
+) -> Result<crate::config::geofiles::UpdateReport, String> {
+    let active = state
+        .inner
+        .lock()
+        .map_err(|e| e.to_string())?
+        .active()
+        .map(|e| (e.profile.geoip_url.clone(), e.profile.geosite_url.clone()));
+    let (geoip, geosite) = active.unwrap_or_default();
+    Ok(crate::config::geofiles::update_geofiles_if_changed(&geoip, &geosite).await)
+}
+
+/// Текущее состояние geofiles: какие файлы есть, размер, sha256.
+#[tauri::command]
+pub fn geofiles_status() -> crate::config::geofiles::GeofilesStatus {
+    crate::config::geofiles::status()
+}
+
+// Suppress dead_code для неиспользуемых пока хелперов из routing_profile.
+#[allow(dead_code)]
+fn _routing_profile_unused_check(p: &RoutingProfile) -> usize {
+    p.direct_sites.len()
 }
 
 // ─── 9.B / 9.C — детект конфликтов с другими VPN ──────────────────────────────

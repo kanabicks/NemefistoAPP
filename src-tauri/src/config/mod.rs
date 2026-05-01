@@ -4,6 +4,7 @@ pub mod geofiles;
 pub mod hwid;
 pub mod mihomo_config;
 pub mod routing_profile;
+pub mod routing_store;
 pub mod server;
 pub mod subscription;
 pub mod xray_config;

@@ -851,3 +851,89 @@ fn build_stream(network: &str, security: &str, raw: &Value) -> Result<Value> {
 
     Ok(s)
 }
+
+// ─── 11.F — Применение routing-профиля к Xray-конфигу ────────────────────────
+
+use super::routing_profile::{BoolString, DomainStrategy, RoutingProfile};
+
+/// Расширить уже построенный Xray-конфиг правилами из routing-профиля.
+///
+/// Правила из профиля добавляются **после** private-direct rule (чтобы
+/// LAN всегда оставалась direct), но **перед** default behavior (всё что
+/// не сматчилось — идёт через первый outbound `proxy`).
+///
+/// Для `GlobalProxy=false` добавляется явное «всё остальное direct»
+/// правило в конец, иначе работает Xray-default → proxy.
+///
+/// `domainStrategy` берётся из профиля.
+pub fn apply_routing_profile(cfg: &mut Value, profile: &RoutingProfile) {
+    use serde_json::Value as V;
+
+    let routing = match cfg.get_mut("routing").and_then(|r| r.as_object_mut()) {
+        Some(r) => r,
+        None => {
+            cfg["routing"] = json!({ "rules": [] });
+            cfg["routing"].as_object_mut().unwrap()
+        }
+    };
+
+    // domainStrategy
+    routing.insert(
+        "domainStrategy".to_string(),
+        json!(match profile.domain_strategy {
+            DomainStrategy::AsIs => "AsIs",
+            DomainStrategy::IpIfNonMatch => "IPIfNonMatch",
+            DomainStrategy::IpOnDemand => "IPOnDemand",
+        }),
+    );
+
+    let rules = routing
+        .entry("rules".to_string())
+        .or_insert_with(|| json!([]));
+    let arr = match rules.as_array_mut() {
+        Some(a) => a,
+        None => {
+            *rules = json!([]);
+            rules.as_array_mut().unwrap()
+        }
+    };
+
+    // Хелпер для добавления одного правила. Если список пустой — пропускаем.
+    let make_rule = |outbound: &str, sites: &[String], ips: &[String]| -> Option<V> {
+        if sites.is_empty() && ips.is_empty() {
+            return None;
+        }
+        let mut rule = json!({
+            "type": "field",
+            "outboundTag": outbound,
+        });
+        if !sites.is_empty() {
+            rule["domain"] = json!(sites);
+        }
+        if !ips.is_empty() {
+            rule["ip"] = json!(ips);
+        }
+        Some(rule)
+    };
+
+    // Block идёт первым — даже если direct-правило matches, block перебивает.
+    if let Some(r) = make_rule("block", &profile.block_sites, &profile.block_ip) {
+        arr.push(r);
+    }
+    if let Some(r) = make_rule("direct", &profile.direct_sites, &profile.direct_ip) {
+        arr.push(r);
+    }
+    if let Some(r) = make_rule("proxy", &profile.proxy_sites, &profile.proxy_ip) {
+        arr.push(r);
+    }
+
+    // Если GlobalProxy=false — explicit «всё остальное direct» (иначе
+    // Xray-default отправит в первый outbound proxy).
+    if profile.global_proxy == BoolString(false) {
+        arr.push(json!({
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": "direct"
+        }));
+    }
+}

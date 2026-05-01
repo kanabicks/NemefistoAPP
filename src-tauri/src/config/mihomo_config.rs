@@ -63,6 +63,7 @@ pub fn build(
     anti_dpi: Option<&AntiDpiOptions>,
     socks_auth: Option<(&str, &str)>,
     app_rules: &[AppRule],
+    routing_profile: Option<&super::routing_profile::RoutingProfile>,
 ) -> Result<MihomoConfig> {
     let proxy = proxy_for_entry(entry)
         .with_context(|| format!("не удалось собрать mihomo-proxy для «{}»", entry.name))?;
@@ -134,9 +135,10 @@ pub fn build(
         Value::Sequence(vec![Value::Mapping(group)]),
     );
 
-    // 8.D: per-process правила (если заданы) идут перед `MATCH,PROXY`,
-    // чтобы перехватить трафик конкретных процессов до общего fallback'a.
-    // Action нормализуется: proxy→PROXY, direct→DIRECT, block→REJECT.
+    // 8.D: per-process правила (если заданы) идут перед routing-профилем
+    // и MATCH'ем — чтобы перехватить трафик конкретных процессов
+    // первыми. Action нормализуется: proxy→PROXY, direct→DIRECT,
+    // block→REJECT.
     let mut rules: Vec<Value> = Vec::new();
     for r in app_rules {
         if r.exe.trim().is_empty() {
@@ -145,19 +147,102 @@ pub fn build(
         let target = match r.action.as_str() {
             "direct" => "DIRECT",
             "block" => "REJECT",
-            _ => "PROXY", // дефолт + явный "proxy"
+            _ => "PROXY",
         };
         rules.push(Value::String(format!("PROCESS-NAME,{},{}", r.exe.trim(), target)));
     }
-    // Routing-профили (этап 11) добавят geosite/geoip позже. Пока —
-    // всё что не попало в PROCESS-NAME правила идёт через прокси.
-    rules.push(Value::String("MATCH,PROXY".to_string()));
+
+    // 11.F: правила из routing-профиля. block — первый (override любого
+    // direct/proxy), потом direct, потом proxy. После — MATCH с дефолтом
+    // от GlobalProxy.
+    let default_action = if let Some(p) = routing_profile {
+        for r in mihomo_rules_from_profile(p) {
+            rules.push(Value::String(r));
+        }
+        if p.global_proxy.0 { "PROXY" } else { "DIRECT" }
+    } else {
+        "PROXY"
+    };
+    rules.push(Value::String(format!("MATCH,{default_action}")));
     root.insert("rules".into(), Value::Sequence(rules));
 
     let yaml = serde_yaml::to_string(&Value::Mapping(root))
         .context("сериализация mihomo YAML")?;
 
     Ok(MihomoConfig { yaml, mixed_port })
+}
+
+/// 11.F: преобразовать правила routing-профиля в Mihomo-формат строк.
+///
+/// Маппинг:
+/// - `geosite:ru` → `GEOSITE,ru,DIRECT`
+/// - `geoip:ru` → `GEOIP,ru,DIRECT,no-resolve`
+/// - `1.2.3.4/24` или `::1/128` → `IP-CIDR,...,DIRECT,no-resolve`
+/// - конкретный IP без / → `IP-CIDR,IP/32,...,no-resolve`
+/// - домен типа `example.com` → `DOMAIN-SUFFIX,example.com,DIRECT`
+/// - `*.example.com` → `DOMAIN-SUFFIX,example.com,DIRECT`
+/// - `keyword:word` → `DOMAIN-KEYWORD,word,DIRECT`
+///
+/// Order: block → direct → proxy (block перебивает остальное).
+fn mihomo_rules_from_profile(p: &super::routing_profile::RoutingProfile) -> Vec<String> {
+    let mut out = Vec::new();
+    push_site_rules(&mut out, &p.block_sites, "REJECT");
+    push_ip_rules(&mut out, &p.block_ip, "REJECT");
+    push_site_rules(&mut out, &p.direct_sites, "DIRECT");
+    push_ip_rules(&mut out, &p.direct_ip, "DIRECT");
+    push_site_rules(&mut out, &p.proxy_sites, "PROXY");
+    push_ip_rules(&mut out, &p.proxy_ip, "PROXY");
+    out
+}
+
+fn push_site_rules(out: &mut Vec<String>, sites: &[String], action: &str) {
+    for s in sites {
+        let s = s.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Some(rest) = s.strip_prefix("geosite:") {
+            out.push(format!("GEOSITE,{rest},{action}"));
+        } else if let Some(rest) = s.strip_prefix("keyword:") {
+            out.push(format!("DOMAIN-KEYWORD,{rest},{action}"));
+        } else if let Some(rest) = s.strip_prefix("*.") {
+            out.push(format!("DOMAIN-SUFFIX,{rest},{action}"));
+        } else if let Some(rest) = s.strip_prefix("regex:") {
+            // Mihomo не имеет regex matcher — пропускаем с warning
+            eprintln!("[mihomo-rules] regex не поддерживается, skip: {rest}");
+        } else if s.starts_with("domain:") {
+            out.push(format!("DOMAIN,{},{action}", &s[7..]));
+        } else if s.contains('.') {
+            // Простой domain — DOMAIN-SUFFIX (включает все subdomains)
+            out.push(format!("DOMAIN-SUFFIX,{s},{action}"));
+        } else {
+            // Без точки — обрабатываем как DOMAIN-KEYWORD
+            out.push(format!("DOMAIN-KEYWORD,{s},{action}"));
+        }
+    }
+}
+
+fn push_ip_rules(out: &mut Vec<String>, ips: &[String], action: &str) {
+    for s in ips {
+        let s = s.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Some(rest) = s.strip_prefix("geoip:") {
+            out.push(format!("GEOIP,{rest},{action},no-resolve"));
+        } else if s.contains('/') {
+            // Уже CIDR
+            let kind = if s.contains(':') { "IP-CIDR6" } else { "IP-CIDR" };
+            out.push(format!("{kind},{s},{action},no-resolve"));
+        } else if let Ok(addr) = s.parse::<std::net::IpAddr>() {
+            // Конкретный IP без префикса — добавляем /32 или /128
+            let suffix = if addr.is_ipv6() { "/128" } else { "/32" };
+            let kind = if addr.is_ipv6() { "IP-CIDR6" } else { "IP-CIDR" };
+            out.push(format!("{kind},{s}{suffix},{action},no-resolve"));
+        } else {
+            eprintln!("[mihomo-rules] невалидный IP/CIDR, skip: {s}");
+        }
+    }
 }
 
 /// Собрать DNS-секцию. С DoH-резолвом (10.C) если активен, иначе
