@@ -37,6 +37,9 @@ futures = "0.3"
 # Без compression-features чтобы не тянуть лишние зависимости — в zip кладём
 # уже мелкие текстовые файлы (логи + JSON), сжатие deflate не критично.
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# 11.B: sha256 для verify-after-download geofiles. Только integrity-check,
+# не security-critical — но через крейт компактнее чем велосипед.
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
