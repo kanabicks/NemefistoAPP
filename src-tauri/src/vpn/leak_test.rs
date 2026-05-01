@@ -46,6 +46,11 @@ pub struct LeakTestResult {
     /// 100%-доказательство отсутствия утечки (резолвер может быть
     /// просто другим VPN-узлом), но обратное — гарантия leak'а.
     pub dns_clean: bool,
+    /// 14.D: IPv6 leak detection. Если v6-only endpoint отвечает —
+    /// значит трафик IPv6 идёт мимо VPN (наш WinTUN/proxy покрывают
+    /// только v4). `None` если v6 endpoint недоступен (как и должно
+    /// быть при чистом туннеле). `Some(ip)` — утечка.
+    pub ipv6_leak: Option<String>,
 }
 
 /// Промежуточный тип, в который собираем результат от любого
@@ -170,6 +175,40 @@ async fn fetch_public_ip(client: &reqwest::Client) -> IpInfo {
     info
 }
 
+/// 14.D: проверка IPv6-утечки. Делает HTTP к v6-only endpoint
+/// (`https://api6.ipify.org`) с коротким таймаутом. Если запрос
+/// прошёл и вернул IP — значит v6-трафик идёт мимо VPN: наш WinTUN
+/// и SOCKS5 inbound покрывают только v4, физический NIC с v6
+/// доступностью отвечает напрямую.
+///
+/// Возвращает `None` при любой ошибке (timeout, DNS fail, HTTP 4xx) —
+/// это считается «v6 чистый» (нет route в v6 интернет, либо kill-switch
+/// блокирует, либо ISP без v6).
+async fn fetch_ipv6_leak(client: &reqwest::Client) -> Option<String> {
+    // Таймаут короче основного: при правильно настроенном туннеле
+    // запрос должен фейлиться быстро. Если v6 reachable — он мгновенный.
+    let resp = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.get("https://api6.ipify.org/?format=text").send(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    let trimmed = text.trim();
+    // ipify возвращает голый IP. Защита от мусора: должен содержать «:»
+    // (любой v6 имеет хотя бы один колон). v4-only ipify endpoint
+    // сюда не должен попадать (мы запросили api6.*), но проверка не
+    // лишняя на случай если ipify за NAT64 вернёт IPv4-mapped.
+    if trimmed.is_empty() || !trimmed.contains(':') {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// DoH-запрос к Cloudflare для TXT `whoami.cloudflare`. Возвращает IP
 /// резолвера — то что видит Cloudflare DNS как «кто только что задал
 /// этот вопрос».
@@ -199,8 +238,11 @@ async fn fetch_dns_resolver(client: &reqwest::Client) -> Result<String> {
 pub async fn run(socks_port: Option<u16>) -> Result<LeakTestResult> {
     let client = build_client(socks_port)?;
 
-    let (ip_data, dns_res) =
-        tokio::join!(fetch_public_ip(&client), fetch_dns_resolver(&client));
+    let (ip_data, dns_res, ipv6_leak) = tokio::join!(
+        fetch_public_ip(&client),
+        fetch_dns_resolver(&client),
+        fetch_ipv6_leak(&client),
+    );
 
     let dns_resolver = dns_res.ok();
 
@@ -224,5 +266,46 @@ pub async fn run(socks_port: Option<u16>) -> Result<LeakTestResult> {
         city,
         dns_resolver,
         dns_clean,
+        ipv6_leak,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 14.D: serialization-test нового поля `ipv6_leak`. Защищает от
+    /// случайных правок serde-имени (frontend ожидает snake_case).
+    #[test]
+    fn result_serializes_ipv6_leak_field() {
+        let r = LeakTestResult {
+            ip: Some("1.2.3.4".into()),
+            country_code: None,
+            country_name: None,
+            city: None,
+            dns_resolver: None,
+            dns_clean: true,
+            ipv6_leak: Some("2606:4700::1".into()),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(
+            json.contains(r#""ipv6_leak":"2606:4700::1""#),
+            "JSON: {json}"
+        );
+    }
+
+    #[test]
+    fn result_serializes_ipv6_leak_null() {
+        let r = LeakTestResult {
+            ip: None,
+            country_code: None,
+            country_name: None,
+            city: None,
+            dns_resolver: None,
+            dns_clean: true,
+            ipv6_leak: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains(r#""ipv6_leak":null"#), "JSON: {json}");
+    }
 }

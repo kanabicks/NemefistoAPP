@@ -74,3 +74,10 @@ windows-sys = { version = "0.59", features = [
 name = "nemefisto-helper"
 path = "src/bin/nemefisto_helper.rs"
 
+# 14.C: line-tables только в release-сборке. Backtrace в crash-dump'ах
+# содержит читаемые file:line, а размер бинарника растёт минимально
+# (~1-3 МБ против 30 МБ для полных debug-symbols). Compromise: достаточно
+# для прод-диагностики, не раздувает installer.
+[profile.release]
+debug = "line-tables-only"
+

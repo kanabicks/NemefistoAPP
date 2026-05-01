@@ -9,6 +9,9 @@ export type LeakTestResult = {
   city: string | null;
   dns_resolver: string | null;
   dns_clean: boolean;
+  /** 14.D: IPv6 leak. Если не null — наш v6-only запрос прошёл, значит
+   *  v6-трафик идёт мимо VPN. */
+  ipv6_leak: string | null;
 };
 
 /**
@@ -86,6 +89,19 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
       title: "dns leak",
       message: `резолвер (${result.dns_resolver}) совпадает с публичным ip — днс не идёт через vpn`,
       durationMs: 12000,
+    });
+  }
+
+  // 14.D: IPv6 leak — v6-only endpoint ответил, значит трафик IPv6
+  // идёт мимо VPN. Туннель покрывает только v4. Лечится включением
+  // kill switch (он блокирует весь v6 outbound) или ручным
+  // отключением IPv6 на сетевом адаптере.
+  if (result.ipv6_leak) {
+    showToast({
+      kind: "warning",
+      title: "ipv6 leak",
+      message: `v6-адрес (${result.ipv6_leak}) виден напрямую — туннель v6 не покрывает.\nвключите kill switch или отключите ipv6 в свойствах адаптера`,
+      durationMs: 14000,
     });
   }
 }

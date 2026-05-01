@@ -1379,8 +1379,48 @@ pub fn export_diagnostics() -> Result<String, String> {
         }
     }
 
+    // 6. 14.C: crash-dump'ы за последние 7 дней. Кладём в zip как
+    // crashes/<filename>.txt чтобы саппорт сразу видел стек-трейсы.
+    if let Some(dir) = platform::crash_dumps::crashes_dir() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let week_ago = std::time::SystemTime::now()
+                .checked_sub(std::time::Duration::from_secs(7 * 86400))
+                .unwrap_or(std::time::UNIX_EPOCH);
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("txt") {
+                    continue;
+                }
+                let modified = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok();
+                if let Some(t) = modified {
+                    if t < week_ago {
+                        continue;
+                    }
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if let Ok(content) = std::fs::read(&path) {
+                    let _ = zip.start_file(format!("crashes/{name}"), opts);
+                    let _ = zip.write_all(&content);
+                }
+            }
+        }
+    }
+
     zip.finish().map_err(|e| e.to_string())?;
     Ok(zip_path.to_string_lossy().into_owned())
+}
+
+/// 14.C: количество свежих crash-dump'ов (за неделю). UI на старте
+/// показывает toast «обнаружены прошлые крахи, нажмите выгрузить
+/// диагностику чтобы поделиться» если > 0.
+#[tauri::command]
+pub fn count_recent_crashes() -> usize {
+    platform::crash_dumps::count_recent_crashes()
 }
 
 // ─── 12.D — backup/restore настроек ─────────────────────────────────────────

@@ -4,6 +4,7 @@
 
 pub mod autostart;
 pub mod bandwidth;
+pub mod crash_dumps;
 pub mod helper_bootstrap;
 pub mod helper_client;
 pub mod network;

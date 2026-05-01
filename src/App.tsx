@@ -121,6 +121,24 @@ function App() {
       unlisten = u;
     });
 
+    // 14.C: один раз на старте проверяем количество свежих crash-dump'ов
+    // (за последние 7 дней). Если есть — показываем мягкий toast с
+    // подсказкой выгрузить диагностику для саппорта.
+    void invoke<number>("count_recent_crashes")
+      .then((count) => {
+        if (count > 0) {
+          import("./stores/toastStore").then(({ showToast }) => {
+            showToast({
+              kind: "warning",
+              title: "обнаружен прошлый сбой",
+              message: `найдено ${count} crash-dump'ов за неделю. в Settings → системное → диагностика можно собрать zip для саппорта`,
+              durationMs: 12000,
+            });
+          });
+        }
+      })
+      .catch(() => {});
+
     // 6.C: слушаем смену сетевого окружения. Если VPN был активен —
     // делаем reconnect: маршруты и xray sockopt.interface привязаны к
     // прежнему интерфейсу, после смены трафик не доходит. Reconnect

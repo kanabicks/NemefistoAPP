@@ -13,6 +13,7 @@
 
 #[cfg(windows)]
 mod nemefisto_helper {
+    pub mod crash_dumps;
     pub mod dispatch;
     pub mod firewall;
     pub mod pipe;
@@ -26,6 +27,10 @@ mod nemefisto_helper {
 
 #[cfg(windows)]
 fn main() {
+    // 14.C: panic-hook первой строкой — даже если service::install
+    // паникует, мы это запишем в файл.
+    nemefisto_helper::crash_dumps::install_panic_hook();
+
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("help");
 
