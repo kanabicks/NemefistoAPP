@@ -126,7 +126,38 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   socksPassword: null,
 
   setMode: (mode) => set({ mode }),
-  selectServer: (index) => set({ selectedIndex: index }),
+  selectServer: (index) => {
+    const prev = get().selectedIndex;
+    set({ selectedIndex: index });
+    // 0.1.1 / Bug 6: авто-reconnect при смене сервера. Раньше после
+    // выбора другого сервера пользователь должен был вручную
+    // disconnect → connect — счёт-фактура «два клика на смену сервера»
+    // была неудобной.
+    //
+    // Теперь: если VPN активен и индекс реально сменился, мы атомарно
+    // переподключаемся к новому серверу. Если был только что error /
+    // stopping / starting — не трогаем (пусть пользователь дождётся
+    // финального состояния).
+    if (prev !== null && prev !== index) {
+      const status = get().status;
+      if (status === "running") {
+        // disconnect → пауза 200мс на снятие WFP/маршрутов → connect.
+        // Без паузы новый коннект может не дождаться очистки и
+        // увидеть «old proxy still active».
+        void (async () => {
+          showToast({
+            kind: "info",
+            title: "переключение",
+            message: "переключаемся на новый сервер…",
+            durationMs: 3000,
+          });
+          await get().disconnect();
+          await new Promise((r) => setTimeout(r, 200));
+          await get().connect();
+        })();
+      }
+    }
+  },
 
   async refresh() {
     try {

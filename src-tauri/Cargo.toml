@@ -1,6 +1,6 @@
 [package]
 name = "vpn-client"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -23,6 +23,12 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-global-shortcut = "2"
+# 0.1.1 / Bug 5: single-instance защита. При попытке запуска второй
+# копии — main экземпляр получает callback, фокусирует своё окно,
+# второй процесс молча выходит. Без этого пользователь мог открывать
+# приложение пачкой раз — каждый раз новая инстанция, конкуренция
+# за helper-pipe и WFP-фильтры.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2.3.5"

@@ -123,6 +123,13 @@ pub fn start(app: AppHandle) {
 /// Парсинг толерантен к локализации: ловим строку `SSID  : <name>`
 /// (пробелы вокруг двоеточия любые) и берём первое совпадение —
 /// `BSSID` идёт после, так что not first.
+///
+/// 0.1.1 / Bug 2: запускаем netsh через `cmd /c chcp 65001 && netsh ...`
+/// — без этого на русской Windows вывод приходит в cp866 (DOS)
+/// либо cp1251 (Windows), `from_utf8_lossy` коверкает кириллицу в
+/// `?`-знаки, и парсер не находит ни «состояние» ни кириллический
+/// SSID. С `chcp 65001` netsh печатает UTF-8 → парсер видит
+/// исходные строки и работает на любой локали.
 #[cfg(windows)]
 async fn read_current_ssid() -> Option<String> {
     use tokio::process::Command;
@@ -131,8 +138,9 @@ async fn read_current_ssid() -> Option<String> {
     // `std::os::windows::process::CommandExt` без явного импорта.
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let out = Command::new("netsh")
-        .args(["wlan", "show", "interfaces"])
+    // Сначала пробуем с UTF-8 chcp — даст корректные кириллические SSID.
+    let out = Command::new("cmd")
+        .args(["/c", "chcp 65001 >nul && netsh wlan show interfaces"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .await
@@ -140,11 +148,6 @@ async fn read_current_ssid() -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    // netsh печатает на cp866/cp1251 в русской локали. Для нашего
-    // парсинга важна ASCII-часть (`SSID`, `:`, имя сети). Имя
-    // обычно UTF-8 / ASCII, но если кириллическое — может побиться.
-    // Тут приемлемо: пользователь и так введёт имя руками в UI,
-    // а сравнение строк точное.
     let text = String::from_utf8_lossy(&out.stdout);
     parse_ssid(&text)
 }
@@ -156,40 +159,37 @@ async fn read_current_ssid() -> Option<String> {
 
 /// Парсер вывода `netsh wlan show interfaces`. Вынесен отдельно
 /// чтобы тестировался без зависимости от Windows API.
+///
+/// 0.1.1 / Bug 2: убрана зависимость от строки `State: connected`.
+/// Раньше мы требовали явного «connected/подключено» в выводе, что
+/// ломалось на:
+///   - не-RU/EN локалях (немецкий «Verbunden», француский «connecté»),
+///   - кодировках где chcp коверкал кириллицу до `?`,
+///   - случаях когда строки State в выводе вообще не было (старый
+///     адаптер).
+///
+/// Новая логика: netsh выводит непустую `SSID:` строку **только**
+/// для подключённых адаптеров. Если нашли непустой SSID — он
+/// активный. Это надёжнее и проще.
 fn parse_ssid(text: &str) -> Option<String> {
-    // Также проверяем State: connected/Подключено — иначе SSID может
-    // быть пустой строкой или старый.
-    let mut connected = false;
-    let mut ssid: Option<String> = None;
-
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some((key, value)) = trimmed.split_once(':') {
-            let key = key.trim();
-            let value = value.trim();
-            // State / Состояние : connected / Подключено.
-            // `to_lowercase()` — Unicode-aware (умеет с кириллицей),
-            // в отличие от `to_ascii_lowercase` который её игнорирует.
-            let key_lower = key.to_lowercase();
-            if key_lower == "state" || key_lower == "состояние" {
-                let v = value.to_lowercase();
-                if v == "connected" || v == "подключено" {
-                    connected = true;
-                }
-            }
-            // SSID отдельно от BSSID. Берём первое совпадение точно
-            // равное "SSID" чтобы не зацепить BSSID или SSID-расширения.
-            if key_lower == "ssid" && ssid.is_none() && !value.is_empty() {
-                ssid = Some(value.to_string());
-            }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        // Точное равенство «SSID» (case-insensitive) — чтобы не
+        // зацепить BSSID, MAC адрес или SSID-расширения. Это
+        // ASCII-only ключ, на всех локалях остаётся «SSID».
+        if key.eq_ignore_ascii_case("ssid") {
+            return Some(value.to_string());
         }
     }
-
-    if connected {
-        ssid
-    } else {
-        None
-    }
+    None
 }
 
 #[cfg(test)]
@@ -226,20 +226,45 @@ There is 1 interface on the system:
         assert_eq!(parse_ssid(s), Some("DomashniyWiFi".into()));
     }
 
+    /// 0.1.1 / Bug 2: парсер должен работать на немецкой локали без
+    /// доп. изменений (раньше падал из-за «Verbunden» != «connected»).
     #[test]
-    fn returns_none_when_disconnected() {
+    fn parses_german_output() {
+        let s = "
+    Name                   : WLAN
+    Status                 : Verbunden
+    SSID                   : MeinNetzwerk
+    BSSID                  : 11:22:33:44:55:66
+";
+        assert_eq!(parse_ssid(s), Some("MeinNetzwerk".into()));
+    }
+
+    /// netsh не печатает SSID для disconnected адаптеров — наш парсер
+    /// корректно вернёт None просто потому что строки нет.
+    #[test]
+    fn returns_none_when_no_ssid_at_all() {
         let s = "
     State                  : disconnected
-    SSID                   : OldName
 ";
         assert_eq!(parse_ssid(s), None);
     }
 
+    /// BSSID содержит «SSID» как подстроку, но точное равенство ключа
+    /// (case-insensitive ASCII) исключает совпадение.
     #[test]
-    fn returns_none_when_no_ssid() {
+    fn does_not_match_bssid() {
         let s = "
-    State                  : connected
+    BSSID                  : aa:bb:cc:dd:ee:ff
 ";
         assert_eq!(parse_ssid(s), None);
+    }
+
+    /// SSID с emoji / кириллицей читается как есть после chcp 65001.
+    #[test]
+    fn parses_unicode_ssid() {
+        let s = "
+    SSID                   : Дом 🏠 Wi-Fi
+";
+        assert_eq!(parse_ssid(s), Some("Дом 🏠 Wi-Fi".into()));
     }
 }

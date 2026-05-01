@@ -96,8 +96,19 @@ impl XrayState {
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
+                    // 0.1.1 / Bug 3: Xray-core пишет startup-сообщения и
+                    // info/warning логи в **stdout** (стандартная практика
+                    // go-программ через logrus). Раньше мы это видели только
+                    // в eprintln, в файл не складывали — поэтому пользователи
+                    // открывали Settings → логи xray и видели пустоту.
+                    // Теперь пишем оба stream'а в один файл с префиксом.
                     CommandEvent::Stdout(line) => {
-                        eprintln!("[xray:out] {}", String::from_utf8_lossy(&line));
+                        let s = String::from_utf8_lossy(&line);
+                        eprintln!("[xray:out] {s}");
+                        if let Ok(mut f) = stderr_log_clone.lock() {
+                            let _ = writeln!(f, "{s}");
+                            let _ = f.flush();
+                        }
                     }
                     CommandEvent::Stderr(line) => {
                         let s = String::from_utf8_lossy(&line);

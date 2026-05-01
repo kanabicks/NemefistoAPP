@@ -2,7 +2,7 @@ import type { VpnMode, VpnStatus } from "../stores/vpnStore";
 
 export const DASHBOARD_URL = "https://web.nemefisto.online";
 export const SUPPORT_URL = "https://t.me/nemefistovpn_bot";
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.1.1";
 
 export const GITHUB_URL = "https://github.com/kanabicks/NemefistoAPP";
 export const PRIVACY_URL = `${GITHUB_URL}/blob/main/PRIVACY.md`;

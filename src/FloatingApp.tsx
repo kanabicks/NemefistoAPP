@@ -86,13 +86,40 @@ export function FloatingApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 0.1.1 / Bug 1: main-окно emit-ит `vpn-state-broadcast` при любом
+  // изменении состояния (status / selectedIndex / имя сервера). У
+  // floating-окна свой store, и selectedIndex живёт отдельно — без
+  // этого события floating всегда показывал «нет сервера», даже
+  // когда VPN активно работал. Bandwidth и status_dot работали через
+  // отдельные events, имя — нет.
+  const [broadcastName, setBroadcastName] = useState<string | null>(null);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{ status: string; selectedName: string | null }>(
+      "vpn-state-broadcast",
+      (event) => {
+        setBroadcastName(event.payload.selectedName);
+      }
+    ).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   const isRunning = status === "running";
   const isBusy = status === "starting" || status === "stopping";
   const isError = status === "error";
-  const selectedName =
+  // Имя берём с приоритетом broadcast → локальный store. Локальный
+  // используется как fallback пока main не успел отправить event
+  // (например после рестарта приложения с floating window=true и
+  // refreshOnOpen=false).
+  const localName =
     selectedIndex !== null && servers[selectedIndex]
       ? servers[selectedIndex].name
       : null;
+  const selectedName = broadcastName ?? localName;
 
   const onDotClick = (e: React.MouseEvent) => {
     e.stopPropagation();

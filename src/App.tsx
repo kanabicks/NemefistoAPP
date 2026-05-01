@@ -225,6 +225,10 @@ function App() {
 
   // 13.A: при любом изменении статуса / выбранного сервера обновляем
   // tray (текст пункта «Подключить/Отключить» + tooltip иконки).
+  // 0.1.1 / Bug 1: дополнительно эмитим broadcast event для floating-окна.
+  // Floating живёт в отдельном webview с собственным Zustand-store —
+  // selectedIndex туда не доходит, и без этого broadcast'а floating
+  // показывал «нет сервера» при активном VPN.
   useEffect(() => {
     const serverName =
       selectedIndex !== null && servers[selectedIndex]
@@ -234,6 +238,13 @@ function App() {
       status,
       serverName,
       hasSelection: selectedIndex !== null,
+    });
+    // emit broadcast — emit из @tauri-apps/api/event достучится до всех окон
+    void import("@tauri-apps/api/event").then(({ emit }) => {
+      void emit("vpn-state-broadcast", {
+        status,
+        selectedName: serverName,
+      });
     });
   }, [status, selectedIndex, servers]);
 

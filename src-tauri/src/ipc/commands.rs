@@ -1245,21 +1245,24 @@ pub fn secure_storage_delete(key: String) -> Result<(), String> {
 // ─── Autostart (6.B) ──────────────────────────────────────────────────────────
 
 /// Зарегистрирован ли task автозапуска в Windows Task Scheduler.
+///
+/// 0.1.1 / Bug 4: команда async — `schtasks.exe` блокирует поток до
+/// 15 секунд, и старая sync-версия зависала весь UI на это время.
 #[tauri::command]
-pub fn autostart_is_enabled() -> bool {
-    platform::autostart::is_enabled()
+pub async fn autostart_is_enabled() -> bool {
+    platform::autostart::is_enabled().await
 }
 
 /// Включить автозапуск приложения с системой (создаёт task ONLOGON).
 #[tauri::command]
-pub fn autostart_enable() -> Result<(), String> {
-    platform::autostart::enable().map_err(|e| e.to_string())
+pub async fn autostart_enable() -> Result<(), String> {
+    platform::autostart::enable().await.map_err(|e| e.to_string())
 }
 
 /// Выключить автозапуск (удаляет task).
 #[tauri::command]
-pub fn autostart_disable() -> Result<(), String> {
-    platform::autostart::disable().map_err(|e| e.to_string())
+pub async fn autostart_disable() -> Result<(), String> {
+    platform::autostart::disable().await.map_err(|e| e.to_string())
 }
 
 /// Вернуть HWID устройства (Windows MachineGuid либо локально сохранённый UUID).

@@ -30,6 +30,20 @@ pub fn run() {
     platform::crash_dumps::install_panic_hook("vpn-client");
 
     tauri::Builder::default()
+        // 0.1.1 / Bug 5: single-instance — должен быть зарегистрирован
+        // ПЕРВЫМ среди плагинов (требование плагина), иначе deep-link
+        // и другие могут получить ивенты от второй копии до того как
+        // мы её закроем. Callback фокусирует main-окно при попытке
+        // запуска второго инстанса; argv/cwd оттуда передаются как
+        // event для будущей обработки CLI-аргументов (сейчас не нужны).
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
