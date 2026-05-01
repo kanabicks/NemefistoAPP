@@ -129,6 +129,23 @@ try {
   fail(`не удалось скопировать helper: ${e.message}`);
 }
 
+// ── 2b. Дублируем под именем `nemefisto_helper.exe` для tauri-bundler ─
+// Tauri 2 при сборке installer'а конвертирует имена `[[bin]]` из
+// kebab-case (`nemefisto-helper`) в snake_case (`nemefisto_helper.exe`)
+// и ищет файл по этому имени в `target/<profile>/`. Cargo же создаёт
+// файл строго по `[[bin]] name` (с дефисом). Чтобы не переименовывать
+// bin (имя зашито в helper_bootstrap, service.rs, prepare-bundle и др.),
+// просто кладём ещё одну копию рядом — это удовлетворяет bundler.
+const sourceHelperUnderscored = join(TARGET_RELEASE, "nemefisto_helper.exe");
+try {
+  copyFileSync(sourceHelper, sourceHelperUnderscored);
+  info(
+    `helper дублирован → target/release/nemefisto_helper.exe (для tauri-bundler)`
+  );
+} catch (e) {
+  fail(`не удалось дублировать helper для bundler: ${e.message}`);
+}
+
 // ── 3. Проверка остальных файлов ──────────────────────────────────────
 const missing = REQUIRED_RESOURCES.filter(
   (f) => !existsSync(join(BINARIES, f))

@@ -33,7 +33,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "category": "Network",
+    "category": "Utility",
     "publisher": "Nemefisto",
     "shortDescription": "VPN-клиент на Xray-core и Mihomo",
     "longDescription": "Лёгкий VPN-клиент для Windows на базе Xray-core и Mihomo. Поддержка VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, WireGuard, AnyTLS. Подключение в один клик через системный прокси или TUN.",
