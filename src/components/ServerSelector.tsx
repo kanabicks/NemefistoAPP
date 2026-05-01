@@ -140,7 +140,7 @@ export function ServerSelector() {
     <>
       <button
         type="button"
-        className="server-pill"
+        className={`server-pill${isRunning ? " is-active" : ""}`}
         disabled={isRunning || isBusy}
         onClick={() => setDrawerOpen((v) => !v)}
       >

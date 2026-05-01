@@ -1,0 +1,104 @@
+/* Плавающее мини-окно (этап 13.O).
+   ВАЖНО: все правила скоуплены под `html.is-floating`. Vite собирает
+   CSS обоих окон в один bundle (один index.html, один entrypoint),
+   поэтому правила вида `html, body { background: transparent }` без
+   скоупа применяются и к главному окну, ломая темы. Класс
+   `is-floating` ставится на <html> в FloatingApp.tsx через useEffect
+   при монтаже компонента — то есть только во floating-webview. */
+
+html.is-floating,
+html.is-floating body,
+html.is-floating #root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: hidden;
+  font-family: "Inter Tight", "Space Grotesk", -apple-system, "Segoe UI",
+    sans-serif;
+  font-size: 11px;
+  color: #fff;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.floating-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  background: rgba(15, 17, 23, 0.82);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+
+.floating-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0;
+  background: #6b7280;
+  border: none;
+  cursor: pointer;
+  transition: background 0.3s, box-shadow 0.3s, transform 0.15s;
+}
+.floating-dot:hover {
+  transform: scale(1.15);
+}
+.floating-dot.is-running {
+  background: #4ade80;
+  box-shadow: 0 0 7px rgba(74, 222, 128, 0.6);
+}
+.floating-dot.is-busy {
+  background: #fbbf24;
+  animation: floating-pulse 1.2s infinite;
+}
+.floating-dot.is-error {
+  background: #f87171;
+}
+@keyframes floating-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.floating-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.floating-bw {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 9px;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.78);
+  flex-shrink: 0;
+}
+.floating-bw span {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

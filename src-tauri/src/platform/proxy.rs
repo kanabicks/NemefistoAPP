@@ -152,28 +152,160 @@ pub fn set_system_proxy(socks_port: u16, http_port: u16) -> Result<()> {
 /// Выключить системный прокси.
 ///
 /// Если есть backup от прошлого `set_system_proxy` — восстанавливает
-/// оригинальные значения. Иначе просто выключает (`ProxyEnable=0`).
+/// оригинальные значения. Иначе принудительно выставляет `ProxyEnable=0`
+/// и удаляет `ProxyServer`/`ProxyOverride`.
+///
+/// **Двойной щит**: после write читаем registry обратно, и если значение
+/// не изменилось (другой процесс может одновременно писать туда —
+/// например, GPO или антивирус) — повторяем write через прямой winreg
+/// API. Если оба прохода не сработали — возвращаем Err: фронт покажет
+/// инструкцию пользователю как очистить вручную. Никогда не оставляет
+/// прокси в «мёртвом» состоянии молча.
 pub fn clear_system_proxy() -> Result<()> {
     #[cfg(windows)]
     {
         if let Some(backup) = read_backup() {
             apply_backup(&backup)?;
             delete_backup();
+            // Verify даже после restore: backup мог содержать ProxyEnable=1
+            // от прошлого настоящего прокси — это легитимно, не трогаем.
+            // Но если backup был None (всех значений) — verify должен
+            // показать ProxyEnable=0.
+            if let Some(0) | None = read_proxy_enable() {
+                return Ok(());
+            }
+            // Несоответствие — но это легитимный backup, не нам решать.
             return Ok(());
         }
 
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (key, _) = hkcu
-            .create_subkey(INET_SETTINGS)
-            .context("не удалось открыть Internet Settings в реестре")?;
-        key.set_value("ProxyEnable", &0u32)
-            .context("ProxyEnable")?;
-        Ok(())
+        // Нет backup'а → жёсткая очистка с verify + retry.
+        force_clear_proxy_with_retry()
     }
 
     #[cfg(not(windows))]
     {
         Ok(())
+    }
+}
+
+/// Безусловная очистка системного прокси без оглядки на backup.
+///
+/// Используется в emergency-recovery (UI кнопка «восстановить сеть»)
+/// и при startup self-healing когда уверены что в реестре наш orphan.
+/// Backup не трогает — если он был, оставляет; если нет, не создаёт.
+pub fn force_clear_system_proxy() -> Result<()> {
+    #[cfg(windows)]
+    {
+        force_clear_proxy_with_retry()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn force_clear_proxy_with_retry() -> Result<()> {
+    // Первая попытка — через winreg (как и было).
+    let attempt1 = write_proxy_disabled();
+
+    // Verify.
+    if let Some(0) | None = read_proxy_enable() {
+        return Ok(());
+    }
+
+    // Вторая попытка — те же ключи но по новому handle (на случай если
+    // первый key handle устарел из-за параллельной записи).
+    let attempt2 = write_proxy_disabled();
+
+    if let Some(0) | None = read_proxy_enable() {
+        return Ok(());
+    }
+
+    // Оба провалились — возвращаем подробную ошибку чтобы UI показал
+    // пользователю PowerShell-команду для ручной очистки.
+    let err1 = attempt1.err().map(|e| e.to_string()).unwrap_or_default();
+    let err2 = attempt2.err().map(|e| e.to_string()).unwrap_or_default();
+    Err(anyhow::anyhow!(
+        "не удалось очистить системный прокси (попытка 1: {err1}; попытка 2: {err2}). \
+         Выполните вручную в PowerShell: \
+         Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -Value 0"
+    ))
+}
+
+#[cfg(windows)]
+fn write_proxy_disabled() -> Result<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu
+        .create_subkey(INET_SETTINGS)
+        .context("не удалось открыть Internet Settings в реестре")?;
+    key.set_value("ProxyEnable", &0u32).context("ProxyEnable")?;
+    let _ = key.delete_value("ProxyServer");
+    let _ = key.delete_value("ProxyOverride");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn read_proxy_enable() -> Option<u32> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.open_subkey(INET_SETTINGS).ok()?;
+    key.get_value::<u32, _>("ProxyEnable").ok()
+}
+
+/// Прочитать `ProxyServer` напрямую — для startup poison check и
+/// pre-flight check при connect. None если ключа нет.
+#[cfg(windows)]
+pub fn read_proxy_server() -> Option<String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.open_subkey(INET_SETTINGS).ok()?;
+    key.get_value::<String, _>("ProxyServer").ok()
+}
+
+#[cfg(not(windows))]
+pub fn read_proxy_server() -> Option<String> {
+    None
+}
+
+/// Признак что текущий системный прокси указывает **на нас** —
+/// `127.0.0.1:port`, где port в нашем диапазоне (либо legacy 1080/1087,
+/// либо 9.H рандомизация 30000-60000). Используется чтобы безопасно
+/// auto-clear только наш orphan, не трогая чужой VPN-клиент.
+pub fn is_proxy_pointing_to_us() -> bool {
+    #[cfg(windows)]
+    {
+        let Some(_) = read_proxy_enable().filter(|&v| v == 1) else {
+            return false;
+        };
+        let Some(server) = read_proxy_server() else {
+            return false;
+        };
+        // Формат может быть либо "host:port", либо
+        // "socks=127.0.0.1:1080;http=127.0.0.1:1087;..."
+        // Разбиваем по ; и разбираем все hint'ы.
+        for part in server.split(';') {
+            let s = part.split('=').last().unwrap_or(part);
+            let (host, port) = match s.rsplit_once(':') {
+                Some(pair) => pair,
+                None => continue,
+            };
+            if host != "127.0.0.1" && host != "localhost" {
+                continue;
+            }
+            let Ok(port_n) = port.parse::<u16>() else {
+                continue;
+            };
+            // Наш диапазон портов:
+            //   - 1080 / 1087 — legacy фиксированные (до 9.H)
+            //   - 30000-59999 — текущая рандомизация (9.H)
+            if port_n == 1080 || port_n == 1087 || (30000..60000).contains(&port_n) {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

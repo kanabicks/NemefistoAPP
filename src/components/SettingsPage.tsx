@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
+import { useRuntimeStore } from "../stores/runtimeStore";
 import {
   DEFAULT_USER_AGENT_MIHOMO,
   DEFAULT_USER_AGENT_XRAY,
@@ -19,6 +20,8 @@ import {
 } from "../stores/settingsStore";
 import { APP_VERSION } from "../lib/constants";
 import { openDashboard, openSupport } from "../lib/openExternal";
+import { runLeakTest } from "../lib/leakTest";
+import { showToast } from "../stores/toastStore";
 import { useEffectiveSettings } from "../lib/hooks/useEffectiveSettings";
 import { Toggle } from "./Toggle";
 
@@ -724,9 +727,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <div>
                     <div className="settings-row-label">блокировать сеть при падении vpn</div>
                     <div className="settings-row-hint">
-                      защита от утечек при reconnect/краше xray. ⚠️ если
-                      приложение крашнется в этом режиме, интернет останется
-                      заблокирован до ручной очистки firewall в admin-powershell
+                      защита от утечек на уровне ядра windows (wfp). работает
+                      даже если xray крашнется. защита от orphan-фильтров
+                      тройная: dynamic-session + heartbeat-watchdog (60с) +
+                      cleanup при старте helper-сервиса
                     </div>
                   </div>
                   <Toggle
@@ -734,16 +738,123 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     onChange={(v) => s.set("killSwitch", v)}
                   />
                 </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">блокировать прямые dns-запросы</div>
+                    <div className="settings-row-hint">
+                      все :53/udp+tcp кроме vpn-dns заблокированы. защищает
+                      от dns-leak'а. ⚠️ в proxy-режиме может ломать приложения
+                      которые используют системный dns мимо прокси (некоторые
+                      игры, мессенджеры). лучше использовать в tun-режиме
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.dnsLeakProtection}
+                    onChange={(v) => s.set("dnsLeakProtection", v)}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">восстановить сеть</div>
+                    <div className="settings-row-hint">
+                      если интернет «полу-сломан» после краша / отключения —
+                      одной кнопкой убирает wfp-фильтры, orphan tun-адаптеры,
+                      half-default routes и системный прокси. безопасно жать
+                      в любой момент когда vpn не активен
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      type RecoveryReport = {
+                        kill_switch_cleaned: boolean;
+                        orphan_resources_cleaned: boolean;
+                        system_proxy_cleared: boolean;
+                        errors: string[];
+                      };
+                      void invoke<RecoveryReport>("recover_network").then(
+                        (r) => {
+                          const cleaned = [
+                            r.kill_switch_cleaned ? "wfp-фильтры" : null,
+                            r.orphan_resources_cleaned
+                              ? "tun + маршруты"
+                              : null,
+                            r.system_proxy_cleared ? "системный прокси" : null,
+                          ].filter(Boolean);
+                          if (r.errors.length === 0) {
+                            showToast({
+                              kind: "success",
+                              title: "сеть восстановлена",
+                              message:
+                                cleaned.length > 0
+                                  ? `очищено: ${cleaned.join(", ")}`
+                                  : "ничего чистить не пришлось",
+                            });
+                          } else {
+                            showToast({
+                              kind: "warning",
+                              title: "частично восстановлено",
+                              message: `${
+                                cleaned.length > 0
+                                  ? `ок: ${cleaned.join(", ")}\n`
+                                  : ""
+                              }ошибки: ${r.errors.join("; ")}`,
+                              durationMs: 12_000,
+                            });
+                          }
+                        }
+                      );
+                    }}
+                  >
+                    восстановить
+                  </button>
+                </div>
               </section>
 
-              <ComingSoonNote
-                title="leak-test после connect"
-                desc="автоматическая проверка реального IP через api.ipify.org с показом страны: «твой IP сейчас 203.0.113.x — 🇩🇪 Германия»"
-              />
-              <ComingSoonNote
-                title="DNS / WebRTC leak protection"
-                desc="мониторинг DNS-трафика на интерфейсах + инструкция как отключить WebRTC в браузере"
-              />
+              <section className="settings-section">
+                <div className="settings-section-title">проверка утечек</div>
+                <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
+                  делает два запроса параллельно: cloudflare cdn-trace для
+                  публичного ip + страны (с fallback на ipwho.is для города)
+                  и cloudflare doh whoami.cloudflare для ip dns-резолвера.
+                  если ip-резолвера совпадает с твоим публичным — значит
+                  dns-запросы видны как твои собственные (leak).
+                </p>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">авто-проверка после подключения</div>
+                    <div className="settings-row-hint">
+                      через ~1.5 сек после connect показать тост с реальным ip
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.autoLeakTest}
+                    onChange={(v) => s.set("autoLeakTest", v)}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">проверить сейчас</div>
+                    <div className="settings-row-hint">
+                      запустить тест вручную — результат в правом нижнем углу
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const v = useVpnStore.getState();
+                      const port =
+                        v.mode === "proxy" ? v.socksPort : null;
+                      void runLeakTest(port);
+                    }}
+                  >
+                    запустить
+                  </button>
+                </div>
+              </section>
+
               <ComingSoonNote
                 title="windows hello при запуске"
                 desc="требовать аутентификацию (face/pin/fingerprint) при старте приложения. полезно для общих компьютеров"
@@ -903,10 +1014,30 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 );
               })()}
 
-              <ComingSoonNote
-                title="плавающее окно"
-                desc="мини-окно поверх всего со статусом vpn и текущей скоростью ↑/↓. удобно когда главное окно скрыто в трее"
-              />
+              <section className="settings-section">
+                <div className="settings-section-title">плавающее окно</div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">
+                      мини-окно поверх всего
+                    </div>
+                    <div className="settings-row-hint">
+                      статус vpn и текущая скорость ↑/↓ в маленьком
+                      окошке. клик по точке — toggle, двойной клик по
+                      окну — открыть главное
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.floatingWindow}
+                    onChange={(v) => {
+                      s.set("floatingWindow", v);
+                      void invoke(
+                        v ? "show_floating_window" : "hide_floating_window"
+                      );
+                    }}
+                  />
+                </div>
+              </section>
             </>
           )}
 
@@ -918,6 +1049,38 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 <AutostartRow />
               </section>
 
+              <section className="settings-section">
+                <div className="settings-section-title">горячие клавиши</div>
+                <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
+                  работают глобально, даже когда окно nemefisto скрыто. кликни поле, нажми
+                  нужную комбинацию (минимум один модификатор: ctrl/alt/shift/win). esc — отмена,
+                  backspace — очистить.
+                </p>
+                <ShortcutInput
+                  label="включить / выключить vpn"
+                  hint="как нажатие на главную кнопку — connect или disconnect"
+                  value={s.shortcutToggleVpn}
+                  onChange={(v) => s.set("shortcutToggleVpn", v)}
+                />
+                <ShortcutInput
+                  label="показать / скрыть окно"
+                  hint="как клик по иконке в системном трее"
+                  value={s.shortcutShowHide}
+                  onChange={(v) => s.set("shortcutShowHide", v)}
+                />
+                <ShortcutInput
+                  label="переключить режим"
+                  hint="proxy ↔ tun. срабатывает только когда vpn остановлен"
+                  value={s.shortcutSwitchMode}
+                  onChange={(v) => s.set("shortcutSwitchMode", v)}
+                />
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">доверенные wi-fi</div>
+                <TrustedWifiBlock />
+              </section>
+
               <ComingSoonNote
                 title="авто-обновление приложения"
                 desc="клиент сам проверит наличие новой версии, скачает подписанный установщик и обновится — без захода на сайт"
@@ -925,10 +1088,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <ComingSoonNote
                 title="история сессий"
                 desc="локальный лог connect/disconnect: время, сервер, режим, длительность, причина отключения"
-              />
-              <ComingSoonNote
-                title="bandwidth-метр"
-                desc="↑/↓ скорость в реальном времени в главном окне или в плавающем окне"
               />
               <ComingSoonNote
                 title="speed-test через VPN"
@@ -1418,5 +1577,287 @@ function AutostartRow() {
         disabled={busy || enabled === null}
       />
     </div>
+  );
+}
+
+// ─── Запись комбинации горячих клавиш (этап 13.N) ────────────────────────────
+
+/**
+ * Поле для записи accelerator'а вида `Ctrl+Shift+V`. Клик — переходит
+ * в режим записи (фокус), любая комбинация с модификатором → сохранение.
+ *
+ * - **Esc** — отмена записи без сохранения.
+ * - **Backspace / Delete** — очищает (`null` → клавиша снимается).
+ * - Только клавиши с хотя бы одним модификатором (`Ctrl/Alt/Shift/Win`)
+ *   принимаются — иначе любая буква сохранилась бы как hotkey, что
+ *   ломает обычный набор текста в других приложениях.
+ */
+function ShortcutInput({
+  value,
+  onChange,
+  label,
+  hint,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  label: string;
+  hint?: string;
+}) {
+  const [recording, setRecording] = useState(false);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === "Escape") {
+      setRecording(false);
+      return;
+    }
+    if (e.key === "Backspace" || e.key === "Delete") {
+      onChange(null);
+      setRecording(false);
+      return;
+    }
+
+    // Сами модификаторы как «нажатия» — игнор (ждём «настоящую» клавишу).
+    if (
+      e.key === "Control" ||
+      e.key === "Shift" ||
+      e.key === "Alt" ||
+      e.key === "Meta" ||
+      e.key === "OS"
+    ) {
+      return;
+    }
+
+    // Минимум один модификатор — иначе hotkey пересекается с обычным вводом.
+    const hasMod = e.ctrlKey || e.altKey || e.shiftKey || e.metaKey;
+    if (!hasMod) return;
+
+    // Маппим event.code в accelerator-key (не зависит от раскладки).
+    let key: string | null = null;
+    const code = e.code;
+    if (code.startsWith("Key") && code.length === 4) {
+      key = code.slice(3); // KeyV → V
+    } else if (code.startsWith("Digit") && code.length === 6) {
+      key = code.slice(5); // Digit1 → 1
+    } else if (/^F([1-9]|1\d|2[0-4])$/.test(code)) {
+      key = code; // F1..F24
+    } else if (code === "Space") {
+      key = "Space";
+    } else if (code === "Enter") {
+      key = "Enter";
+    } else if (code === "Tab") {
+      key = "Tab";
+    } else if (
+      code === "ArrowUp" ||
+      code === "ArrowDown" ||
+      code === "ArrowLeft" ||
+      code === "ArrowRight"
+    ) {
+      key = code.replace("Arrow", "");
+    } else if (code === "Home" || code === "End" || code === "PageUp" || code === "PageDown") {
+      key = code;
+    } else if (code === "Insert") {
+      key = "Insert";
+    } else {
+      return; // неподдерживаемый клавиатурный код
+    }
+
+    const parts: string[] = [];
+    if (e.ctrlKey) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
+    if (e.shiftKey) parts.push("Shift");
+    if (e.metaKey) parts.push("Super");
+    parts.push(key);
+
+    onChange(parts.join("+"));
+    setRecording(false);
+  };
+
+  return (
+    <div className="settings-row shortcut-row">
+      <div>
+        <div className="settings-row-label">{label}</div>
+        {hint && <div className="settings-row-hint">{hint}</div>}
+      </div>
+      <div
+        className={`shortcut-input${recording ? " is-recording" : ""}`}
+        tabIndex={0}
+        role="button"
+        onClick={() => setRecording(true)}
+        onBlur={() => setRecording(false)}
+        onKeyDown={recording ? onKeyDown : undefined}
+      >
+        {recording
+          ? "нажми комбинацию…"
+          : value ?? "не задано"}
+        {!recording && value && (
+          <button
+            type="button"
+            className="shortcut-clear"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange(null);
+            }}
+            title="очистить"
+          >
+            ×
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Доверенные Wi-Fi сети (этап 13.M) ───────────────────────────────────────
+
+/**
+ * Список SSID + действие при подключении к ним. Сверху — текущий
+ * SSID с кнопкой «добавить эту сеть» (если есть Wi-Fi подключение
+ * и сеть ещё не в списке). Ниже — список с кнопками удаления и
+ * input для ручного ввода (если адаптера Wi-Fi нет, например на
+ * стационарном ПК).
+ */
+function TrustedWifiBlock() {
+  const trustedSsids = useSettingsStore((s) => s.trustedSsids);
+  const trustedSsidAction = useSettingsStore((s) => s.trustedSsidAction);
+  const autoConnectOnLeave = useSettingsStore((s) => s.autoConnectOnLeave);
+  const setOpt = useSettingsStore((s) => s.set);
+  const currentSsid = useRuntimeStore((s) => s.currentSsid);
+
+  const [manualInput, setManualInput] = useState("");
+
+  const isCurrentInList =
+    currentSsid !== null && trustedSsids.includes(currentSsid);
+
+  const addSsid = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (trustedSsids.includes(trimmed)) return;
+    setOpt("trustedSsids", [...trustedSsids, trimmed]);
+  };
+  const removeSsid = (name: string) => {
+    setOpt(
+      "trustedSsids",
+      trustedSsids.filter((s) => s !== name)
+    );
+  };
+
+  return (
+    <>
+      <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
+        в доверенной сети vpn автоматически отключается. при возврате
+        в обычную — может включиться обратно (если включена опция ниже).
+        работает только с wi-fi (по ssid из netsh), ethernet/мобильный
+        интернет считаются обычной сетью.
+      </p>
+
+      <div className="trusted-current">
+        <span className="trusted-current-label">текущая сеть:</span>
+        <span className="trusted-current-name">
+          {currentSsid ? currentSsid : "—"}
+        </span>
+        {currentSsid && !isCurrentInList && (
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => addSsid(currentSsid)}
+            style={{ fontSize: 12, padding: "4px 10px" }}
+          >
+            + добавить
+          </button>
+        )}
+        {isCurrentInList && (
+          <span className="trusted-current-badge">в списке</span>
+        )}
+      </div>
+
+      {trustedSsids.length > 0 && (
+        <div className="app-rules-list" style={{ marginTop: 10 }}>
+          {trustedSsids.map((ssid) => (
+            <div key={ssid} className="app-rule-row">
+              <span className="app-rule-exe">{ssid}</span>
+              {ssid === currentSsid && (
+                <span className="trusted-current-badge">текущая</span>
+              )}
+              <button
+                type="button"
+                className="app-rule-del"
+                onClick={() => removeSsid(ssid)}
+                title="удалить"
+                style={{ marginLeft: "auto" }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="app-rule-add" style={{ marginTop: 10, gridTemplateColumns: "1fr auto" }}>
+        <input
+          type="text"
+          className="input"
+          placeholder="ввести имя сети вручную"
+          value={manualInput}
+          onChange={(e) => setManualInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              addSsid(manualInput);
+              setManualInput("");
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => {
+            addSsid(manualInput);
+            setManualInput("");
+          }}
+          disabled={!manualInput.trim()}
+        >
+          добавить
+        </button>
+      </div>
+
+      <div className="settings-row" style={{ marginTop: 12 }}>
+        <div>
+          <div className="settings-row-label">при подключении к доверенной</div>
+          <div className="settings-row-hint">
+            что делать когда мы попали в одну из сетей выше
+          </div>
+        </div>
+        <select
+          className="select-field"
+          value={trustedSsidAction}
+          onChange={(e) =>
+            setOpt(
+              "trustedSsidAction",
+              e.target.value as "ignore" | "disconnect"
+            )
+          }
+        >
+          <option value="ignore">ничего</option>
+          <option value="disconnect">отключить vpn</option>
+        </select>
+      </div>
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">авто-включение при выходе</div>
+          <div className="settings-row-hint">
+            когда уходим из доверенной сети — переподключиться, если
+            vpn отключали именно мы по этому правилу
+          </div>
+        </div>
+        <Toggle
+          on={autoConnectOnLeave}
+          onChange={(v) => setOpt("autoConnectOnLeave", v)}
+          disabled={trustedSsidAction === "ignore"}
+        />
+      </div>
+    </>
   );
 }

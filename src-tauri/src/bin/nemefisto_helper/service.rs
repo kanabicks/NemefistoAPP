@@ -13,7 +13,8 @@ use anyhow::{anyhow, Context, Result};
 use windows_service::{
     define_windows_service,
     service::{
-        ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+        ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
+        ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
         ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
     },
     service_control_handler::{self, ServiceControlHandlerResult},
@@ -35,6 +36,49 @@ pub fn install() -> Result<()> {
 
     let exe_path = std::env::current_exe()
         .context("не удалось получить путь к собственному exe")?;
+
+    // Идемпотентность: если сервис уже установлен — uninstall перед
+    // install. Без этого после dev-rebuild новый helper.exe не попадёт
+    // в SCM (старый сервис ссылается на старый путь / вообще на тот
+    // же путь, но загруженный байт-код в running процессе не обновляется).
+    // Получаем "переустановить" автоматически когда пользователь
+    // запускает app — без вмешательства руками.
+    let recreate_access = ServiceManagerAccess::CONNECT;
+    if let Ok(reuse_mgr) = ServiceManager::local_computer(None::<&str>, recreate_access) {
+        if let Ok(existing) = reuse_mgr.open_service(
+            SERVICE_NAME,
+            ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE,
+        ) {
+            // Stop, если запущен.
+            if let Ok(status) = existing.query_status() {
+                if status.current_state != ServiceState::Stopped {
+                    let _ = existing.stop();
+                    for _ in 0..40 {
+                        std::thread::sleep(Duration::from_millis(250));
+                        if let Ok(s) = existing.query_status() {
+                            if s.current_state == ServiceState::Stopped {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            // Помечаем для удаления — physical removal произойдёт когда
+            // last handle закроется.
+            let _ = existing.delete();
+            drop(existing);
+            // SCM иногда задерживает удаление: ждём пока имя освободится.
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(150));
+                let busy = reuse_mgr
+                    .open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS)
+                    .is_ok();
+                if !busy {
+                    break;
+                }
+            }
+        }
+    }
 
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
@@ -60,6 +104,38 @@ pub fn install() -> Result<()> {
     service
         .set_description(SERVICE_DESCRIPTION)
         .context("не удалось установить описание сервиса")?;
+
+    // 13.D шаг E: failure actions — Windows SCM сам перезапускает helper
+    // при крахе. Три попытки с возрастающими задержками, после успешного
+    // запуска счётчик неудач сбрасывается через сутки. Без этого, если
+    // helper упал, пользователю пришлось бы вручную его перезапускать.
+    //
+    // Не критично если установка failure-actions упала: обычная
+    // регистрация сервиса всё равно состоялась. Просто eprintln.
+    let failure_actions = ServiceFailureActions {
+        reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86_400)),
+        reboot_msg: None,
+        command: None,
+        actions: Some(vec![
+            ServiceAction {
+                action_type: ServiceActionType::Restart,
+                delay: Duration::from_secs(1),
+            },
+            ServiceAction {
+                action_type: ServiceActionType::Restart,
+                delay: Duration::from_secs(3),
+            },
+            ServiceAction {
+                action_type: ServiceActionType::Restart,
+                delay: Duration::from_secs(5),
+            },
+        ]),
+    };
+    if let Err(e) = service.update_failure_actions(failure_actions) {
+        eprintln!(
+            "[install] не удалось задать failure actions (не критично): {e}"
+        );
+    }
 
     service.start(&[] as &[&str]).context("не удалось запустить сервис")?;
 
@@ -153,6 +229,21 @@ fn service_loop() -> Result<()> {
         .context("не удалось создать tokio runtime")?;
 
     let pipe_result = rt.block_on(async move {
+        // Cleanup orphan-ресурсов запускаем в **фоновой задаче** чтобы
+        // не задерживать открытие pipe-сервера. PowerShell cold-start
+        // (~2-5 сек) + Remove-NetAdapter могли блокировать helper на
+        // 20+ секунд — main app таймаутил `ensure_running`.
+        //
+        // Безопасность: cleanup_orphan_resources проверяет STATE — если
+        // первый клиент уже сделал TunStart, cleanup не трогает живой
+        // TUN-адаптер. Cleanup_on_startup для firewall использует тот
+        // же глобальный engine-mutex что и `firewall::enable`, гонок нет.
+        tokio::spawn(async {
+            if let Err(err) = super::firewall::cleanup_on_startup().await {
+                eprintln!("[service] startup firewall cleanup error: {err}");
+            }
+            super::tun::cleanup_orphan_resources().await;
+        });
         pipe::run_pipe_server(shutdown.clone()).await
     });
 

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "./settingsStore";
 import { useSubscriptionStore } from "./subscriptionStore";
+import { showToast } from "./toastStore";
 
 /** Anti-DPI опции в формате camelCase, который Rust десериализует через
  *  serde(rename_all = "camelCase") в struct AntiDpiOptions. */
@@ -145,9 +146,31 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     const { selectedIndex, mode } = get();
     if (selectedIndex === null) return;
 
+    // 9.C: проверяем routing-таблицу на чужие default/half-default
+    // маршруты до запуска connect. Если такие есть — это другой
+    // активный VPN, и наш TUN/прокси конфликтует с ним. Не запускаем.
+    try {
+      const conflicts = await invoke<string[]>("check_routing_conflicts");
+      if (Array.isArray(conflicts) && conflicts.length > 0) {
+        const list = conflicts.join(", ");
+        showToast({
+          kind: "warning",
+          title: "конфликт VPN",
+          message: `Активный VPN на интерфейсе: ${list}.\nОтключите его перед подключением.`,
+          durationMs: 8000,
+        });
+        return;
+      }
+    } catch {
+      // Не критично: detect best-effort, не должен блокировать connect
+      // если внутри Win32 что-то отказало.
+    }
+
     const allowLan = useSettingsStore.getState().allowLan;
     const tunMasking = useSettingsStore.getState().tunMasking;
     const killSwitch = useSettingsStore.getState().killSwitch;
+    const dnsLeakProtection =
+      useSettingsStore.getState().dnsLeakProtection;
     const antiDpi = buildEffectiveAntiDpi();
     // 8.D: per-process правила. Подаём в Rust в camelCase
     // (`exe`/`action`/`comment`); serde на стороне Rust десериализует
@@ -177,6 +200,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         antiDpi,
         tunMasking,
         killSwitch,
+        dnsLeakProtection,
         appRules,
       });
       set({

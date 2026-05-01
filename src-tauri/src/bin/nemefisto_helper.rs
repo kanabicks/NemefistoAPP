@@ -21,6 +21,7 @@ mod nemefisto_helper {
     pub mod security;
     pub mod service;
     pub mod tun;
+    pub mod wfp;
 }
 
 #[cfg(windows)]
@@ -40,6 +41,22 @@ fn main() {
             }
             Err(e) => Err(e),
         },
+        // 13.D EMERGENCY: восстанавливает интернет если kill-switch
+        // фильтры остались висеть (helper не убрал их при crash, или
+        // DYNAMIC не сработал). Не требует запущенного сервиса —
+        // открывает свой WFP-engine, удаляет наш provider+sublayer
+        // каскадно (вместе со всеми filter'ами).
+        // Запускать ОТ АДМИНА:
+        //   & "C:\path\to\nemefisto-helper.exe" killswitch-cleanup
+        "killswitch-cleanup" => {
+            match nemefisto_helper::wfp::cleanup_provider() {
+                Ok(()) => {
+                    println!("✓ WFP kill-switch фильтры удалены, интернет восстановлен");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
         _ => {
             print_usage();
             Ok(())
@@ -73,7 +90,14 @@ fn run_debug_foreground() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(nemefisto_helper::pipe::run_pipe_server(shutdown))?;
+    rt.block_on(async move {
+        // 13.D: то же что в service.rs — cleanup orphan-фильтров
+        // на старте debug-режима (для тестов вручную).
+        if let Err(err) = nemefisto_helper::firewall::cleanup_on_startup().await {
+            eprintln!("[helper-debug] startup cleanup error: {err}");
+        }
+        nemefisto_helper::pipe::run_pipe_server(shutdown).await
+    })?;
     Ok(())
 }
 
@@ -150,6 +174,10 @@ fn print_usage() {
     eprintln!("  nemefisto-helper service     (внутренняя — вызывается SCM)");
     eprintln!("  nemefisto-helper debug       foreground-режим для отладки");
     eprintln!("  nemefisto-helper status      проверить, что сервис отвечает");
+    eprintln!(
+        "  nemefisto-helper killswitch-cleanup  EMERGENCY: убрать WFP-фильтры если \
+         kill-switch завис и интернет заблокирован"
+    );
 }
 
 #[cfg(not(windows))]

@@ -1,5 +1,6 @@
 //! VPN-логика: управление Xray + Mihomo sidecar, поиск свободных портов, пинги.
 
+pub mod leak_test;
 mod mihomo;
 mod ping;
 mod xray;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -6,6 +6,8 @@ import { useVpnStore } from "./stores/vpnStore";
 import { useSubscriptionStore } from "./stores/subscriptionStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useApplyTheme } from "./lib/hooks/useApplyTheme";
+import { useGlobalShortcuts } from "./lib/hooks/useGlobalShortcuts";
+import { useTrustedWifi } from "./lib/hooks/useTrustedWifi";
 import { initDeepLinks } from "./lib/deepLinks";
 
 import { BackgroundLayers } from "./components/effects/BackgroundLayers";
@@ -18,7 +20,10 @@ import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
 import { ServerSelector } from "./components/ServerSelector";
+import { BandwidthMeter } from "./components/BandwidthMeter";
 import { SubscriptionMeta } from "./components/SubscriptionMeta";
+import { Toaster } from "./components/Toaster";
+import { runLeakTest } from "./lib/leakTest";
 import { ModeSegment } from "./components/ModeSegment";
 import { Footer } from "./components/Footer";
 import { SettingsPage } from "./components/SettingsPage";
@@ -62,11 +67,22 @@ function App() {
   const autoRefreshHoursTouched = useSettingsStore(
     (x) => x.autoRefreshHoursTouched
   );
+  const floatingWindow = useSettingsStore((x) => x.floatingWindow);
+  const autoLeakTest = useSettingsStore((x) => x.autoLeakTest);
+  const setSetting = useSettingsStore((x) => x.set);
+  const socksPort = useVpnStore((s) => s.socksPort);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Применяем активную тему (data-theme на <html>). См. App.css :root[data-theme="light"].
   useApplyTheme();
+  // 13.N: глобальные горячие клавиши. Регистрация/перерегистрация
+  // отслеживается внутри хука по изменению settings.shortcut*.
+  useGlobalShortcuts();
+  // 13.M: отслеживаем trusted Wi-Fi сети — реакция на `wifi-changed`
+  // event'ы из бэка. Хук сам читает settings.trustedSsids и
+  // autoDisconnectedBySsid runtime-флаг.
+  useTrustedWifi();
 
   // ── Старт: refresh статуса VPN, кеш списка, HWID, on-open actions ─────────
   useEffect(() => {
@@ -112,6 +128,22 @@ function App() {
       unlistenNetwork = fn;
     });
 
+    // 13.O: если у пользователя включено плавающее окно — показываем
+    // его при старте. Окно создаётся в Rust setup всегда (скрытым),
+    // здесь только .show().
+    if (floatingWindow) {
+      void invoke("show_floating_window");
+    }
+    // 13.O: пользователь нажал × на плавающем окне → бэкенд скрыл его
+    // и эмитит `floating-closed`. Снимаем галку в settings чтобы при
+    // следующем старте оно не появилось снова.
+    let unlistenFloat: (() => void) | undefined;
+    void listen("floating-closed", () => {
+      setSetting("floatingWindow", false);
+    }).then((fn) => {
+      unlistenFloat = fn;
+    });
+
     // 13.A: tray menu делегирует «toggle VPN» в фронт через event
     // `tray-action`. Здесь всю логику уже знает vpnStore (engine
     // selection, anti-DPI, kill-switch и т.д.), не дублируем на бэкенде.
@@ -136,6 +168,7 @@ function App() {
       unlisten?.();
       unlistenNetwork?.();
       unlistenTray?.();
+      unlistenFloat?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // только один раз на mount
@@ -153,6 +186,57 @@ function App() {
       hasSelection: selectedIndex !== null,
     });
   }, [status, selectedIndex, servers]);
+
+  // 13.B/13.H: после успешного connect — авто-проверка IP/DNS leak.
+  // Задержка 1.5 сек чтобы туннель устаканился (REALITY handshake,
+  // прогрев, и т.п.). В TUN-режиме передаём null (через system route),
+  // в proxy-режиме — наш SOCKS5 порт.
+  useEffect(() => {
+    if (status !== "running") return;
+    if (!autoLeakTest) return;
+    const port = mode === "proxy" ? socksPort : null;
+    const timer = window.setTimeout(() => {
+      void runLeakTest(port);
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [status, autoLeakTest, mode, socksPort]);
+
+  // 13.D: heartbeat для kill-switch watchdog. Пока vpn running и
+  // killSwitch включён — пингуем helper каждые 20 сек. Если main
+  // зависнет / упадёт — heartbeats перестанут идти, и helper через
+  // ≤60 сек автоматически снимет фильтры (страховка от orphan'ов
+  // даже если DYNAMIC session не сработала).
+  const killSwitchEnabled = useSettingsStore((x) => x.killSwitch);
+  useEffect(() => {
+    if (status !== "running") return;
+    if (!killSwitchEnabled) return;
+    // Сразу первый heartbeat — чтобы watchdog был «прогрет» с момента 0.
+    void invoke("kill_switch_heartbeat").catch(() => {});
+    const id = window.setInterval(() => {
+      void invoke("kill_switch_heartbeat").catch(() => {});
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [status, killSwitchEnabled]);
+
+  // 13.D: live-toggle kill-switch без disconnect/connect. При активном
+  // VPN пользователь в Settings меняет переключатель — реактивно
+  // применяем через `kill_switch_apply`. Параметры (server_ips,
+  // app-paths, dns) Rust берёт из контекста, сохранённого в connect.
+  // Через useRef отличаем «первый рендер с уже включённым» (connect
+  // сам всё применил) от «user toggle» — без этого при каждом connect
+  // дёргалась бы лишняя re-apply.
+  const prevKillSwitch = useRef(killSwitchEnabled);
+  useEffect(() => {
+    if (status !== "running") {
+      prevKillSwitch.current = killSwitchEnabled;
+      return;
+    }
+    if (prevKillSwitch.current === killSwitchEnabled) return;
+    prevKillSwitch.current = killSwitchEnabled;
+    void invoke("kill_switch_apply", { enabled: killSwitchEnabled }).catch(
+      (e) => console.error("[kill_switch_apply]", e)
+    );
+  }, [status, killSwitchEnabled]);
 
   // ── Авто-подключение к последнему выбранному при старте ────────────────────
   const [didAutoConnect, setDidAutoConnect] = useState(false);
@@ -215,6 +299,7 @@ function App() {
                 <>
                   <SubscriptionMeta />
                   <ServerSelector />
+                  <BandwidthMeter />
                 </>
               )}
             </div>
@@ -258,6 +343,7 @@ function App() {
       )}
 
       <CrashRecoveryDialog />
+      <Toaster />
     </>
   );
 }

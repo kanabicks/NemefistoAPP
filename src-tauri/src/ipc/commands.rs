@@ -7,6 +7,28 @@ use serde::Serialize;
 use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex as AsyncMutex;
+
+/// Параметры активного kill-switch. Сохраняем при successful connect()
+/// чтобы переиспользовать при live-toggle настройки kill-switch без
+/// необходимости заново резолвить server_host и собирать app-paths.
+#[derive(Clone, Debug)]
+pub struct KillSwitchContext {
+    pub server_ips: Vec<String>,
+    pub allow_lan: bool,
+    pub allow_app_paths: Vec<String>,
+    pub block_dns: bool,
+    pub allow_dns_ips: Vec<String>,
+}
+
+/// Tauri-state для контекста активного kill-switch. None = VPN не подключён.
+pub struct KillSwitchState(pub AsyncMutex<Option<KillSwitchContext>>);
+
+impl KillSwitchState {
+    pub fn new() -> Self {
+        Self(AsyncMutex::new(None))
+    }
+}
 
 use crate::config::mihomo_config::AppRule;
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
@@ -148,6 +170,36 @@ fn extract_server_host(entry: &ProxyEntry) -> Option<String> {
 ///   4. `<exe-dir>/../../binaries/...`               — dev из
 ///                                                     target/{debug,
 ///                                                     release}/.
+/// Найти путь к sidecar-бинарю по короткому имени (`xray`/`mihomo`).
+/// Используется для kill-switch allow-app-id (этап 13.D) — нам нужно
+/// разрешить нашим VPN-движкам исходящий трафик.
+///
+/// Перебирает кандидаты в exe-dir / `binaries` / `resources` / dev
+/// `target/{profile}/binaries`. `_app` пока не используется, но
+/// зарезервирован под Tauri `app.path()` API.
+fn resolve_sidecar_path(_app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    let triplet = format!("{name}-x86_64-pc-windows-msvc.exe");
+    let plain = format!("{name}.exe");
+
+    let mut candidates: Vec<PathBuf> = vec![
+        exe_dir.join(&triplet),
+        exe_dir.join(&plain),
+        exe_dir.join("binaries").join(&triplet),
+        exe_dir.join("binaries").join(&plain),
+        exe_dir.join("resources").join(&triplet),
+        exe_dir.join("resources").join(&plain),
+    ];
+    if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
+        candidates.push(dev_root.join("binaries").join(&triplet));
+        candidates.push(dev_root.join("binaries").join(&plain));
+    }
+
+    candidates.into_iter().find(|c| c.is_file())
+}
+
 fn resolve_tun2socks_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
@@ -283,12 +335,24 @@ pub async fn connect(
     anti_dpi: Option<AntiDpiOptions>,
     tun_masking: Option<bool>,
     kill_switch: Option<bool>,
+    // 13.D step B: блокировка DNS-leak (UDP/TCP 53 кроме VPN-DNS).
+    // По дефолту off — может ломать приложения в proxy-режиме.
+    dns_leak_protection: Option<bool>,
     app_rules: Option<Vec<AppRule>>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
     sub: State<'_, SubscriptionState>,
+    ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<ConnectResult, String> {
+    // Pre-flight self-healing: если в системе остались наши orphan'ы от
+    // упавшей сессии (системный прокси указывает на наш диапазон портов
+    // или есть half-default routes), молча чистим перед connect. Иначе
+    // следующий xray встретит «сломанную» среду и сам сломается.
+    if platform::proxy::is_proxy_pointing_to_us() {
+        let _ = platform::proxy::force_clear_system_proxy();
+    }
+
     // Клонируем ProxyEntry, чтобы сразу освободить lock на список серверов
     let entry = {
         let servers = sub.servers.lock().map_err(|e| e.to_string())?;
@@ -495,14 +559,125 @@ pub async fn connect(
         }
     }
 
-    // 6.D — kill switch: если включён, поднимаем firewall блокировку.
-    // Делается ПОСЛЕ успешного Xray/TUN — чтобы при ошибке connect
-    // не оставить пользователя с заблокированным интернетом.
+    // 13.D — kill switch (настоящий WFP). Поднимаем ПОСЛЕ успешного
+    // Xray/TUN — чтобы при ошибке connect не оставить пользователя с
+    // заблокированным интернетом.
     if kill_switch.unwrap_or(false) {
-        // server_host для allowlist — берём из tun_params (уже резолвили
-        // выше) или из ProxyEntry. Резолвим в IP уже на стороне helper'а
-        // если нужно.
         let server_host = extract_server_host(&entry).unwrap_or_else(|| entry.server.clone());
+
+        // Резолвим server_host в IP-адреса ЗДЕСЬ — после включения kill-switch'а
+        // DNS уйдёт через VPN-туннель, а его ещё нет (helper-сервис в SYSTEM
+        // получит маршруты позже). Если IP в host_str — lookup_host вернёт
+        // его как есть.
+        let server_ips: Vec<String> =
+            tokio::net::lookup_host(format!("{server_host}:0"))
+                .await
+                .map(|iter| iter.map(|sa| sa.ip().to_string()).collect())
+                .unwrap_or_default();
+        if server_ips.is_empty() {
+            // Fallback — может быть literal IP без формата host:port.
+            // Пробуем парсить напрямую.
+            if server_host.parse::<std::net::IpAddr>().is_ok() {
+                // ОК
+            } else {
+                let _ = xray.stop();
+                let _ = mihomo.stop();
+                let _ = platform::proxy::clear_system_proxy();
+                if tun_mode {
+                    let _ = platform::helper_client::tun_stop().await;
+                }
+                return Err(format!(
+                    "kill switch: не удалось резолвить server_host={server_host}"
+                ));
+            }
+        }
+        let server_ips = if server_ips.is_empty() {
+            vec![server_host.clone()]
+        } else {
+            server_ips
+        };
+
+        // Allow-list: пути к нашим sidecar-бинарям. Без них VPN-движок
+        // не сможет соединиться с сервером (хоть IP и в whitelist —
+        // FwpmGetAppIdFromFileName0 матчит ИМЕННО по path, не по
+        // basename).
+        //
+        // Tauri 2 в dev-режиме запускает sidecar по triplet-имени
+        // (`xray-x86_64-pc-windows-msvc.exe`), но нашeresolve может
+        // найти plain (`xray.exe`) который существует рядом — тогда
+        // path-mismatch и allow не сработает.
+        // Решение: добавляем В АЛЛОУЛИСТ ОБА варианта по факту наличия.
+        let mut allow_app_paths: Vec<String> = Vec::new();
+        let mut push_if_exists = |p: PathBuf| {
+            if p.is_file() {
+                allow_app_paths.push(p.to_string_lossy().into_owned());
+            }
+        };
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                // Все возможные кандидаты sidecar — добавим все которые
+                // существуют. WFP игнорирует дубликаты с разными path
+                // как «всё allow».
+                for name in ["xray", "mihomo"] {
+                    push_if_exists(exe_dir.join(format!("{name}.exe")));
+                    push_if_exists(
+                        exe_dir.join(format!("{name}-x86_64-pc-windows-msvc.exe")),
+                    );
+                    push_if_exists(exe_dir.join("binaries").join(format!("{name}.exe")));
+                    push_if_exists(
+                        exe_dir
+                            .join("binaries")
+                            .join(format!("{name}-x86_64-pc-windows-msvc.exe")),
+                    );
+                    // Dev: target/{profile}/.. → src-tauri/binaries/
+                    if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
+                        push_if_exists(
+                            dev_root.join("binaries").join(format!("{name}.exe")),
+                        );
+                        push_if_exists(
+                            dev_root
+                                .join("binaries")
+                                .join(format!("{name}-x86_64-pc-windows-msvc.exe")),
+                        );
+                    }
+                }
+                // tun2socks (для TUN-режима)
+                push_if_exists(exe_dir.join("tun2socks.exe"));
+                push_if_exists(
+                    exe_dir.join("tun2socks-x86_64-pc-windows-msvc.exe"),
+                );
+                if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
+                    push_if_exists(
+                        dev_root
+                            .join("binaries")
+                            .join("tun2socks-x86_64-pc-windows-msvc.exe"),
+                    );
+                }
+                // Сам vpn-client.exe — родительский процесс. Tauri может
+                // делать outbound (DNS-проверки leak-test, deep-link
+                // регистрация, и т.д.), а также на некоторых системах
+                // app-id наследуется от parent.
+                push_if_exists(exe.clone());
+                // helper.exe — не нужен для outbound, но добавим на
+                // случай future telemetry.
+                push_if_exists(exe_dir.join("nemefisto-helper.exe"));
+            }
+        }
+        // Resolve-функции тоже подключим (на случай если выше что-то
+        // упустили). Дедупликация ниже не нужна — WFP ОК с дубликатами.
+        if let Some(p) = resolve_sidecar_path(&app, "xray") {
+            push_if_exists(p);
+        }
+        if let Some(p) = resolve_sidecar_path(&app, "mihomo") {
+            push_if_exists(p);
+        }
+        if let Some(p) = resolve_tun2socks_path() {
+            push_if_exists(p);
+        }
+        // Дедупликация по string чтобы не плодить identical filters.
+        allow_app_paths.sort();
+        allow_app_paths.dedup();
+
         // Гарантируем что helper-сервис запущен (если не активен TUN-режим
         // — у нас не было ensure_running).
         if !tun_mode {
@@ -513,7 +688,27 @@ pub async fn connect(
                 return Err(format!("kill switch: helper-сервис недоступен: {e}"));
             }
         }
-        if let Err(e) = platform::helper_client::kill_switch_enable(server_host).await {
+        // 13.D step B: DNS-leak protection. В TUN-режиме разрешаем
+        // только VPN-DNS на TUN-gateway (198.18.0.1) — остальной :53
+        // блокируется. В proxy-режиме `allow_dns_ips=[]` — пользователь
+        // ОЧЕНЬ должен понимать что делает (приложения сломаются если
+        // не используют системный прокси для DNS).
+        let block_dns = dns_leak_protection.unwrap_or(false);
+        let allow_dns_ips: Vec<String> = if block_dns && tun_mode {
+            vec!["198.18.0.1".to_string()]
+        } else {
+            Vec::new()
+        };
+
+        if let Err(e) = platform::helper_client::kill_switch_enable(
+            server_ips.clone(),
+            lan,
+            allow_app_paths.clone(),
+            block_dns,
+            allow_dns_ips.clone(),
+        )
+        .await
+        {
             // При ошибке откатываем всё — интернет НЕ должен оставаться
             // в полу-заблокированном состоянии.
             let _ = xray.stop();
@@ -524,6 +719,18 @@ pub async fn connect(
             }
             return Err(format!("kill switch не поднялся: {e}"));
         }
+
+        // Сохраняем контекст для live-toggle — пользователь может
+        // переключать kill-switch в Settings без disconnect/connect.
+        // `kill_switch_apply` команда читает это и заново применяет
+        // / снимает фильтры с теми же параметрами.
+        *ks_ctx.0.lock().await = Some(KillSwitchContext {
+            server_ips,
+            allow_lan: lan,
+            allow_app_paths,
+            block_dns,
+            allow_dns_ips,
+        });
     }
 
     // В UI возвращаем креды только в LAN-режиме — там клиенты должны
@@ -558,6 +765,7 @@ pub async fn connect(
 pub async fn disconnect(
     xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<(), String> {
     // 1. TUN
     let _ = platform::helper_client::tun_stop().await;
@@ -565,6 +773,8 @@ pub async fn disconnect(
     //    включён был в прошлый сеанс (на случай если краш / повторный
     //    запуск). Helper тихо вернёт ok если он не был enabled.
     let _ = platform::helper_client::kill_switch_disable().await;
+    // Очищаем контекст live-toggle — VPN больше не активен.
+    *ks_ctx.0.lock().await = None;
 
     // 3. Оба движка (один точно не запущен — stop() для него no-op)
     //    + system proxy. Параллельно выполняем чтобы быстрый disconnect.
@@ -612,6 +822,184 @@ pub fn tray_set_status(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     platform::tray::set_status(&app, &status, server_name.as_deref(), has_selection)
+}
+
+// ─── Kill-switch (13.D) ─────────────────────────────────────────────────────
+
+/// Heartbeat для kill-switch watchdog. Фронт зовёт каждые ~20 сек
+/// пока vpn running и kill-switch включён. Helper использует это
+/// чтобы понять «main жив» — иначе через 60 сек авто-disable фильтры.
+/// Не падает если helper не отвечает — это не критично, при
+/// нескольких подряд misses сработает watchdog.
+#[tauri::command]
+pub async fn kill_switch_heartbeat() -> Result<(), String> {
+    platform::helper_client::kill_switch_heartbeat()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Аварийный сброс WFP kill-switch. Удаляет все наши фильтры через
+/// helper. UI-кнопка «авария» в Settings — для случаев когда
+/// kill-switch завис и интернет заблокирован. Идемпотентно: если
+/// ничего нет, helper вернёт Ok тихо.
+#[tauri::command]
+pub async fn kill_switch_force_cleanup() -> Result<(), String> {
+    // Гарантируем что helper доступен — иначе предложим запустить вручную
+    // через консоль (`nemefisto-helper killswitch-cleanup`).
+    if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+        return Err(format!("helper-сервис недоступен: {e}"));
+    }
+    platform::helper_client::kill_switch_force_cleanup()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Полный network recovery — одной кнопкой починить всё, что мы
+/// могли натворить.
+///
+/// 1. WFP-фильтры (наш provider GUID) — через helper.
+/// 2. orphan TUN-адаптеры и half-default routes — через helper.
+/// 3. Системный прокси — hardened force-clear через двойной щит.
+///
+/// Каждый шаг независимый: ошибка одного не отменяет других. Возвращает
+/// summary что удалось / не удалось — фронт показывает в toast.
+///
+/// Безопасно вызывать только когда VPN не активен. UI-кнопку показываем
+/// в Settings, активную только в `status === "stopped"`.
+#[derive(Serialize)]
+pub struct RecoveryReport {
+    pub kill_switch_cleaned: bool,
+    pub orphan_resources_cleaned: bool,
+    pub system_proxy_cleared: bool,
+    /// Список ошибок шагов которые не отработали — UI покажет в toast.
+    pub errors: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn recover_network() -> RecoveryReport {
+    let mut report = RecoveryReport {
+        kill_switch_cleaned: false,
+        orphan_resources_cleaned: false,
+        system_proxy_cleared: false,
+        errors: Vec::new(),
+    };
+
+    // Helper нужен для шагов 1+2. Если не доступен — пропускаем их и
+    // продолжаем с шагом 3, который независим (registry HKCU).
+    let helper_alive = platform::helper_bootstrap::ensure_running().await.is_ok();
+
+    if helper_alive {
+        match platform::helper_client::kill_switch_force_cleanup().await {
+            Ok(()) => report.kill_switch_cleaned = true,
+            Err(e) => report.errors.push(format!("kill switch cleanup: {e}")),
+        }
+        match platform::helper_client::orphan_cleanup().await {
+            Ok(()) => report.orphan_resources_cleaned = true,
+            Err(e) => report.errors.push(format!("orphan cleanup: {e}")),
+        }
+    } else {
+        report
+            .errors
+            .push("helper-сервис недоступен: пропустили WFP/TUN cleanup".to_string());
+    }
+
+    match platform::proxy::force_clear_system_proxy() {
+        Ok(()) => report.system_proxy_cleared = true,
+        Err(e) => report.errors.push(format!("system proxy: {e}")),
+    }
+
+    report
+}
+
+/// Live-toggle kill-switch без disconnect/connect.
+///
+/// Фронт зовёт когда пользователь меняет переключатель в Settings во
+/// время активного VPN. Параметры (server_ips, app-paths, dns) берутся
+/// из контекста, сохранённого при connect — пересборка не нужна.
+///
+/// `enabled=true` без активного контекста (VPN не подключён) — no-op,
+/// `false` без контекста — best-effort disable (на случай orphan
+/// фильтров от прошлой сессии).
+#[tauri::command]
+pub async fn kill_switch_apply(
+    enabled: bool,
+    ks_ctx: State<'_, KillSwitchState>,
+) -> Result<(), String> {
+    let ctx_opt = ks_ctx.0.lock().await.clone();
+
+    if !enabled {
+        // disable — безопасно вызвать всегда, helper-side идемпотентно.
+        return platform::helper_client::kill_switch_disable()
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let Some(ctx) = ctx_opt else {
+        // VPN не подключён — нечего применять. Не ошибка: пользователь
+        // мог включить переключатель «впрок» до connect.
+        return Ok(());
+    };
+
+    // Helper должен быть жив — kill_switch_enable требует pipe.
+    if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+        return Err(format!("helper-сервис недоступен: {e}"));
+    }
+    platform::helper_client::kill_switch_enable(
+        ctx.server_ips,
+        ctx.allow_lan,
+        ctx.allow_app_paths,
+        ctx.block_dns,
+        ctx.allow_dns_ips,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+// ─── Leak-test (13.B + 13.H) ────────────────────────────────────────────────
+
+/// Проверка утечек IP/DNS. Делает два HTTP-запроса параллельно:
+/// ipapi.co для public IP/GeoIP и DoH к Cloudflare для DNS-резолвера.
+///
+/// `socks_port` — наш локальный SOCKS5 inbound (proxy-mode). В tun-mode
+/// фронт передаёт `None` и трафик идёт через system route.
+///
+/// Команда не падает при сетевой ошибке — возвращает структуру с
+/// частично заполненными полями, фронт показывает «—» где данных нет.
+#[tauri::command]
+pub async fn leak_test(
+    socks_port: Option<u16>,
+) -> Result<crate::vpn::leak_test::LeakTestResult, String> {
+    crate::vpn::leak_test::run(socks_port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ─── Floating window (13.O) ─────────────────────────────────────────────────
+
+/// Показать плавающее окно со статусом и скоростью передачи данных.
+/// Окно создаётся в `lib.rs` setup всегда, но скрытым; команда лишь
+/// делает его видимым. Идемпотентна: повторный вызов на видимом окне —
+/// просто .show() (no-op) + setFocus.
+#[tauri::command]
+pub fn show_floating_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let win = app
+        .get_webview_window("floating")
+        .ok_or_else(|| "floating-окно не зарегистрировано".to_string())?;
+    win.show().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Скрыть плавающее окно. Окно остаётся в памяти, повторный
+/// `show_floating_window` мгновенный (нет переинициализации webview).
+#[tauri::command]
+pub fn hide_floating_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let win = app
+        .get_webview_window("floating")
+        .ok_or_else(|| "floating-окно не зарегистрировано".to_string())?;
+    win.hide().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ─── Crash recovery (9.D) ─────────────────────────────────────────────────────
@@ -731,4 +1119,27 @@ pub async fn ping_servers(
     let futures = entries.iter().map(ping_entry);
     let results = futures::future::join_all(futures).await;
     Ok(results)
+}
+
+// ─── 9.B / 9.C — детект конфликтов с другими VPN ──────────────────────────────
+
+/// 9.B — Список запущенных сторонних VPN-клиентов (по whitelist'у имён exe).
+///
+/// Работает без admin-прав. Возвращает уникальные human-readable имена
+/// (например `["Happ", "Clash Verge"]`). Не блокирует connect — UI
+/// использует это для предупреждающего баннера.
+#[tauri::command]
+pub fn detect_competing_vpns() -> Vec<String> {
+    platform::processes::detect_competing_vpns()
+}
+
+/// 9.C — Список интерфейсов с активными default- или half-default-маршрутами,
+/// принадлежащих **не нам** (NextHop ≠ 198.18.0.1) и **не штатному** physic-
+/// default'у. Признак того, что параллельно работает другой VPN.
+///
+/// Возвращает aliases интерфейсов (например `["Wintun Userspace Tunnel"]`).
+/// Frontend перед connect показывает toast и не запускает VPN.
+#[tauri::command]
+pub fn check_routing_conflicts() -> Vec<String> {
+    platform::network::detect_routing_conflicts()
 }

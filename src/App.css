@@ -1104,7 +1104,130 @@ input, textarea { font: inherit; cursor: text; }
   background: rgba(255,255,255,0.04);
 }
 .server-pill:active:not(:disabled) { transform: scale(0.99); }
-.server-pill:disabled { cursor: default; opacity: 0.55; }
+/* Disabled — пилл «зафиксирован» (vpn активен или starting/stopping).
+   НЕ делаем opacity: на тёмных темах ушёл бы в фон, на светлых —
+   читался бы плохо. Вместо прозрачности — снимаем cursor и hover. */
+.server-pill:disabled { cursor: default; }
+/* Active — vpn подключён к этому серверу. Лёгкий зелёный акцент
+   на бордер + чуть плотнее фон, чтобы плашка читалась как «живая»
+   на любой теме и не сливалась с back-layer. */
+.server-pill.is-active {
+  border-color: rgba(74, 222, 128, 0.45);
+  background: rgba(74, 222, 128, 0.06);
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.18) inset,
+              0 0 14px rgba(74, 222, 128, 0.12);
+}
+:root[data-theme="light"] .server-pill.is-active,
+:root[data-theme="sand"] .server-pill.is-active {
+  /* На светлых темах зелёный «glow» исчезает — заменяем на плотный
+     border + тёплый off-white фон, чтобы плашка не сливалась с body. */
+  border-color: rgba(34, 139, 70, 0.55);
+  background: rgba(34, 139, 70, 0.08);
+  box-shadow: 0 0 0 1px rgba(34, 139, 70, 0.15) inset;
+}
+
+/* ── Тосты-уведомления (этапы 13.B / 13.H) ───────────────────────────── */
+.toaster {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  pointer-events: auto;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-md, 8px);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32);
+  animation: toast-in 0.22s ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.toast:hover { background: rgba(255, 255, 255, 0.06); }
+.toast-info     { border-left-color: rgba(96, 165, 250, 0.85); }
+.toast-success  { border-left-color: rgba(74, 222, 128, 0.85); }
+.toast-warning  { border-left-color: rgba(251, 191, 36, 0.85); }
+.toast-error    { border-left-color: rgba(248, 113, 113, 0.85); }
+.toast-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  margin-bottom: 4px;
+}
+.toast-success .toast-title { color: rgba(74, 222, 128, 0.95); }
+.toast-warning .toast-title { color: rgba(251, 191, 36, 0.95); }
+.toast-error   .toast-title { color: rgba(248, 113, 113, 0.95); }
+.toast-info    .toast-title { color: rgba(96, 165, 250, 0.95); }
+.toast-message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+  word-break: break-word;
+}
+.toast-message > div + div {
+  margin-top: 2px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+/* ── Bandwidth-индикатор (этап 13.O) — главное окно ──────────────────────
+   Стилизован как `.server-pill` (тот же glass-фон + line-border + radius),
+   чтобы пара «server-pill + bandwidth» читалась единым блоком. */
+.bandwidth-meter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.bandwidth-meter .bw-arrow {
+  color: var(--fg-mute);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+}
+.bandwidth-meter .bw-value {
+  color: var(--fg);
+  min-width: 64px;
+  text-align: left;
+}
+.bandwidth-meter .bw-value + .bw-arrow {
+  margin-left: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
 .server-pill-num {
   font-family: var(--mono);
   font-size: 10px;
@@ -1690,6 +1813,100 @@ input, textarea { font: inherit; cursor: text; }
   .app-rule-add .btn-ghost {
     grid-column: 1 / -1;
   }
+}
+
+/* ── Глобальные горячие клавиши (этап 13.N) ───────────────────────────── */
+.shortcut-row {
+  align-items: center;
+}
+.shortcut-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+  height: 32px;
+  padding: 0 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+  outline: none;
+}
+.shortcut-input:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.shortcut-input:focus,
+.shortcut-input.is-recording {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent);
+  animation: shortcut-pulse 1.2s infinite;
+}
+@keyframes shortcut-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.0); }
+  50%      { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06); }
+}
+.shortcut-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--fg-mute);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.shortcut-clear:hover {
+  color: #e57373;
+  background: rgba(229, 115, 115, 0.12);
+}
+
+/* ── Доверенные Wi-Fi (этап 13.M) ─────────────────────────────────────── */
+.trusted-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.trusted-current-label {
+  color: var(--fg-mute);
+  text-transform: lowercase;
+}
+.trusted-current-name {
+  font-family: var(--mono);
+  color: var(--fg);
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trusted-current-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #81c784;
+  background: rgba(129, 199, 132, 0.1);
+  border: 1px solid rgba(129, 199, 132, 0.3);
+  flex-shrink: 0;
 }
 
 /* ── Engine badge (8.B) ──────────────────────────────────────────────── */

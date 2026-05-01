@@ -42,13 +42,33 @@ pub enum HelperRequest {
         tun_name_override: Option<String>,
     },
     TunStop,
-    /// Включить kill switch (этап 6.D): Windows Firewall блокирует
-    /// весь outbound кроме allowlist (loopback / LAN / VPN-сервер /
-    /// public DNS).
+    /// Включить kill switch (этап 13.D — настоящий WFP).
+    /// `server_ips` — массив IP уже резолвленный в Tauri-main.
+    /// `allow_lan` — пускать ли локальную сеть.
+    /// `allow_app_paths` — пути к нашим бинарям (allowlist по app-id).
     KillSwitchEnable {
-        server_ip: String,
+        #[serde(default)]
+        server_ips: Vec<String>,
+        #[serde(default)]
+        allow_lan: bool,
+        #[serde(default)]
+        allow_app_paths: Vec<String>,
+        /// DNS leak protection (13.D step B). См. protocol.rs.
+        #[serde(default)]
+        block_dns: bool,
+        #[serde(default)]
+        allow_dns_ips: Vec<String>,
     },
     KillSwitchDisable,
+    /// Heartbeat для watchdog: главный шлёт каждые ~20 сек, иначе
+    /// helper через 60+ сек снимет фильтры сам. См. firewall.rs.
+    KillSwitchHeartbeat,
+    /// Emergency cleanup — снять любые наши WFP-фильтры (для UI-кнопки
+    /// «аварийный сброс»).
+    KillSwitchForceCleanup,
+    /// Cleanup orphan TUN-адаптеров (`nemefisto-*`) и half-default
+    /// маршрутов через `198.18.0.1`. Часть UI-кнопки «восстановить сеть».
+    OrphanCleanup,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,10 +162,31 @@ pub async fn tun_start(
     }
 }
 
-/// Включить kill switch — Windows Firewall блокирует весь не-VPN
-/// трафик. См. этап 6.D.
-pub async fn kill_switch_enable(server_ip: String) -> Result<()> {
-    let resp = send(HelperRequest::KillSwitchEnable { server_ip }).await?;
+/// Включить kill switch — WFP-фильтры на уровне ядра блокируют весь
+/// outbound кроме allowlist'а (этап 13.D).
+///
+/// - `server_ips` — IP-адреса VPN-сервера, уже резолвленные;
+/// - `allow_lan` — пускать ли локальную сеть;
+/// - `allow_app_paths` — абсолютные пути к VPN-движкам и tun2socks;
+/// - `block_dns` — DNS-leak protection: блокировать весь :53 кроме
+///   `allow_dns_ips` (13.D step B);
+/// - `allow_dns_ips` — IPv4 адреса разрешённых DNS-серверов (когда
+///   `block_dns=true`).
+pub async fn kill_switch_enable(
+    server_ips: Vec<String>,
+    allow_lan: bool,
+    allow_app_paths: Vec<String>,
+    block_dns: bool,
+    allow_dns_ips: Vec<String>,
+) -> Result<()> {
+    let resp = send(HelperRequest::KillSwitchEnable {
+        server_ips,
+        allow_lan,
+        allow_app_paths,
+        block_dns,
+        allow_dns_ips,
+    })
+    .await?;
     match resp {
         HelperResponse::Ok => Ok(()),
         HelperResponse::Error { message } => bail!("{message}"),
@@ -156,6 +197,43 @@ pub async fn kill_switch_enable(server_ip: String) -> Result<()> {
 /// Выключить kill switch (восстановить default-allow). Идемпотентно.
 pub async fn kill_switch_disable() -> Result<()> {
     let resp = send(HelperRequest::KillSwitchDisable).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Heartbeat для kill-switch watchdog. Зовётся каждые ~20 сек пока
+/// VPN активен. Если helper не получит ping 60+ сек — он автоматически
+/// снимет фильтры (страховка от зависания main).
+pub async fn kill_switch_heartbeat() -> Result<()> {
+    let resp = send(HelperRequest::KillSwitchHeartbeat).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Аварийный сброс — удалить все WFP-фильтры с нашим provider GUID.
+/// Используется UI-кнопкой когда что-то пошло не так и интернет
+/// заблокирован. Идемпотентно: если ничего нет — просто Ok.
+pub async fn kill_switch_force_cleanup() -> Result<()> {
+    let resp = send(HelperRequest::KillSwitchForceCleanup).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Cleanup orphan TUN-ресурсов: адаптеры с префиксом `nemefisto-` и
+/// half-default routes через `198.18.0.1`. Часть UI-кнопки
+/// «восстановить сеть». Безопасно вызывать только когда VPN не активен
+/// (иначе порвёт активный туннель).
+pub async fn orphan_cleanup() -> Result<()> {
+    let resp = send(HelperRequest::OrphanCleanup).await?;
     match resp {
         HelperResponse::Ok => Ok(()),
         HelperResponse::Error { message } => bail!("{message}"),

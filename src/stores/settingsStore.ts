@@ -172,12 +172,21 @@ export type Settings = {
    *  МАХ/ВК/Госуслуг по `GetAdaptersAddresses`. */
   tunMasking: boolean;
 
-  /** Kill switch (этап 6.D / 13.D). Если on — при connect Windows
-   *  Firewall переводится в режим default-block-outbound с allowlist
-   *  для VPN-сервера, loopback, LAN, public DNS. Защита от утечек
-   *  при reconnect / краше Xray. ⚠️ Если приложение крашнется в этом
-   *  режиме, интернет останется заблокирован до ручной очистки firewall. */
+  /** Kill switch (этап 13.D — WFP). Если on — при connect helper-сервис
+   *  ставит фильтры в Windows Filtering Platform на уровне ядра:
+   *  block-all + allowlist (loopback, опц. LAN, IP VPN-сервера, наши
+   *  процессы по app-id). DYNAMIC session: фильтры **автоматически
+   *  удаляются** если helper-процесс упал — пользователь не остаётся
+   *  без интернета. Дополнительная страховка — cleanup orphan-фильтров
+   *  на старте helper'а. */
   killSwitch: boolean;
+
+  /** DNS leak protection (этап 13.D step B). Если on — при активном
+   *  kill-switch блокируется весь :53/UDP+TCP кроме нашего VPN-DNS.
+   *  Защита от приложений которые делают DNS-запросы мимо VPN. ⚠️ В
+   *  proxy-режиме может ломать приложения с собственным системным
+   *  DNS — лучше использовать в TUN-режиме. */
+  dnsLeakProtection: boolean;
 
   /** Активный VPN-движок (этап 8.B). См. тип `Engine` выше. */
   engine: Engine;
@@ -195,6 +204,44 @@ export type Settings = {
   /** Правила per-process routing (этап 8.D). Применяются только в
    *  Mihomo. См. тип `AppRule` выше. Пустой массив — no-op. */
   appRules: AppRule[];
+
+  // ── Глобальные горячие клавиши (этап 13.N) ─────────────────────────
+  /** Accelerator (`Ctrl+Shift+V` и т.п.) для toggle VPN. `null` —
+   *  не зарегистрирована. Tauri-формат: `Modifier+...+Key`, поддержка
+   *  `CommandOrControl`, `Ctrl`, `Alt`, `Shift`, `Super`. */
+  shortcutToggleVpn: string | null;
+  /** Accelerator для show/hide главного окна (как клик по трею). */
+  shortcutShowHide: string | null;
+  /** Accelerator для переключения proxy ↔ TUN режима. */
+  shortcutSwitchMode: string | null;
+
+  /** Плавающее мини-окно (этап 13.O). Если on — отдельное окошко
+   *  поверх всех с status-dot и live-скоростью передачи данных.
+   *  Состояние применяется при старте приложения и при каждом
+   *  toggle: фронт зовёт `show_floating_window` / `hide_floating_window`. */
+  floatingWindow: boolean;
+
+  /** Авто-проверка IP/DNS после успешного connect (этап 13.B/13.H).
+   *  ipapi.co + Cloudflare DoH whoami.cloudflare за один тост.
+   *  Сетевые запросы платные по latency (~1-2 сек), кому-то может
+   *  не нравиться — toggle. По дефолту on. */
+  autoLeakTest: boolean;
+
+  // ── Доверенные Wi-Fi сети (этап 13.M) ──────────────────────────────
+  /** Список SSID которые считаются «домашними» — там VPN автоматически
+   *  выключается (если включён `trustedSsidAction === "disconnect"`).
+   *  Сравнение точное и case-sensitive (Windows такие и хранит). */
+  trustedSsids: string[];
+  /** Что делать при подключении к Wi-Fi из `trustedSsids`:
+   *  - `ignore` (default) — ничего;
+   *  - `disconnect` — отключить активный VPN, флаг
+   *    `autoDisconnectedBySsid` помечается чтобы при выходе из сети
+   *    переподключиться обратно (если включено `autoConnectOnLeave`). */
+  trustedSsidAction: "ignore" | "disconnect";
+  /** Автоподключение когда уходим с доверенной сети обратно в
+   *  обычную. Срабатывает только если VPN был отключён нами же
+   *  по trusted-правилу (а не самим пользователем). */
+  autoConnectOnLeave: boolean;
 };
 
 /**
@@ -270,10 +317,19 @@ const DEFAULTS: Settings = {
   antiDpiTouched: false,
   tunMasking: false,
   killSwitch: false,
+  dnsLeakProtection: false,
   engine: "xray",
   engineTouched: false,
   userAgentTouched: false,
   appRules: [],
+  shortcutToggleVpn: "Ctrl+Shift+V",
+  shortcutShowHide: "Ctrl+Shift+M",
+  shortcutSwitchMode: null,
+  floatingWindow: false,
+  autoLeakTest: true,
+  trustedSsids: [],
+  trustedSsidAction: "ignore",
+  autoConnectOnLeave: false,
 };
 
 const KEY = "nemefisto.settings.v1";

@@ -38,15 +38,53 @@ pub enum Request {
     },
     /// Остановить tun2socks и откатить добавленные routes.
     TunStop,
-    /// Включить kill switch — Windows Firewall блокирует весь outbound
-    /// кроме allowlist (loopback / LAN / `server_ip` / public DNS).
-    /// Этап 6.D / 13.D.
+    /// Включить kill switch (этап 13.D — настоящий WFP).
+    ///
+    /// `server_ips` — список IP-адресов VPN-сервера (Tauri-main делает
+    /// DNS-резолв перед вызовом, потому что после включения kill-switch'а
+    /// DNS-запросы вне VPN заблокированы).
+    ///
+    /// `allow_lan` — пускать ли локальную сеть (10/8, 172.16/12,
+    /// 192.168/16, 169.254/16, fe80::/10, ff00::/8).
+    ///
+    /// `allow_app_paths` — абсолютные пути к нашим бинарям, которым
+    /// разрешён исходящий трафик (xray.exe, mihomo.exe, tun2socks.exe).
+    /// Без этого VPN-движок не сможет соединиться даже если IP сервера
+    /// есть в server_ips.
     KillSwitchEnable {
-        server_ip: String,
+        #[serde(default)]
+        server_ips: Vec<String>,
+        #[serde(default)]
+        allow_lan: bool,
+        #[serde(default)]
+        allow_app_paths: Vec<String>,
+        /// DNS leak protection (этап 13.D step B): блокировать весь
+        /// :53/UDP+TCP трафик кроме явно разрешённых IP.
+        #[serde(default)]
+        block_dns: bool,
+        /// IPv4 адреса VPN-DNS которые остаются разрешены при `block_dns`.
+        /// В TUN-mode обычно [`198.18.0.1`] (наш TUN gateway).
+        #[serde(default)]
+        allow_dns_ips: Vec<String>,
     },
-    /// Выключить kill switch — восстановить default-allow policy и
-    /// удалить наши firewall rules.
+    /// Выключить kill switch — drop'ает WFP DYNAMIC engine,
+    /// все наши фильтры удаляются автоматически.
     KillSwitchDisable,
+    /// Heartbeat для kill-switch watchdog (этап 13.D).
+    /// Tauri-main шлёт каждые ~20 сек пока активен kill-switch. Если
+    /// helper не получит heartbeat 60+ секунд — фильтры автоматически
+    /// снимаются (страховка от зависания main-процесса).
+    KillSwitchHeartbeat,
+    /// Emergency cleanup всех WFP-фильтров с нашим provider GUID.
+    /// Используется UI-кнопкой «аварийный сброс» — даже если main
+    /// сейчас не имеет активного kill-switch state, удалит всё что
+    /// потенциально зависло от прошлых сессий.
+    KillSwitchForceCleanup,
+    /// Cleanup orphan TUN-адаптеров (`nemefisto-*`) и half-default
+    /// routes через `198.18.0.1`. Используется UI-кнопкой
+    /// «восстановить сеть» когда видимо, что что-то осталось от
+    /// упавшей сессии. Безопасно вызывать только когда VPN не активен.
+    OrphanCleanup,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -42,13 +42,50 @@ pub async fn handle(req: Request) -> Response {
             Ok(()) => Response::Ok,
             Err(e) => Response::err(format!("tun_stop: {e:#}")),
         },
-        Request::KillSwitchEnable { server_ip } => match firewall::enable(&server_ip).await {
-            Ok(()) => Response::Ok,
-            Err(e) => Response::err(format!("kill_switch_enable: {e:#}")),
-        },
+        Request::KillSwitchEnable {
+            server_ips,
+            allow_lan,
+            allow_app_paths,
+            block_dns,
+            allow_dns_ips,
+        } => {
+            let paths: Vec<std::path::PathBuf> = allow_app_paths
+                .into_iter()
+                .map(std::path::PathBuf::from)
+                .collect();
+            // 13.D step A: если TUN-режим активен, добавляем allow для
+            // его interface index. helper сам знает свой TUN — IPC не
+            // расширяем. В proxy-режиме `tun_if` будет None.
+            let tun_if = super::tun::current_tun_interface_index().await;
+            match firewall::enable(
+                server_ips,
+                allow_lan,
+                paths,
+                block_dns,
+                allow_dns_ips,
+                tun_if,
+            )
+            .await
+            {
+                Ok(()) => Response::Ok,
+                Err(e) => Response::err(format!("kill_switch_enable: {e:#}")),
+            }
+        }
         Request::KillSwitchDisable => match firewall::disable().await {
             Ok(()) => Response::Ok,
             Err(e) => Response::err(format!("kill_switch_disable: {e:#}")),
         },
+        Request::KillSwitchHeartbeat => {
+            firewall::heartbeat();
+            Response::Ok
+        }
+        Request::KillSwitchForceCleanup => match firewall::disable().await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("kill_switch_force_cleanup: {e:#}")),
+        },
+        Request::OrphanCleanup => {
+            super::tun::cleanup_orphan_resources().await;
+            Response::Ok
+        }
     }
 }

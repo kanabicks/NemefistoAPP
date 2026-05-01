@@ -78,6 +78,67 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::const_new(None);
 
+/// Текущий interface-index активного TUN-адаптера. Используется
+/// firewall.rs (kill-switch step A) чтобы добавить allow-фильтр для
+/// всего что идёт через TUN — нет надобности перечислять server_ip
+/// и app-id отдельно, любой TUN-трафик пропускается.
+///
+/// Возвращает `None` если TUN не активен (proxy-mode).
+pub async fn current_tun_interface_index() -> Option<u32> {
+    let g = STATE.lock().await;
+    g.as_ref().map(|s| s.tun_index)
+}
+
+/// 9.E — Cleanup orphan TUN-ресурсов на старте helper-сервиса.
+///
+/// После аварийного завершения (kernel panic, kill -9, hardware crash)
+/// в системе могут остаться:
+///   1. WinTUN-адаптеры с префиксом `nemefisto-` — обычно их убирает
+///      tun2socks при exit, но при kill-9 они «зависают» orphan'ами
+///      и блокируют создание нового адаптера.
+///   2. Half-default routes (`0.0.0.0/1` и `128.0.0.0/1` через
+///      `198.18.0.1`) — наш приём перебить системный default. При
+///      нормальном `stop` они снимаются, при аварии остаются и
+///      ломают любые сетевые подключения пока не удалить вручную.
+///
+/// Best-effort: каждая операция игнорирует свои ошибки. Запускается
+/// **в фоне** (`tokio::spawn` в service_loop) чтобы не блокировать
+/// открытие pipe-сервера на 2-5 секунд PowerShell-старта. Первое
+/// подключение клиента может прийти раньше cleanup'а — это безопасно
+/// благодаря guard'у на STATE: если TUN активен (client уже сделал
+/// `tun_start`), мы не трогаем nemefisto-* адаптеры.
+pub async fn cleanup_orphan_resources() {
+    // Guard: если TUN активен — кто-то быстрее нас сделал tun_start,
+    // не удаляем потенциально живой адаптер с тем же префиксом. Маршруты
+    // тоже не трогаем — они сейчас в работе.
+    if STATE.lock().await.is_some() {
+        eprintln!("[helper-tun] cleanup orphan пропущен: TUN активен");
+        return;
+    }
+
+    // 1. Удаляем все nemefisto-* адаптеры. PowerShell wildcard
+    // обрабатывает Get-NetAdapter сам, безопасных имён это не
+    // затронет — префикс уникален для нашего приложения.
+    let wildcard = format!("{TUN_NAME_PREFIX}*");
+    if let Err(e) = routing::cleanup_orphan_tun(&wildcard).await {
+        eprintln!("[helper-tun] cleanup_orphan_tun({wildcard}) → {e}");
+    }
+
+    // 2. Удаляем half-default routes только наши (NextHop=198.18.0.1).
+    // Если другой VPN использует те же префиксы с другим gateway —
+    // мы их не тронем (проверка по nexthop в delete_route_with_nexthop).
+    if let Err(e) =
+        routing::delete_route_with_nexthop(HALF_LOW_DST, HALF_MASK, TUN_GATEWAY).await
+    {
+        eprintln!("[helper-tun] cleanup orphan {HALF_LOW_DST}/1 → {e}");
+    }
+    if let Err(e) =
+        routing::delete_route_with_nexthop(HALF_HIGH_DST, HALF_MASK, TUN_GATEWAY).await
+    {
+        eprintln!("[helper-tun] cleanup orphan {HALF_HIGH_DST}/1 → {e}");
+    }
+}
+
 pub async fn start(
     socks_port: u16,
     server_host: &str,

@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2.3.5"
@@ -29,7 +30,7 @@ serde_yaml = "0.9.34"
 base64 = "0.22.1"
 uuid = { version = "1.23.1", features = ["v4"] }
 anyhow = "1.0.102"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "socks", "json"] }
 tokio = { version = "1", features = ["net", "time", "rt", "io-util", "macros", "sync", "process"] }
 futures = "0.3"
 
@@ -44,8 +45,17 @@ windows-sys = { version = "0.59", features = [
     "Win32_Security",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
+    # 13.D: WFP API (FwpmEngineOpen0, FwpmFilterAdd0, FWPM_LAYER_*).
+    # Используется только в helper'е — но features в windows-sys
+    # глобальные на крейт, поэтому объявляем здесь.
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
     "Win32_Networking_WinSock",
     "Win32_System_Console",
+    # 9.B: EnumProcesses + K32GetModuleBaseNameW для детекта запущенных
+    # сторонних VPN-клиентов (без admin, PROCESS_QUERY_LIMITED_INFORMATION).
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Rpc",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
