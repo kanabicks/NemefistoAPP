@@ -103,6 +103,10 @@ export function useGlobalShortcuts() {
       // Не переключаем посреди активной сессии — нужно сначала
       // отключиться, иначе старый туннель остаётся висеть.
       if (v.status !== "stopped" && v.status !== "error") return;
+      // 13.R: в strict-режиме у пользователя только TUN — никаких
+      // переключений не делаем, иначе глобальный шорткат бы возвращал
+      // proxy и обходил настройку.
+      if (useSettingsStore.getState().tunOnlyStrict) return;
       v.setMode(v.mode === "proxy" ? "tun" : "proxy");
     };
 

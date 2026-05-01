@@ -20,7 +20,7 @@ import {
   type SortMode,
   type Theme,
 } from "../stores/settingsStore";
-import { APP_VERSION } from "../lib/constants";
+import { APP_VERSION, GITHUB_URL, PRIVACY_URL, LICENSE_URL } from "../lib/constants";
 import { openDashboard, openSupport } from "../lib/openExternal";
 import { runLeakTest } from "../lib/leakTest";
 import { showToast } from "../stores/toastStore";
@@ -558,12 +558,23 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     onChange={(v) => s.set("tunMasking", v)}
                   />
                 </div>
-              </section>
 
-              <ComingSoonNote
-                title="TUN-only strict mode"
-                desc="скрыть proxy-режим вообще. для параноиков — никакого SOCKS-сокета на loopback, только TUN"
-              />
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">только TUN-режим (strict)</div>
+                    <div className="settings-row-hint">
+                      скрыть переключатель proxy/tun на главном экране и
+                      работать только через TUN-адаптер. без локального
+                      SOCKS5-сокета на loopback — для параноиков, не желающих
+                      оставлять никакой VPN-поверхности на 127.0.0.1
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.tunOnlyStrict}
+                    onChange={(v) => s.set("tunOnlyStrict", v)}
+                  />
+                </div>
+              </section>
             </>
           )}
 
@@ -1167,11 +1178,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 title="speed-test через VPN"
                 desc="замер скорости через cloudflare CDN. опционально — авто-замер раз в неделю на всех серверах"
               />
-              <ComingSoonNote
-                title="backup/restore настроек через ссылку"
-                desc="экспорт настроек+подписки в JSON-файл или nemefisto://-ссылку. удобно при переезде на другой ПК"
-              />
-
               <LogsBlock />
 
               <section className="settings-section">
@@ -1226,7 +1232,46 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   >
                     @nemefistovpn_bot
                   </button>
+                  <span className="about-key">github</span>
+                  <button
+                    type="button"
+                    onClick={() => void openUrl(GITHUB_URL)}
+                    className="about-link"
+                  >
+                    kanabicks/NemefistoAPP
+                  </button>
+                  <span className="about-key">приватность</span>
+                  <button
+                    type="button"
+                    onClick={() => void openUrl(PRIVACY_URL)}
+                    className="about-link"
+                  >
+                    PRIVACY.md
+                  </button>
+                  <span className="about-key">лицензия</span>
+                  <button
+                    type="button"
+                    onClick={() => void openUrl(LICENSE_URL)}
+                    className="about-link"
+                  >
+                    MIT
+                  </button>
                 </div>
+                <p
+                  className="hint"
+                  style={{
+                    textTransform: "none",
+                    letterSpacing: 0,
+                    color: "var(--fg-dim)",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    marginTop: 12,
+                  }}
+                >
+                  nemefisto не собирает телеметрию, не отправляет crash-репорты
+                  «домой» и не имеет remote-control механизмов. все логи —
+                  локально на этом компьютере. подробнее в PRIVACY.md.
+                </p>
               </section>
 
               <ResetBlock onAfterReset={onClose} />

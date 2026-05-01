@@ -172,6 +172,15 @@ export type Settings = {
    *  МАХ/ВК/Госуслуг по `GetAdaptersAddresses`. */
   tunMasking: boolean;
 
+  /** TUN-only «strict mode» (этап 13.R). Если on — proxy-режим скрыт
+   *  из UI, остаётся только TUN. Параноидальная опция: пользователь
+   *  не хочет иметь живой SOCKS5 на loopback (даже на рандомном
+   *  порту) и предпочитает чтобы трафик шёл строго через WinTUN
+   *  адаптер. При активации — если текущий режим proxy, авто-переключаем
+   *  на tun. Default off (proxy быстрее стартует и по умолчанию
+   *  привычнее пользователям). */
+  tunOnlyStrict: boolean;
+
   /** Kill switch (этап 13.D — WFP). Если on — при connect helper-сервис
    *  ставит фильтры в Windows Filtering Platform на уровне ядра:
    *  block-all + allowlist (loopback, опц. LAN, IP VPN-сервера, наши
@@ -332,6 +341,7 @@ const DEFAULTS: Settings = {
   antiDpiResolveBootstrap: "1.1.1.1",
   antiDpiTouched: false,
   tunMasking: false,
+  tunOnlyStrict: false,
   killSwitch: false,
   killSwitchStrict: false,
   autoApplyMinimalRuRules: false,

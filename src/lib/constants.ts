@@ -4,6 +4,10 @@ export const DASHBOARD_URL = "https://web.nemefisto.online";
 export const SUPPORT_URL = "https://t.me/nemefistovpn_bot";
 export const APP_VERSION = "0.1.0";
 
+export const GITHUB_URL = "https://github.com/kanabicks/NemefistoAPP";
+export const PRIVACY_URL = `${GITHUB_URL}/blob/main/PRIVACY.md`;
+export const LICENSE_URL = `${GITHUB_URL}/blob/main/LICENSE`;
+
 export const STATUS_PILL: Record<VpnStatus, { label: string; cls: string }> = {
   stopped: { label: "STANDBY", cls: "" },
   starting: { label: "ПОДКЛЮЧЕНИЕ", cls: "is-busy" },

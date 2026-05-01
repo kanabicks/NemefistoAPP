@@ -69,6 +69,7 @@ function App() {
   );
   const floatingWindow = useSettingsStore((x) => x.floatingWindow);
   const autoLeakTest = useSettingsStore((x) => x.autoLeakTest);
+  const tunOnlyStrict = useSettingsStore((x) => x.tunOnlyStrict);
   const setSetting = useSettingsStore((x) => x.set);
   const socksPort = useVpnStore((s) => s.socksPort);
 
@@ -83,6 +84,18 @@ function App() {
   // event'ы из бэка. Хук сам читает settings.trustedSsids и
   // autoDisconnectedBySsid runtime-флаг.
   useTrustedWifi();
+
+  // 13.R: TUN-only strict mode. Если пользователь только что включил
+  // toggle и на главном экране был выбран proxy-режим — авто-переключаем
+  // на tun. Иначе ModeSegment скрыт, и пользователь не может вручную
+  // вернуться к proxy. Эффект — на изменение tunOnlyStrict, а не на
+  // mount, чтобы не сбрасывать сохранённый proxy-режим при выключенном
+  // toggle.
+  useEffect(() => {
+    if (tunOnlyStrict && mode === "proxy") {
+      setMode("tun");
+    }
+  }, [tunOnlyStrict, mode, setMode]);
 
   // ── Старт: refresh статуса VPN, кеш списка, HWID, on-open actions ─────────
   useEffect(() => {
@@ -319,8 +332,10 @@ function App() {
             )}
             {/* ModeSegment скрыт пока подписка не добавлена — переключать
                 режим прокси/tun без серверов смысла нет, и Welcome card
-                с инструкцией читается чище без лишних элементов. */}
-            {servers.length > 0 && (
+                с инструкцией читается чище без лишних элементов. 13.R:
+                при tunOnlyStrict выбор режима прячем — работает только
+                TUN, useEffect выше уже гарантирует mode === "tun". */}
+            {servers.length > 0 && !tunOnlyStrict && (
               <div className="grid-mode">
                 <ModeSegment
                   mode={mode}
