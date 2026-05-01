@@ -4,6 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useVpnStore } from "../stores/vpnStore";
 import { showToast } from "../stores/toastStore";
+import {
+  exportBackupToDocuments,
+  fetchBackupFromUrl,
+  parseBackup,
+  useBackupModalStore,
+} from "./backup";
 
 /**
  * Поддерживаемые deep-link-ссылки:
@@ -135,6 +141,95 @@ export function handleDeepLink(rawUrl: string) {
     case "status": {
       // Просто вынести приложение на передний план. Полезно для интеграций
       // (виджет/скрипт хочет «открой клиент»).
+      void focusMainWindow();
+      break;
+    }
+    case "export": {
+      // 12.D — `nemefisto://export` сохраняет backup в Documents и
+      // показывает toast с путём.
+      void exportBackupToDocuments()
+        .then((path) => {
+          showToast({
+            kind: "success",
+            title: "настройки выгружены",
+            message: path,
+            durationMs: 8000,
+          });
+        })
+        .catch((e) => {
+          showToast({
+            kind: "error",
+            title: "не удалось выгрузить",
+            message: String(e),
+          });
+        });
+      void focusMainWindow();
+      break;
+    }
+    case "import-from-url": {
+      // 12.D — `nemefisto://import-from-url/<url>` — скачать backup и
+      // открыть preview-модалку. payload — URL, может быть в pathPayload
+      // или ?url=.
+      const raw = pathPayload || queryUrl || "";
+      const url = decodeUriOrPassthrough(raw);
+      if (!/^https?:\/\//i.test(url)) {
+        showToast({
+          kind: "error",
+          title: "import-from-url",
+          message: "ожидался http(s):// URL",
+        });
+        return;
+      }
+      void fetchBackupFromUrl(url)
+        .then((json) => {
+          const backup = parseBackup(json);
+          useBackupModalStore.getState().show(backup);
+        })
+        .catch((e) => {
+          showToast({
+            kind: "error",
+            title: "import-from-url",
+            message: String(e),
+          });
+        });
+      void focusMainWindow();
+      break;
+    }
+    case "import-settings": {
+      // 12.D — `nemefisto://import-settings?data=<base64-or-json>` или
+      // `nemefisto://import-settings/<base64>` — открыть preview-modal
+      // из inline payload. Имя выбрано чтобы не конфликтовать с
+      // существующим `import` который импортирует подписку.
+      const raw = pathPayload || queryData || queryUrl || "";
+      let json = "";
+      try {
+        json = decodeURIComponent(raw);
+      } catch {
+        json = raw;
+      }
+      // Если не похоже на JSON — пробуем base64-decode.
+      if (!json.trim().startsWith("{")) {
+        try {
+          json = atob(json.replace(/-/g, "+").replace(/_/g, "/"));
+        } catch {
+          showToast({
+            kind: "error",
+            title: "import-settings",
+            message: "не base64 и не JSON",
+          });
+          return;
+        }
+      }
+      try {
+        const backup = parseBackup(json);
+        useBackupModalStore.getState().show(backup);
+      } catch (e) {
+        showToast({
+          kind: "error",
+          title: "import-settings",
+          message: String(e),
+        });
+      }
       void focusMainWindow();
       break;
     }

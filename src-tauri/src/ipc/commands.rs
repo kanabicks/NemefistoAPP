@@ -1383,6 +1383,69 @@ pub fn export_diagnostics() -> Result<String, String> {
     Ok(zip_path.to_string_lossy().into_owned())
 }
 
+// ─── 12.D — backup/restore настроек ─────────────────────────────────────────
+
+/// Записать backup-JSON в `%USERPROFILE%\Documents\nemefisto-backup-<ts>.json`.
+///
+/// Frontend сам собирает JSON (с whitelist'ом полей и `schema_version`),
+/// мы лишь сохраняем файл — нет смысла дублировать сериализацию настроек
+/// на Rust-стороне. Возвращаем абсолютный путь, который UI показывает
+/// в toast.
+///
+/// Безопасность: ничего opaque-нечитаемого (HWID, Credential Manager
+/// записи, токены) сюда не попадёт — это ответственность фронта,
+/// который собирает payload.
+#[tauri::command]
+pub fn export_settings_to_documents(json: String) -> Result<String, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let docs = std::env::var_os("USERPROFILE")
+        .map(|h| std::path::PathBuf::from(h).join("Documents"))
+        .ok_or_else(|| "не удалось определить путь к Documents".to_string())?;
+    if !docs.exists() {
+        std::fs::create_dir_all(&docs).map_err(|e| e.to_string())?;
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = docs.join(format!("nemefisto-backup-{ts}.json"));
+    std::fs::write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// 12.D: скачать backup-JSON по URL (нужен для deep-link
+/// `nemefisto://import-from-url/<url>`). Делается с no-proxy чтобы не
+/// зацикливаться через активный VPN. Размер ограничен 256 KB —
+/// настройки не должны весить больше, любой больший payload — подозрение
+/// на mistake/SSRF на large endpoint.
+#[tauri::command]
+pub async fn fetch_settings_backup(url: String) -> Result<String, String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("ожидается http(s):// URL".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > 256 * 1024 {
+            return Err(format!("файл слишком большой: {} байт (>256 КБ)", len));
+        }
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if bytes.len() > 256 * 1024 {
+        return Err(format!("файл слишком большой: {} байт (>256 КБ)", bytes.len()));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|e| format!("не UTF-8: {e}"))
+}
+
 // ─── 11.C/D/E — управление routing-профилями ──────────────────────────────────
 
 use crate::config::routing_profile::{

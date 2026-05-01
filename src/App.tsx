@@ -16,6 +16,8 @@ import { CustomCursor } from "./components/effects/CustomCursor";
 import { WideAmbient } from "./components/effects/WideAmbient";
 import { AnnounceBanner } from "./components/AnnounceBanner";
 import { CrashRecoveryDialog } from "./components/CrashRecoveryDialog";
+import { BackupPreviewModal } from "./components/BackupPreviewModal";
+import { useBackupModalStore } from "./lib/backup";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
 import { Welcome } from "./components/Welcome";
@@ -369,9 +371,19 @@ function App() {
       )}
 
       <CrashRecoveryDialog />
+      <BackupPreview />
       <Toaster />
     </>
   );
+}
+
+/** 12.D — рендерит preview-модалку, когда deep-link или кнопка
+ *  «импорт» положили backup в `useBackupModalStore.pending`. */
+function BackupPreview() {
+  const pending = useBackupModalStore((s) => s.pending);
+  const close = useBackupModalStore((s) => s.close);
+  if (!pending) return null;
+  return <BackupPreviewModal backup={pending} onClose={close} />;
 }
 
 export default App;

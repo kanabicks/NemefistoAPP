@@ -23,6 +23,12 @@ import {
 import { APP_VERSION, GITHUB_URL, PRIVACY_URL, LICENSE_URL } from "../lib/constants";
 import { openDashboard, openSupport } from "../lib/openExternal";
 import { runLeakTest } from "../lib/leakTest";
+import {
+  exportBackupToDocuments,
+  parseBackup,
+  readBackupFile,
+  useBackupModalStore,
+} from "../lib/backup";
 import { showToast } from "../stores/toastStore";
 import { useEffectiveSettings } from "../lib/hooks/useEffectiveSettings";
 import { Toggle } from "./Toggle";
@@ -1178,6 +1184,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 title="speed-test через VPN"
                 desc="замер скорости через cloudflare CDN. опционально — авто-замер раз в неделю на всех серверах"
               />
+              <BackupBlock />
+
               <LogsBlock />
 
               <section className="settings-section">
@@ -1203,6 +1211,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://toggle</span>
                     <span className="scheme-desc">переключить состояние</span>
+                  </div>
+                  <div className="scheme-row">
+                    <span className="scheme-url">nemefisto://export</span>
+                    <span className="scheme-desc">выгрузить настройки в Documents</span>
+                  </div>
+                  <div className="scheme-row">
+                    <span className="scheme-url">nemefisto://import-from-url/&lt;url&gt;</span>
+                    <span className="scheme-desc">скачать и предпросмотреть backup</span>
                   </div>
                 </div>
               </section>
@@ -1488,6 +1504,101 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
 }
 
 // ── Logs viewer ──────────────────────────────────────────────────────────────
+
+// ── Backup block (12.D) ────────────────────────────────────────────────────
+
+/**
+ * 12.D — экспорт/импорт настроек.
+ *
+ * - **выгрузить в файл** → пишем JSON в `~/Documents/nemefisto-backup-<ts>.json`,
+ *   показываем toast с путём.
+ * - **загрузить из файла** → `<input type="file">` + FileReader →
+ *   `parseBackup` → `useBackupModalStore.show(...)` → preview-модалка
+ *   с diff'ом и кнопкой «применить».
+ *
+ * Также активны deep-link'и `nemefisto://export` и
+ * `nemefisto://import-from-url/<url>` (см. lib/deepLinks.ts).
+ */
+function BackupBlock() {
+  const [busy, setBusy] = useState(false);
+
+  const onExport = async () => {
+    setBusy(true);
+    try {
+      const path = await exportBackupToDocuments();
+      showToast({
+        kind: "success",
+        title: "выгружено",
+        message: path,
+        durationMs: 8000,
+      });
+    } catch (e) {
+      showToast({ kind: "error", title: "не удалось выгрузить", message: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // позволяет выбрать тот же файл повторно
+    if (!file) return;
+    void readBackupFile(file)
+      .then(parseBackup)
+      .then((backup) => {
+        useBackupModalStore.getState().show(backup);
+      })
+      .catch((err) => {
+        showToast({
+          kind: "error",
+          title: "не удалось прочитать backup",
+          message: String(err),
+        });
+      });
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">backup настроек</div>
+      <p
+        className="hint"
+        style={{
+          textTransform: "none",
+          letterSpacing: 0,
+          color: "var(--fg-dim)",
+          fontSize: 12,
+          lineHeight: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        выгружает все настройки + URL подписки в JSON-файл (HWID и
+        прочие машинно-зависимые данные не попадают). при импорте сначала
+        покажется превью изменений.
+      </p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={busy}
+          className="btn-ghost"
+        >
+          выгрузить в файл
+        </button>
+        <label className="btn-ghost" style={{ cursor: "pointer" }}>
+          загрузить из файла
+          <input
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={onImport}
+          />
+        </label>
+      </div>
+    </section>
+  );
+}
+
+// ── Logs block ────────────────────────────────────────────────────────────
 
 function LogsBlock() {
   const [text, setText] = useState("");
