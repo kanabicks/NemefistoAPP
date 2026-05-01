@@ -930,6 +930,28 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 подписки)
               </div>
               <RoutingProfilesPanel />
+              <section className="settings-section">
+                <div className="settings-section-title">авто-шаблон</div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">
+                      «минимальные правила РФ» если профиль не выбран
+                    </div>
+                    <div className="settings-row-hint">
+                      когда нет активного routing-профиля — применяется
+                      встроенный шаблон: <code>geosite:ru</code> +{" "}
+                      <code>geoip:ru</code> + LAN → DIRECT, реклама
+                      (<code>geosite:category-ads-all</code>) → BLOCK,
+                      остальное → PROXY. полезно из коробки без импорта
+                      внешних правил
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.autoApplyMinimalRuRules}
+                    onChange={(v) => s.set("autoApplyMinimalRuRules", v)}
+                  />
+                </div>
+              </section>
               <ComingSoonNote
                 title="WFP per-app routing"
                 desc="per-process правила в обоих движках через kernel-driver Windows Filtering Platform. альтернатива Mihomo PROCESS-NAME"

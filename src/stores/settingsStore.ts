@@ -190,6 +190,13 @@ export type Settings = {
    *  ожиданиями (Mullvad/Nord/Proton-семантика). */
   killSwitchStrict: boolean;
 
+  /** 13.Q: если активного routing-профиля нет — применять встроенный
+   *  «минимальный RU» шаблон (geosite:ru → DIRECT, geoip:ru → DIRECT,
+   *  geosite:category-ads-all → BLOCK). Default off для совместимости —
+   *  пользователи которые не хотят split-routing не увидят неожиданного
+   *  поведения. */
+  autoApplyMinimalRuRules: boolean;
+
   /** DNS leak protection (этап 13.D step B). Если on — при активном
    *  kill-switch блокируется весь :53/UDP+TCP кроме нашего VPN-DNS.
    *  Защита от приложений которые делают DNS-запросы мимо VPN. ⚠️ В
@@ -327,6 +334,7 @@ const DEFAULTS: Settings = {
   tunMasking: false,
   killSwitch: false,
   killSwitchStrict: false,
+  autoApplyMinimalRuRules: false,
   dnsLeakProtection: false,
   engine: "xray",
   engineTouched: false,

@@ -342,6 +342,9 @@ pub async fn connect(
     // 13.S strict mode для kill-switch: убирает общий allow-app для xray/mihomo,
     // оставляет только allow на server_ips. Direct outbound xray блокируется.
     kill_switch_strict: Option<bool>,
+    // 13.Q: если активного routing-профиля нет — применять встроенный
+    // минимальный RU-шаблон (geosite:ru → DIRECT, ads → BLOCK).
+    auto_apply_minimal_ru_rules: Option<bool>,
     app_rules: Option<Vec<AppRule>>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
@@ -350,12 +353,24 @@ pub async fn connect(
     ks_ctx: State<'_, KillSwitchState>,
     routing_store: State<'_, crate::config::routing_store::RoutingStoreState>,
 ) -> Result<ConnectResult, String> {
+    // Долг: TUN 15-секундная задержка первого запроса. Включаем
+    // подробное timing-логирование connect-flow чтобы видеть где
+    // именно gap. После накопления логов — оптимизируем узкое место
+    // (warmup, helper round-trip, tun_start, и т.д.).
+    let connect_start = std::time::Instant::now();
+    let stamp = |label: &str| {
+        let elapsed = connect_start.elapsed().as_millis();
+        eprintln!("[connect-timing][+{elapsed}ms] {label}");
+    };
+    stamp("start");
+
     // Pre-flight self-healing: если в системе остались наши orphan'ы от
     // упавшей сессии (системный прокси указывает на наш диапазон портов
     // или есть half-default routes), молча чистим перед connect. Иначе
     // следующий xray встретит «сломанную» среду и сам сломается.
     if platform::proxy::is_proxy_pointing_to_us() {
         let _ = platform::proxy::force_clear_system_proxy();
+        stamp("preflight: cleared orphan proxy");
     }
 
     // Клонируем ProxyEntry, чтобы сразу освободить lock на список серверов
@@ -451,13 +466,20 @@ pub async fn connect(
         // на Windows нет нативной поддержки в Xray (требует kernel-driver,
         // см. план 13.G WFP per-app routing).
         let rules_slice: &[AppRule] = app_rules.as_deref().unwrap_or(&[]);
-        // 11.F: routing-профиль если активен. Извлекаем snapshot — lock
-        // освобождается до вызова build (build синхронный, на снапшоте).
+        // 11.F + 13.Q: активный routing-профиль или встроенный
+        // минимальный RU-шаблон (если включён toggle и активного нет).
         let active_profile = routing_store
             .inner
             .lock()
             .ok()
-            .and_then(|g| g.active().map(|e| e.profile.clone()));
+            .and_then(|g| g.active().map(|e| e.profile.clone()))
+            .or_else(|| {
+                if auto_apply_minimal_ru_rules.unwrap_or(false) {
+                    Some(crate::config::routing_profile::RoutingProfile::minimal_ru())
+                } else {
+                    None
+                }
+            });
         let cfg = mihomo_config::build(
             &entry,
             default_socks,
@@ -504,15 +526,22 @@ pub async fn connect(
             (cfg.json, cfg.socks_port, cfg.http_port)
         };
 
-        // 11.F: применить активный routing-профиль если есть. Для xray-json
-        // (custom config из подписки) — НЕ применяем, у пользователя свои
-        // правила в подписке которые приоритетнее.
+        // 11.F + 13.Q: применить активный routing-профиль или встроенный
+        // минимальный RU-шаблон. Для xray-json (custom config из подписки)
+        // — НЕ применяем, у пользователя свои правила приоритетнее.
         if entry.protocol != "xray-json" {
             let active_profile = routing_store
                 .inner
                 .lock()
                 .ok()
-                .and_then(|g| g.active().map(|e| e.profile.clone()));
+                .and_then(|g| g.active().map(|e| e.profile.clone()))
+                .or_else(|| {
+                    if auto_apply_minimal_ru_rules.unwrap_or(false) {
+                        Some(crate::config::routing_profile::RoutingProfile::minimal_ru())
+                    } else {
+                        None
+                    }
+                });
             if let Some(p) = active_profile.as_ref() {
                 xray_config::apply_routing_profile(&mut config_json, p);
             }
@@ -525,17 +554,22 @@ pub async fn connect(
         (sp, hp)
     };
 
+    stamp("xray/mihomo started");
+
     match mode.as_str() {
         "proxy" => {
             platform::proxy::set_system_proxy(socks_port, http_port)
                 .map_err(|e| e.to_string())?;
+            stamp("system proxy set");
         }
         "tun" => {
             // Прогреваем Xray ДО перенаправления трафика в TUN. Иначе первый
             // user-запрос ждёт burstObservatory + REALITY handshake (10-20с).
+            stamp("tun: warmup_xray begin");
             if let Err(e) = warmup_xray(socks_port).await {
                 eprintln!("[connect] warmup_xray не удался ({e}) — продолжаем, первый запрос может тормозить");
             }
+            stamp("tun: warmup_xray done");
 
             // Гарантируем что helper-сервис запущен. Если нет — будет UAC
             // и авто-установка. После первого согласия пользователя сервис
@@ -545,6 +579,7 @@ pub async fn connect(
                 let _ = mihomo.stop();
                 return Err(format!("helper-сервис недоступен: {e}"));
             }
+            stamp("tun: helper ensure_running done");
 
             // tun_params гарантировано Some — установлено выше
             let (server_host, tun2socks_path) = tun_params.unwrap();
@@ -560,6 +595,7 @@ pub async fn connect(
                 Some((u, p)) => (Some(u.clone()), Some(p.clone())),
                 None => (None, None),
             };
+            stamp("tun: tun_start IPC begin");
             if let Err(e) = platform::helper_client::tun_start(
                 socks_port,
                 server_host,
@@ -578,6 +614,7 @@ pub async fn connect(
                     "TUN-режим не запустился: {e}\n\nПроверьте services.msc → NemefistoHelper, и что tun2socks.exe + wintun.dll лежат рядом друг с другом."
                 ));
             }
+            stamp("tun: tun_start IPC done");
         }
         other => {
             let _ = xray.stop();
@@ -761,7 +798,10 @@ pub async fn connect(
             allow_dns_ips,
             strict_mode: strict,
         });
+        stamp("kill_switch enabled");
     }
+
+    stamp("connect done");
 
     // В UI возвращаем креды только в LAN-режиме — там клиенты должны
     // ввести их вручную. В TUN-режиме они уже переданы tun2socks; в

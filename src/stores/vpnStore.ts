@@ -171,6 +171,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     const killSwitch = useSettingsStore.getState().killSwitch;
     const killSwitchStrict =
       useSettingsStore.getState().killSwitchStrict;
+    const autoApplyMinimalRuRules =
+      useSettingsStore.getState().autoApplyMinimalRuRules;
     const dnsLeakProtection =
       useSettingsStore.getState().dnsLeakProtection;
     const antiDpi = buildEffectiveAntiDpi();
@@ -204,6 +206,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         killSwitch,
         dnsLeakProtection,
         killSwitchStrict,
+        autoApplyMinimalRuRules,
         appRules,
       });
       set({
