@@ -218,25 +218,36 @@ function App() {
     return () => window.clearInterval(id);
   }, [status, killSwitchEnabled]);
 
-  // 13.D: live-toggle kill-switch без disconnect/connect. При активном
-  // VPN пользователь в Settings меняет переключатель — реактивно
-  // применяем через `kill_switch_apply`. Параметры (server_ips,
-  // app-paths, dns) Rust берёт из контекста, сохранённого в connect.
+  // 13.D + 13.S: live-toggle kill-switch (включение/выключение и
+  // strict-режим) без disconnect/connect. При активном VPN
+  // пользователь в Settings меняет переключатели — реактивно применяем
+  // через `kill_switch_apply`. Параметры (server_ips, app-paths, dns)
+  // Rust берёт из контекста, сохранённого в connect; strict передаём
+  // явно — backend обновит контекст перед re-apply.
+  //
   // Через useRef отличаем «первый рендер с уже включённым» (connect
   // сам всё применил) от «user toggle» — без этого при каждом connect
   // дёргалась бы лишняя re-apply.
+  const killSwitchStrictEnabled = useSettingsStore((x) => x.killSwitchStrict);
   const prevKillSwitch = useRef(killSwitchEnabled);
+  const prevKillSwitchStrict = useRef(killSwitchStrictEnabled);
   useEffect(() => {
     if (status !== "running") {
       prevKillSwitch.current = killSwitchEnabled;
+      prevKillSwitchStrict.current = killSwitchStrictEnabled;
       return;
     }
-    if (prevKillSwitch.current === killSwitchEnabled) return;
+    const enabledChanged = prevKillSwitch.current !== killSwitchEnabled;
+    const strictChanged =
+      prevKillSwitchStrict.current !== killSwitchStrictEnabled;
+    if (!enabledChanged && !strictChanged) return;
     prevKillSwitch.current = killSwitchEnabled;
-    void invoke("kill_switch_apply", { enabled: killSwitchEnabled }).catch(
-      (e) => console.error("[kill_switch_apply]", e)
-    );
-  }, [status, killSwitchEnabled]);
+    prevKillSwitchStrict.current = killSwitchStrictEnabled;
+    void invoke("kill_switch_apply", {
+      enabled: killSwitchEnabled,
+      strict: killSwitchStrictEnabled,
+    }).catch((e) => console.error("[kill_switch_apply]", e));
+  }, [status, killSwitchEnabled, killSwitchStrictEnabled]);
 
   // ── Авто-подключение к последнему выбранному при старте ────────────────────
   const [didAutoConnect, setDidAutoConnect] = useState(false);

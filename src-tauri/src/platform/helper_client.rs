@@ -58,6 +58,9 @@ pub enum HelperRequest {
         block_dns: bool,
         #[serde(default)]
         allow_dns_ips: Vec<String>,
+        /// 13.S strict mode — без общего allow_app для xray/mihomo.
+        #[serde(default)]
+        strict_mode: bool,
     },
     KillSwitchDisable,
     /// Heartbeat для watchdog: главный шлёт каждые ~20 сек, иначе
@@ -178,6 +181,7 @@ pub async fn kill_switch_enable(
     allow_app_paths: Vec<String>,
     block_dns: bool,
     allow_dns_ips: Vec<String>,
+    strict_mode: bool,
 ) -> Result<()> {
     let resp = send(HelperRequest::KillSwitchEnable {
         server_ips,
@@ -185,6 +189,7 @@ pub async fn kill_switch_enable(
         allow_app_paths,
         block_dns,
         allow_dns_ips,
+        strict_mode,
     })
     .await?;
     match resp {

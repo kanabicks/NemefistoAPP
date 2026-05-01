@@ -33,6 +33,10 @@ anyhow = "1.0.102"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "socks", "json"] }
 tokio = { version = "1", features = ["net", "time", "rt", "io-util", "macros", "sync", "process"] }
 futures = "0.3"
+# 14.F: zip-архив для export_diagnostics (диагностический пакет для саппорта).
+# Без compression-features чтобы не тянуть лишние зависимости — в zip кладём
+# уже мелкие текстовые файлы (логи + JSON), сжатие deflate не критично.
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

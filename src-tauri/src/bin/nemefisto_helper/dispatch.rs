@@ -48,6 +48,7 @@ pub async fn handle(req: Request) -> Response {
             allow_app_paths,
             block_dns,
             allow_dns_ips,
+            strict_mode,
         } => {
             let paths: Vec<std::path::PathBuf> = allow_app_paths
                 .into_iter()
@@ -64,6 +65,7 @@ pub async fn handle(req: Request) -> Response {
                 block_dns,
                 allow_dns_ips,
                 tun_if,
+                strict_mode,
             )
             .await
             {

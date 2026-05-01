@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useRuntimeStore } from "../stores/runtimeStore";
@@ -740,6 +741,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
+                    <div className="settings-row-label">строгий режим</div>
+                    <div className="settings-row-hint">
+                      даже сам xray/mihomo может ходить только на vpn-сервер.
+                      direct-маршруты (например <code>geosite:ru → DIRECT</code>{" "}
+                      из вашего конфига) блокируются. для тех кто хочет
+                      гарантированно «всё через vpn». ⚠️ ru-сайты в split-routing
+                      перестанут открываться. требует включённого kill-switch
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.killSwitchStrict}
+                    onChange={(v) => s.set("killSwitchStrict", v)}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div>
                     <div className="settings-row-label">блокировать прямые dns-запросы</div>
                     <div className="settings-row-hint">
                       все :53/udp+tcp кроме vpn-dns заблокированы. защищает
@@ -808,6 +825,45 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     }}
                   >
                     восстановить
+                  </button>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">выгрузить диагностику</div>
+                    <div className="settings-row-hint">
+                      сохранит zip с логами xray, версией приложения, текущим
+                      состоянием и списком запущенных vpn-процессов в папку
+                      Documents. без телеметрии — только локально, ты сам
+                      решаешь кому отправить файл если нужна помощь
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      void invoke<string>("export_diagnostics")
+                        .then((path) => {
+                          showToast({
+                            kind: "success",
+                            title: "диагностика сохранена",
+                            message: `файл: ${path}\nоткроем папку?`,
+                            durationMs: 8_000,
+                          });
+                          // Открываем explorer на родительской папке.
+                          // Используем уже подключённый tauri-plugin-opener.
+                          const dir = path.replace(/[\\/][^\\/]*$/, "");
+                          void openUrl(dir).catch(() => {});
+                        })
+                        .catch((e) =>
+                          showToast({
+                            kind: "error",
+                            title: "не получилось сохранить",
+                            message: String(e),
+                          })
+                        );
+                    }}
+                  >
+                    выгрузить
                   </button>
                 </div>
               </section>

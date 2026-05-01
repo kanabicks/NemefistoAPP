@@ -224,3 +224,50 @@ pub fn detect_routing_conflicts() -> Vec<String> {
 pub fn detect_routing_conflicts() -> Vec<String> {
     Vec::new()
 }
+
+/// 14.E — есть ли в системе orphan TUN-адаптер с префиксом `nemefisto-`.
+///
+/// Используется при показе recovery dialog'а: если адаптер от прошлой
+/// упавшей сессии не убран — пользователь видит галку «orphan TUN-адаптер»
+/// и может починить через `recover_network`.
+///
+/// Native `GetIfTable2` + проверка `MIB_IF_ROW2.Alias` (поле уже содержит
+/// строку, не надо вызывать ConvertInterfaceLuidToAlias). Быстро, <10ms
+/// даже на машинах с десятком интерфейсов.
+#[cfg(windows)]
+pub fn has_orphan_tun_adapters() -> bool {
+    use windows_sys::Win32::Foundation::NO_ERROR;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        FreeMibTable, GetIfTable2, MIB_IF_TABLE2,
+    };
+
+    unsafe {
+        let mut tbl_ptr: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+        if GetIfTable2(&mut tbl_ptr) != NO_ERROR || tbl_ptr.is_null() {
+            return false;
+        }
+        let tbl = &*tbl_ptr;
+        let rows = std::slice::from_raw_parts(tbl.Table.as_ptr(), tbl.NumEntries as usize);
+        let mut found = false;
+        for row in rows {
+            // Alias — это [u16; 257], читаем до первого нуля.
+            let alias_len = row
+                .Alias
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(row.Alias.len());
+            let alias = String::from_utf16_lossy(&row.Alias[..alias_len]);
+            if alias.to_lowercase().starts_with("nemefisto-") {
+                found = true;
+                break;
+            }
+        }
+        FreeMibTable(tbl_ptr as *mut _);
+        found
+    }
+}
+
+#[cfg(not(windows))]
+pub fn has_orphan_tun_adapters() -> bool {
+    false
+}

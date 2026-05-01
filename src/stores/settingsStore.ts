@@ -181,6 +181,15 @@ export type Settings = {
    *  на старте helper'а. */
   killSwitch: boolean;
 
+  /** Strict-mode kill-switch (этап 13.S). Если on — даже сам xray/mihomo
+   *  не имеет общего outbound-allow, только на server_ips. Блокирует
+   *  direct-маршруты xray (например `geosite:ru → DIRECT`). Закрывает
+   *  кейс «kill-switch on = ничего не идёт мимо VPN». ⚠️ Несовместим
+   *  со split-routing конфигами где RU-сайты идут direct — они
+   *  перестанут открываться. Default off для совместимости с типовыми
+   *  ожиданиями (Mullvad/Nord/Proton-семантика). */
+  killSwitchStrict: boolean;
+
   /** DNS leak protection (этап 13.D step B). Если on — при активном
    *  kill-switch блокируется весь :53/UDP+TCP кроме нашего VPN-DNS.
    *  Защита от приложений которые делают DNS-запросы мимо VPN. ⚠️ В
@@ -317,6 +326,7 @@ const DEFAULTS: Settings = {
   antiDpiTouched: false,
   tunMasking: false,
   killSwitch: false,
+  killSwitchStrict: false,
   dnsLeakProtection: false,
   engine: "xray",
   engineTouched: false,

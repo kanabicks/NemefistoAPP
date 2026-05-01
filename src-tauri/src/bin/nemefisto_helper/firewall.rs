@@ -123,6 +123,7 @@ pub async fn enable(
     block_dns: bool,
     allow_dns_ips: Vec<String>,
     tun_interface_index: Option<u32>,
+    strict_mode: bool,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         enable_blocking(
@@ -132,6 +133,7 @@ pub async fn enable(
             block_dns,
             allow_dns_ips,
             tun_interface_index,
+            strict_mode,
         )
     })
     .await
@@ -145,15 +147,17 @@ fn enable_blocking(
     block_dns: bool,
     allow_dns_ips: Vec<String>,
     tun_interface_index: Option<u32>,
+    strict_mode: bool,
 ) -> Result<()> {
     eprintln!(
-        "[wfp-killswitch] ON: server_ips={:?}, allow_lan={}, apps={}, block_dns={}, dns_allow={:?}, tun_if={:?}",
+        "[wfp-killswitch] ON: server_ips={:?}, allow_lan={}, apps={}, block_dns={}, dns_allow={:?}, tun_if={:?}, strict={}",
         server_ips,
         allow_lan,
         allow_app_paths.len(),
         block_dns,
         allow_dns_ips,
         tun_interface_index,
+        strict_mode,
     );
     for p in &allow_app_paths {
         eprintln!(
@@ -283,6 +287,29 @@ fn enable_blocking(
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
+
+            // 13.S strict mode: НЕ давать общий outbound-allow для VPN-движков
+            // (xray/mihomo). Они смогут соединяться только на server_ips —
+            // это уже разрешено выше через add_filter_allow_v4_addr_port_proto.
+            // Direct outbound xray (например `geosite:ru → DIRECT`) будет
+            // заблокирован WFP. Tun2socks и vpn-client.exe оставляем —
+            // tun2socks нужен для loopback↔xray в TUN-режиме (loopback
+            // уже разрешён, allow_app даёт ему свободу), vpn-client.exe
+            // нужен для leak-test и фоновых проверок.
+            if strict_mode {
+                let lower = label.to_lowercase();
+                let is_engine = lower.starts_with("xray")
+                    || lower.starts_with("mihomo")
+                    || lower.starts_with("clash"); // на случай ребрендинга
+                if is_engine {
+                    eprintln!(
+                        "[wfp-killswitch]   strict-skip allow-app: {}",
+                        path.display()
+                    );
+                    continue;
+                }
+            }
+
             // FwpmGetAppIdFromFileName0 может упасть для несуществующего
             // пути — в этом случае не валим всю транзакцию, просто
             // пропускаем (eprintln в add_filter_allow_app покажет).

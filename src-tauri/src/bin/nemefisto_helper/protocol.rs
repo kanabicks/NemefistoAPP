@@ -66,6 +66,13 @@ pub enum Request {
         /// В TUN-mode обычно [`198.18.0.1`] (наш TUN gateway).
         #[serde(default)]
         allow_dns_ips: Vec<String>,
+        /// 13.S strict mode: НЕ давать общий allow_app для VPN-движков
+        /// (xray/mihomo). Они смогут соединяться только на server_ips
+        /// (через add_filter_allow_v4_addr_port_proto, который добавляется
+        /// в любом случае). Direct outbound xray по `geosite:ru` будет
+        /// блокирован — это и есть смысл strict mode.
+        #[serde(default)]
+        strict_mode: bool,
     },
     /// Выключить kill switch — drop'ает WFP DYNAMIC engine,
     /// все наши фильтры удаляются автоматически.

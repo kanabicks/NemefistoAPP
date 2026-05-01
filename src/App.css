@@ -878,6 +878,16 @@ input, textarea { font: inherit; cursor: text; }
   color: var(--fg-dim);
   margin-bottom: 14px;
 }
+.recovery-list {
+  margin: 0 0 14px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+.recovery-list li {
+  margin-bottom: 4px;
+}
 .recovery-error {
   font-size: 11px;
   color: #f06060;

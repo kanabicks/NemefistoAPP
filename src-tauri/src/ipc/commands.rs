@@ -19,6 +19,7 @@ pub struct KillSwitchContext {
     pub allow_app_paths: Vec<String>,
     pub block_dns: bool,
     pub allow_dns_ips: Vec<String>,
+    pub strict_mode: bool,
 }
 
 /// Tauri-state для контекста активного kill-switch. None = VPN не подключён.
@@ -338,6 +339,9 @@ pub async fn connect(
     // 13.D step B: блокировка DNS-leak (UDP/TCP 53 кроме VPN-DNS).
     // По дефолту off — может ломать приложения в proxy-режиме.
     dns_leak_protection: Option<bool>,
+    // 13.S strict mode для kill-switch: убирает общий allow-app для xray/mihomo,
+    // оставляет только allow на server_ips. Direct outbound xray блокируется.
+    kill_switch_strict: Option<bool>,
     app_rules: Option<Vec<AppRule>>,
     app: tauri::AppHandle,
     xray: State<'_, XrayState>,
@@ -699,6 +703,7 @@ pub async fn connect(
         } else {
             Vec::new()
         };
+        let strict = kill_switch_strict.unwrap_or(false);
 
         if let Err(e) = platform::helper_client::kill_switch_enable(
             server_ips.clone(),
@@ -706,6 +711,7 @@ pub async fn connect(
             allow_app_paths.clone(),
             block_dns,
             allow_dns_ips.clone(),
+            strict,
         )
         .await
         {
@@ -730,6 +736,7 @@ pub async fn connect(
             allow_app_paths,
             block_dns,
             allow_dns_ips,
+            strict_mode: strict,
         });
     }
 
@@ -911,6 +918,48 @@ pub async fn recover_network() -> RecoveryReport {
     report
 }
 
+/// 14.E — диагностика остатков прошлой сессии для расширенного
+/// `CrashRecoveryDialog`. Один вызов на старте app — фронт решает
+/// показывать ли диалог.
+///
+/// Сигналы:
+/// - `was_crashed` — lockfile существовал но PID мёртв (значит прошлая
+///   сессия не вышла чисто);
+/// - `proxy_orphan` — в реестре HKCU прокси указывает на наш паттерн
+///   (`127.0.0.1:port` где port в нашем диапазоне);
+/// - `proxy_backup_present` — есть `proxy_backup.json` от прошлого
+///   `set_system_proxy`, можно сделать restore;
+/// - `tun_orphan` — есть адаптер с префиксом `nemefisto-` (helper
+///   обычно их сам чистит при старте, но если helper-сервис не
+///   запущен — остаются).
+///
+/// Если все four false — фронт диалог не показывает.
+#[derive(Serialize)]
+pub struct RecoveryState {
+    pub was_crashed: bool,
+    pub proxy_orphan: bool,
+    pub proxy_backup_present: bool,
+    pub tun_orphan: bool,
+}
+
+#[tauri::command]
+pub fn get_recovery_state() -> RecoveryState {
+    RecoveryState {
+        // session_lock мы вызывали в `lib.rs::setup` — но это уже после
+        // того как мы перетёрли lockfile своим PID. Поэтому здесь
+        // используем простой proxy для «недавно был краш»: либо backup
+        // присутствует, либо прокси указывает на нас. Если ничего из
+        // этого нет — was_crashed = false (даже если на самом деле
+        // был краш в прошлый раз — нам нечего восстанавливать).
+        was_crashed: platform::proxy::has_pending_backup()
+            || platform::proxy::is_proxy_pointing_to_us()
+            || platform::network::has_orphan_tun_adapters(),
+        proxy_orphan: platform::proxy::is_proxy_pointing_to_us(),
+        proxy_backup_present: platform::proxy::has_pending_backup(),
+        tun_orphan: platform::network::has_orphan_tun_adapters(),
+    }
+}
+
 /// Live-toggle kill-switch без disconnect/connect.
 ///
 /// Фронт зовёт когда пользователь меняет переключатель в Settings во
@@ -920,11 +969,22 @@ pub async fn recover_network() -> RecoveryReport {
 /// `enabled=true` без активного контекста (VPN не подключён) — no-op,
 /// `false` без контекста — best-effort disable (на случай orphan
 /// фильтров от прошлой сессии).
+///
+/// `strict` опционально обновляет сохранённый strict_mode перед re-apply.
+/// Используется при live-toggle 13.S strict-mode toggle в Settings.
 #[tauri::command]
 pub async fn kill_switch_apply(
     enabled: bool,
+    strict: Option<bool>,
     ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<(), String> {
+    // Обновляем strict_mode в контексте если фронт прислал новое значение.
+    if let Some(new_strict) = strict {
+        if let Some(ctx) = ks_ctx.0.lock().await.as_mut() {
+            ctx.strict_mode = new_strict;
+        }
+    }
+
     let ctx_opt = ks_ctx.0.lock().await.clone();
 
     if !enabled {
@@ -950,6 +1010,7 @@ pub async fn kill_switch_apply(
         ctx.allow_app_paths,
         ctx.block_dns,
         ctx.allow_dns_ips,
+        ctx.strict_mode,
     )
     .await
     .map_err(|e| e.to_string())
@@ -1119,6 +1180,110 @@ pub async fn ping_servers(
     let futures = entries.iter().map(ping_entry);
     let results = futures::future::join_all(futures).await;
     Ok(results)
+}
+
+// ─── 14.F — export logs для саппорта ──────────────────────────────────────────
+
+/// Собирает диагностический zip-пакет с локальной информацией для саппорта.
+/// Без телеметрии — файл сохраняется на диск пользователя, он сам решает
+/// кому отправить.
+///
+/// Содержимое:
+/// - `app-info.txt` — версия клиента, OS, CARGO_PKG_VERSION;
+/// - `xray-stderr.log` — последние 32 КБ логов Xray (если есть);
+/// - `competing-vpns.txt` — список найденных параллельных VPN-клиентов;
+/// - `recovery-state.json` — текущее состояние orphan-ресурсов;
+/// - `proxy-backup.json` — сохранённый backup системного прокси (если есть).
+///
+/// Сохраняется в `%USERPROFILE%\Documents\nemefisto-diagnostics-<timestamp>.zip`.
+/// Возвращает абсолютный путь — UI показывает в toast с кнопкой
+/// «открыть папку» через `tauri-plugin-opener::reveal_item_in_dir`.
+#[tauri::command]
+pub fn export_diagnostics() -> Result<String, String> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use zip::write::SimpleFileOptions;
+
+    let docs = std::env::var_os("USERPROFILE")
+        .map(|h| std::path::PathBuf::from(h).join("Documents"))
+        .ok_or_else(|| "не удалось определить путь к Documents".to_string())?;
+    if !docs.exists() {
+        std::fs::create_dir_all(&docs).map_err(|e| e.to_string())?;
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let zip_path = docs.join(format!("nemefisto-diagnostics-{ts}.zip"));
+
+    let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    // 1. app-info.txt
+    let info = format!(
+        "nemefisto version: {}\n\
+         OS family: {}\n\
+         arch: {}\n\
+         timestamp (unix): {}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        ts,
+    );
+    zip.start_file("app-info.txt", opts).map_err(|e| e.to_string())?;
+    zip.write_all(info.as_bytes()).map_err(|e| e.to_string())?;
+
+    // 2. xray-stderr.log (последние 32 КБ)
+    let xray_log = std::env::temp_dir()
+        .join("NemefistoVPN")
+        .join("xray-stderr.log");
+    if xray_log.is_file() {
+        if let Ok(mut f) = std::fs::File::open(&xray_log) {
+            use std::io::{Read, Seek, SeekFrom};
+            if let Ok(meta) = f.metadata() {
+                let max = 32 * 1024;
+                let start = meta.len().saturating_sub(max);
+                let _ = f.seek(SeekFrom::Start(start));
+                let mut buf = Vec::new();
+                if f.read_to_end(&mut buf).is_ok() {
+                    let _ = zip.start_file("xray-stderr.log", opts);
+                    let _ = zip.write_all(&buf);
+                }
+            }
+        }
+    }
+
+    // 3. competing-vpns.txt
+    let competing = platform::processes::detect_competing_vpns();
+    let competing_text = if competing.is_empty() {
+        "(никаких сторонних VPN-процессов не найдено)\n".to_string()
+    } else {
+        competing.join("\n") + "\n"
+    };
+    let _ = zip.start_file("competing-vpns.txt", opts);
+    let _ = zip.write_all(competing_text.as_bytes());
+
+    // 4. recovery-state.json
+    let state = get_recovery_state();
+    if let Ok(json) = serde_json::to_string_pretty(&state) {
+        let _ = zip.start_file("recovery-state.json", opts);
+        let _ = zip.write_all(json.as_bytes());
+    }
+
+    // 5. proxy_backup.json — если есть
+    if let Some(backup) = platform::proxy::read_backup() {
+        if let Ok(json) = serde_json::to_string_pretty(&backup) {
+            let _ = zip.start_file("proxy-backup.json", opts);
+            let _ = zip.write_all(json.as_bytes());
+        }
+    }
+
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(zip_path.to_string_lossy().into_owned())
 }
 
 // ─── 9.B / 9.C — детект конфликтов с другими VPN ──────────────────────────────
