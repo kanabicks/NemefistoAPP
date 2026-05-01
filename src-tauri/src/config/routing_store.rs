@@ -278,9 +278,16 @@ pub fn canonicalize_github_blob(url: &str) -> String {
 ///    (с .sha256 оптимизацией).
 ///
 /// Спит между тиками до ближайшего deadline. По sigwake (Notify) — сразу.
+///
+/// **ВАЖНО**: используем `tauri::async_runtime::spawn`, а не голый
+/// `tokio::spawn`. В Tauri 2 setup-callback (где мы вызываем эту
+/// функцию) выполняется ДО того как tokio runtime активен на текущем
+/// потоке — прямой `tokio::spawn` паникует с `there is no reactor
+/// running`. `async_runtime::spawn` сам подхватывает managed-runtime
+/// Tauri.
 pub fn spawn_scheduler(state: Arc<Mutex<RoutingStore>>, wake: Arc<Notify>) -> oneshot::Sender<()> {
     let (tx, mut rx) = oneshot::channel::<()>();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         eprintln!("[routing-scheduler] started");
         loop {
             // Шаг: сделать тик и собрать метаданные о следующем deadline'е.
