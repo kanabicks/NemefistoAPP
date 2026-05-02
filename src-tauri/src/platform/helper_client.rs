@@ -41,6 +41,11 @@ pub enum HelperRequest {
         /// 13.S strict mode — без общего allow_app для xray/mihomo.
         #[serde(default)]
         strict_mode: bool,
+        /// 0.1.3 kill-switch fix: TUN-режим? Helper ретраит поиск
+        /// WinTUN-адаптера до 5с если true; в proxy-режиме single-shot
+        /// (быстро возвращает None).
+        #[serde(default)]
+        expect_tun: bool,
     },
     KillSwitchDisable,
     /// Heartbeat для watchdog: главный шлёт каждые ~20 сек, иначе
@@ -96,7 +101,7 @@ pub enum HelperResponse {
 /// Минимально-поддерживаемая версия протокола. Если helper отвечает
 /// меньшей — `helper_bootstrap` форсит uninstall+install. Бампается
 /// синхронно с константой в `nemefisto_helper::protocol`.
-pub const MIN_HELPER_PROTOCOL_VERSION: u32 = 8;
+pub const MIN_HELPER_PROTOCOL_VERSION: u32 = 9;
 
 /// Открыть pipe с retry — сервис может быть busy сразу после старта или
 /// перезапуска. Возвращает первый успешный клиент за 1 секунду или ошибку.
@@ -160,18 +165,20 @@ pub async fn version() -> Result<(String, u32)> {
     }
 }
 
-/// Поднять TUN-режим: helper запустит tun2socks, добавит маршруты,
-/// настроит DNS на TUN-интерфейсе.
 /// Включить kill switch — WFP-фильтры на уровне ядра блокируют весь
 /// outbound кроме allowlist'а (этап 13.D).
 ///
 /// - `server_ips` — IP-адреса VPN-сервера, уже резолвленные;
 /// - `allow_lan` — пускать ли локальную сеть;
-/// - `allow_app_paths` — абсолютные пути к VPN-движкам и tun2socks;
+/// - `allow_app_paths` — абсолютные пути к VPN-движкам;
 /// - `block_dns` — DNS-leak protection: блокировать весь :53 кроме
 ///   `allow_dns_ips` (13.D step B);
 /// - `allow_dns_ips` — IPv4 адреса разрешённых DNS-серверов (когда
-///   `block_dns=true`).
+///   `block_dns=true`);
+/// - `strict_mode` — 13.S, без общего allow_app для VPN-движков;
+/// - `expect_tun` — TUN-режим? Helper ретраит поиск WinTUN-адаптера
+///   до 5с если true (нужен для allow-фильтра user-трафика идущего
+///   через TUN). В proxy-режиме `false` чтобы не задерживать enable.
 pub async fn kill_switch_enable(
     server_ips: Vec<String>,
     allow_lan: bool,
@@ -179,6 +186,7 @@ pub async fn kill_switch_enable(
     block_dns: bool,
     allow_dns_ips: Vec<String>,
     strict_mode: bool,
+    expect_tun: bool,
 ) -> Result<()> {
     let resp = send(HelperRequest::KillSwitchEnable {
         server_ips,
@@ -187,6 +195,7 @@ pub async fn kill_switch_enable(
         block_dns,
         allow_dns_ips,
         strict_mode,
+        expect_tun,
     })
     .await?;
     match resp {

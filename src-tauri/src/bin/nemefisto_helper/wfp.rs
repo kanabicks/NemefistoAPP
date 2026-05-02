@@ -331,26 +331,40 @@ impl WfpEngine {
     }
 
     /// Allow для всего трафика через указанный сетевой интерфейс
-    /// (по local interface index — IfIndex). Используется для
-    /// per-interface kill-switch (step A): любой исходящий через
-    /// TUN-адаптер автоматически разрешён, без необходимости
-    /// перечислять IP сервера или app-id.
+    /// (по local interface LUID). Используется для per-interface
+    /// kill-switch (step A): любой исходящий через TUN-адаптер
+    /// автоматически разрешён, без необходимости перечислять IP
+    /// сервера или app-id.
     ///
     /// Это Mullvad-style решение: вместо «allow если dest=server_ip»
     /// делаем «allow если ушло через TUN-адаптер».
-    pub fn add_filter_allow_local_interface_index(
+    ///
+    /// **Важно**: на слое `FWPM_LAYER_ALE_AUTH_CONNECT_V4/V6` для
+    /// per-interface match используется `FWPM_CONDITION_IP_LOCAL_INTERFACE`
+    /// (UINT64 = NET_LUID), а НЕ `FWPM_CONDITION_INTERFACE_INDEX`
+    /// (UINT32, доступен только на IPPACKET-слоях). Иначе
+    /// `FwpmFilterAdd0` валится с `FWP_E_TYPE_MISMATCH (0x80320025)`.
+    ///
+    /// `luid_value` должен жить дольше чем вызов FwpmFilterAdd0 —
+    /// `conditionValue.uint64` это указатель. Принимаем по значению
+    /// и держим в local-переменной до конца функции.
+    pub fn add_filter_allow_local_interface_luid(
         &self,
         layer: GUID,
         sublayer_key: GUID,
         name: &str,
         weight: u8,
-        if_index: u32,
+        luid: u64,
     ) -> Result<()> {
         let mut conditions: [FWPM_FILTER_CONDITION0; 1] = unsafe { [std::mem::zeroed()] };
-        conditions[0].fieldKey = FWPM_CONDITION_INTERFACE_INDEX;
+        // Local-переменная для LUID — pointer останется валидным пока
+        // FwpmFilterAdd0 не скопирует данные внутрь (Microsoft гарантирует
+        // что input-data копируется в момент Add, не Commit).
+        let mut luid_storage: u64 = luid;
+        conditions[0].fieldKey = FWPM_CONDITION_IP_LOCAL_INTERFACE;
         conditions[0].matchType = FWP_MATCH_EQUAL;
-        conditions[0].conditionValue.r#type = FWP_UINT32;
-        conditions[0].conditionValue.Anonymous.uint32 = if_index;
+        conditions[0].conditionValue.r#type = FWP_UINT64;
+        conditions[0].conditionValue.Anonymous.uint64 = &mut luid_storage as *mut u64;
         self.add_filter(layer, sublayer_key, name, weight, FWP_ACTION_PERMIT, &mut conditions)
     }
 

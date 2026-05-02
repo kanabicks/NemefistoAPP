@@ -16,6 +16,7 @@ mod nemefisto_helper {
     pub mod crash_dumps;
     pub mod dispatch;
     pub mod firewall;
+    pub mod helper_log;
     pub mod mihomo;
     pub mod pipe;
     pub mod protocol;

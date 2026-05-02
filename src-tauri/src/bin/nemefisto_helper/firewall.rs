@@ -29,6 +29,7 @@ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FWPM_LAYER_ALE_AUTH_CONNECT_V4, FWPM_LAYER_ALE_AUTH_CONNECT_V6,
 };
 
+use super::helper_log::log as hlog;
 use super::wfp::{
     cleanup_provider as wfp_cleanup_provider, WfpEngine, NEMEFISTO_PROVIDER_GUID,
     NEMEFISTO_SUBLAYER_GUID,
@@ -36,20 +37,27 @@ use super::wfp::{
 
 // Веса фильтров. Higher = проверяется первым. Block-all — без weight
 // в add_filter_block_all (там 0 захардкожен внутри wfp.rs).
+//
+// **Важно**: WFP `FWP_UINT8` weight — это weight-index в диапазоне
+// **0-15** (4 бита). Любое значение ≥16 → `FwpmFilterAdd0` валит с
+// `FWP_E_INVALID_WEIGHT (0x80320025)`. Поэтому всё компрессуется в
+// 0-15. Если когда-нибудь не хватит дискретизации — надо переходить на
+// `FWP_UINT64` weight (полная 64-битная шкала).
 const W_LAN: u8 = 8;
 // DNS_BLOCK > LAN — иначе LAN-allow перебивал бы блок локального
 // router DNS на 192.168.x.x:53. DNS_BLOCK = 9.
 const W_DNS_BLOCK: u8 = 9;
 const W_LOOPBACK: u8 = 10;
 const W_SERVER: u8 = 12;
-const W_APP: u8 = 14;
-// DNS_PERMIT выше всех — нужно перебить и DNS_BLOCK, и LAN, иначе
-// VPN-DNS на локальном адресе (типа 198.18.0.1) будет заблокирован.
-const W_DNS_PERMIT: u8 = 15;
-// TUN-interface allow — высокий weight: всё что ушло через TUN-адаптер
-// уже шифровано VPN'ом, нет смысла перепроверять. Перебивает даже
-// DNS_BLOCK (если случайно DNS-запрос ушёл через TUN — он легитимен).
-const W_TUN_INTERFACE: u8 = 16;
+const W_APP: u8 = 13;
+// DNS_PERMIT перебивает DNS_BLOCK (для allow_dns_ips типа 198.18.0.1)
+// и LAN. Был 15 — снижен до 14 чтобы освободить 15 под TUN_INTERFACE.
+const W_DNS_PERMIT: u8 = 14;
+// TUN-interface allow — наивысший weight в 0-15 диапазоне: всё что
+// ушло через TUN-адаптер уже шифровано VPN'ом, нет смысла перепроверять.
+// Перебивает DNS_BLOCK / DNS_PERMIT / APP / SERVER / LOOPBACK / LAN —
+// корректно для TUN-режима.
+const W_TUN_INTERFACE: u8 = 15;
 
 // IANA protocol numbers — захардкодим, чтобы не тащить feature
 // `Win32_Networking_WinSock` сюда (она в `windows-sys` для другого).
@@ -149,7 +157,7 @@ fn enable_blocking(
     tun_interface_index: Option<u32>,
     strict_mode: bool,
 ) -> Result<()> {
-    eprintln!(
+    hlog(&format!(
         "[wfp-killswitch] ON: server_ips={:?}, allow_lan={}, apps={}, block_dns={}, dns_allow={:?}, tun_if={:?}, strict={}",
         server_ips,
         allow_lan,
@@ -158,7 +166,7 @@ fn enable_blocking(
         allow_dns_ips,
         tun_interface_index,
         strict_mode,
-    );
+    ));
     for p in &allow_app_paths {
         eprintln!(
             "[wfp-killswitch]   app path: {} (exists={})",
@@ -354,23 +362,35 @@ fn enable_blocking(
         // безопасно разрешать без условий. Это упрощает схему: даже
         // если xray создаст subprocess или сменится server_ip,
         // kill-switch держится через interface-allow.
+        //
+        // На слое ALE_AUTH_CONNECT работает только `IP_LOCAL_INTERFACE`
+        // (UINT64 LUID), а не `INTERFACE_INDEX` (UINT32 — он только на
+        // IPPACKET-слоях). Резолвим ifIndex → LUID через IpHelper API.
         if let Some(if_idx) = tun_interface_index {
-            // Дублируем для V4 и V6 — оба layer'а независимы.
-            for (layer, label) in [
-                (FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TUN allow v4"),
-                (FWPM_LAYER_ALE_AUTH_CONNECT_V6, "TUN allow v6"),
-            ] {
-                e.add_filter_allow_local_interface_index(
-                    layer,
-                    NEMEFISTO_SUBLAYER_GUID,
-                    label,
-                    W_TUN_INTERFACE,
-                    if_idx,
-                )?;
+            match super::routing::luid_from_index(if_idx) {
+                Ok(luid) => {
+                    for (layer, label) in [
+                        (FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TUN allow v4"),
+                        (FWPM_LAYER_ALE_AUTH_CONNECT_V6, "TUN allow v6"),
+                    ] {
+                        e.add_filter_allow_local_interface_luid(
+                            layer,
+                            NEMEFISTO_SUBLAYER_GUID,
+                            label,
+                            W_TUN_INTERFACE,
+                            luid,
+                        )?;
+                    }
+                    hlog(&format!(
+                        "[wfp-killswitch] TUN-interface allow added (ifIndex={if_idx}, luid=0x{luid:016x})"
+                    ));
+                }
+                Err(e) => {
+                    hlog(&format!(
+                        "[wfp-killswitch] luid_from_index({if_idx}) failed: {e:#} — TUN allow пропущен"
+                    ));
+                }
             }
-            eprintln!(
-                "[wfp-killswitch] TUN-interface allow added (ifIndex={if_idx})"
-            );
         }
 
         // ── DNS leak protection (этап 13.D step B) ──────────────────

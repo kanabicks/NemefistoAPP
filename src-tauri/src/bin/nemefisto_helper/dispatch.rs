@@ -5,6 +5,7 @@
 //! `Response::Error`.
 
 use super::firewall;
+use super::helper_log::log as hlog;
 use super::mihomo;
 use super::protocol::{Request, Response, PROTOCOL_VERSION};
 use super::sing_box;
@@ -26,15 +27,24 @@ pub async fn handle(req: Request) -> Response {
             block_dns,
             allow_dns_ips,
             strict_mode,
+            expect_tun,
         } => {
             let paths: Vec<std::path::PathBuf> = allow_app_paths
                 .into_iter()
                 .map(std::path::PathBuf::from)
                 .collect();
-            // 13.D step A: если TUN-режим активен, добавляем allow для
-            // его interface index. helper сам знает свой TUN — IPC не
-            // расширяем. В proxy-режиме `tun_if` будет None.
-            let tun_if = super::tun::current_tun_interface_index().await;
+            // 13.D step A: в TUN-режиме ищем активный WinTUN-адаптер для
+            // allow-фильтра — без него user-трафик идущий через TUN
+            // блокируется (sing-box/mihomo.exe allow покрывает только их
+            // собственные шифрованные пакеты к серверу, не proxied трафик
+            // user-app'ов). В proxy-режиме (`expect_tun=false`) skip без
+            // retry-задержки.
+            let tun_if = super::tun::current_tun_interface_index(expect_tun).await;
+            if expect_tun && tun_if.is_none() {
+                hlog(
+                    "[helper-dispatch] WARN: TUN-режим активен, но WinTUN-адаптер не найден — kill-switch заблокирует user-трафик",
+                );
+            }
             match firewall::enable(
                 server_ips,
                 allow_lan,

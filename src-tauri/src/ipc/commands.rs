@@ -18,6 +18,9 @@ pub struct KillSwitchContext {
     pub block_dns: bool,
     pub allow_dns_ips: Vec<String>,
     pub strict_mode: bool,
+    /// 0.1.3: TUN-режим? Сохраняется чтобы live-toggle re-apply искал
+    /// WinTUN-адаптер через retry в helper'е.
+    pub expect_tun: bool,
 }
 
 /// Tauri-state для контекста активного kill-switch. None = VPN не подключён.
@@ -933,6 +936,7 @@ pub async fn connect(
             block_dns,
             allow_dns_ips.clone(),
             strict,
+            tun_mode,
         )
         .await
         {
@@ -957,6 +961,7 @@ pub async fn connect(
             block_dns,
             allow_dns_ips,
             strict_mode: strict,
+            expect_tun: tun_mode,
         });
         stamp("kill_switch enabled");
     }
@@ -1268,6 +1273,7 @@ pub async fn kill_switch_apply(
         ctx.block_dns,
         ctx.allow_dns_ips,
         ctx.strict_mode,
+        ctx.expect_tun,
     )
     .await
     .map_err(|e| e.to_string())

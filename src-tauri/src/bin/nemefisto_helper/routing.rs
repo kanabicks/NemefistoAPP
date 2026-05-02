@@ -82,7 +82,7 @@ fn make_sockaddr_inet_v4(addr: Ipv4Addr) -> SOCKADDR_INET {
     sa
 }
 
-fn luid_from_index(if_index: u32) -> Result<u64> {
+pub fn luid_from_index(if_index: u32) -> Result<u64> {
     let mut luid: NET_LUID_LH = unsafe { mem::zeroed() };
     let ret = unsafe {
         windows_sys::Win32::NetworkManagement::IpHelper::ConvertInterfaceIndexToLuid(if_index, &mut luid)

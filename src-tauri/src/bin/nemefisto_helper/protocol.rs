@@ -40,11 +40,18 @@ use serde::{Deserialize, Serialize};
 ///   функции `start()`/`stop()` для tun2proxy тоже удалены, остался
 ///   только `cleanup_orphan_resources` для очистки legacy-адаптеров.
 ///
+/// - 9 (0.1.3 / kill-switch fix): добавлено `KillSwitchEnable.expect_tun`.
+///   Без него helper не знал нужен ли retry-поиск WinTUN-адаптера → в
+///   TUN-режиме kill-switch поднимался без TUN allow-фильтра и блокировал
+///   user-трафик. Bump форсит апгрейд helper'а на 0.1.3 — старый helper
+///   v8 поднимет kill-switch БЕЗ TUN allow (старая версия игнорирует
+///   новое поле, и `current_tun_interface_index` стабом возвращает None).
+///
 /// Tauri-main сравнивает с `Response::Version.protocol_version` при
 /// `ensure_running()` — если получил `<` (или 0 от helper'а без поля)
 /// форсит uninstall+install через UAC, чтобы пользователь получил
 /// помощь с дев-сборки или релиз-апгрейда без ручных шагов.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -88,6 +95,12 @@ pub enum Request {
         /// блокирован — это и есть смысл strict mode.
         #[serde(default)]
         strict_mode: bool,
+        /// 0.1.3 kill-switch fix: нужен ли retry-поиск активного
+        /// WinTUN-адаптера для TUN allow-фильтра. `true` в TUN-режиме
+        /// (sing-box/mihomo built-in TUN), `false` в proxy-режиме —
+        /// чтобы не задерживать `enable()` на 5с впустую.
+        #[serde(default)]
+        expect_tun: bool,
     },
     /// Выключить kill switch — drop'ает WFP DYNAMIC engine,
     /// все наши фильтры удаляются автоматически.
