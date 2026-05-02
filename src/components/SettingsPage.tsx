@@ -30,6 +30,8 @@ import {
   useBackupModalStore,
 } from "../lib/backup";
 import { showToast } from "../stores/toastStore";
+import { useUpdateStore } from "../stores/updateStore";
+import { checkForUpdates } from "../lib/updater";
 import { useEffectiveSettings } from "../lib/hooks/useEffectiveSettings";
 import { Toggle } from "./Toggle";
 
@@ -1226,6 +1228,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
               </section>
 
+              <UpdatesSection />
+
               <section className="settings-section">
                 <div className="settings-section-title">о программе</div>
                 <div className="about-grid">
@@ -1609,6 +1613,75 @@ function BackupBlock() {
             onChange={onImport}
           />
         </label>
+      </div>
+    </section>
+  );
+}
+
+// ── 14.A Updates section ──────────────────────────────────────────────────
+
+function UpdatesSection() {
+  const autoCheck = useSettingsStore((s) => s.autoCheckUpdates);
+  const setSetting = useSettingsStore((s) => s.set);
+  const updateState = useUpdateStore((s) => s.state);
+  const setUpdateState = useUpdateStore((s) => s.setState);
+  const setLastCheckAt = useUpdateStore((s) => s.setLastCheckAt);
+  const [busy, setBusy] = useState(false);
+
+  const onCheckNow = async () => {
+    setBusy(true);
+    setUpdateState({ kind: "checking" });
+    setLastCheckAt(Date.now());
+    try {
+      const update = await checkForUpdates();
+      if (update) {
+        setUpdateState({ kind: "available", update });
+      } else {
+        setUpdateState({ kind: "idle" });
+        showToast({
+          kind: "success",
+          title: "проверка обновлений",
+          message: "у вас уже последняя версия",
+        });
+      }
+    } catch (e) {
+      setUpdateState({ kind: "idle" });
+      showToast({
+        kind: "error",
+        title: "не удалось проверить",
+        message: String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const checking = updateState.kind === "checking" || busy;
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">обновления</div>
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">авто-проверка</div>
+          <div className="settings-row-hint">
+            раз в 6 часов спрашивает GitHub. найдено — модалка предложит обновить
+          </div>
+        </div>
+        <Toggle
+          on={autoCheck}
+          onChange={(v) => setSetting("autoCheckUpdates", v)}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <button
+          type="button"
+          onClick={onCheckNow}
+          disabled={checking}
+          className="btn-ghost"
+        >
+          {checking ? "проверяю…" : "проверить сейчас"}
+        </button>
       </div>
     </section>
   );

@@ -8,6 +8,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { useApplyTheme } from "./lib/hooks/useApplyTheme";
 import { useGlobalShortcuts } from "./lib/hooks/useGlobalShortcuts";
 import { useTrustedWifi } from "./lib/hooks/useTrustedWifi";
+import { useAutoUpdateCheck } from "./lib/hooks/useAutoUpdateCheck";
 import { initDeepLinks } from "./lib/deepLinks";
 
 import { BackgroundLayers } from "./components/effects/BackgroundLayers";
@@ -17,6 +18,7 @@ import { WideAmbient } from "./components/effects/WideAmbient";
 import { AnnounceBanner } from "./components/AnnounceBanner";
 import { CrashRecoveryDialog } from "./components/CrashRecoveryDialog";
 import { BackupPreviewModal } from "./components/BackupPreviewModal";
+import { UpdateModal } from "./components/UpdateModal";
 import {
   OnboardingTour,
   isOnboardingCompleted,
@@ -104,6 +106,10 @@ function App() {
   // event'ы из бэка. Хук сам читает settings.trustedSsids и
   // autoDisconnectedBySsid runtime-флаг.
   useTrustedWifi();
+  // 14.A: периодическая проверка обновлений приложения. Endpoint —
+  // GitHub Releases latest.json (см. tauri.conf.json). При найденном
+  // апдейте UpdateModal сам всплывает.
+  useAutoUpdateCheck();
 
   // 13.R: TUN-only strict mode. Если пользователь только что включил
   // toggle и на главном экране был выбран proxy-режим — авто-переключаем
@@ -426,6 +432,7 @@ function App() {
 
       <CrashRecoveryDialog />
       <BackupPreview />
+      <UpdateModal />
       <OnboardingHost />
       <Toaster />
     </>

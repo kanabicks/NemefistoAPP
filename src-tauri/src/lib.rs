@@ -52,6 +52,13 @@ pub fn run() {
         // `@tauri-apps/plugin-global-shortcut`, при изменении настроек
         // (см. lib/hooks/useGlobalShortcuts.ts).
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // 14.A: auto-updater. Endpoint в tauri.conf.json (GitHub Releases
+        // latest.json), pubkey там же. Проверка инициируется фронтом
+        // через @tauri-apps/plugin-updater (см. src/lib/updater.ts).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 14.A: relaunch после install update'а — нужен process-plugin
+        // (`@tauri-apps/plugin-process` фронта вызывает relaunch()).
+        .plugin(tauri_plugin_process::init())
         .manage(MihomoState::new())
         .manage(SingBoxState::new())
         .manage(vpn::MihomoApiState::new())

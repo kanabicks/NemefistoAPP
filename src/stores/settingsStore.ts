@@ -284,6 +284,19 @@ export type Settings = {
    *  провайдерами — при смене подписки старые ключи будут невалидны
    *  и просто проигнорируются. */
   preferredMihomoNodes: Record<string, string>;
+
+  /** 14.A: авто-проверка обновлений приложения. Если on — при старте
+   *  Nemefisto спрашивает GitHub Releases manifest (`latest.json`).
+   *  Если новая версия — non-modal toast «доступна v X.Y.Z». Юзер
+   *  кликает «обновить» — скачиваем + ставим NSIS passive-install,
+   *  app сама перезапускается. Default on. */
+  autoCheckUpdates: boolean;
+
+  /** 14.A: версии которые юзер dismiss'нул через «позже». Пока эта
+   *  версия — последняя в latest.json, баннер обновления скрыт.
+   *  Когда выйдет следующая — снова показываем. Сбрасывается через
+   *  reset(). */
+  dismissedUpdateVersions: string[];
 };
 
 /**
@@ -385,6 +398,8 @@ const DEFAULTS: Settings = {
   trustedSsidAction: "ignore",
   autoConnectOnLeave: false,
   preferredMihomoNodes: {},
+  autoCheckUpdates: true,
+  dismissedUpdateVersions: [],
 };
 
 const KEY = "nemefisto.settings.v1";

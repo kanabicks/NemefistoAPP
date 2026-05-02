@@ -32,6 +32,13 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2.3.5"
+# 14.A: auto-updater. Поддерживает signed updates через ed25519
+# (наш Tauri signing key, не Microsoft Authenticode). Endpoint —
+# GitHub Releases с latest.json который генерится в CI workflow.
+tauri-plugin-updater = "2"
+# 14.A: process plugin для `relaunch()` после download+install update'а.
+# Без него фронт не может перезапустить app после tauri-plugin-updater'а.
+tauri-plugin-process = "2"
 serde_yaml = "0.9.34"
 base64 = "0.22.1"
 uuid = { version = "1.23.1", features = ["v4"] }
