@@ -6,14 +6,18 @@ export type Background = "crystal" | "tunnel" | "globe" | "particles";
 export type ButtonStyle = "glass" | "flat" | "neon" | "metallic";
 
 /**
- * VPN-движок (этап 8.B). Выбирается per-session, не миксуется.
- * - **xray** (default) — REALITY/Vision/XHTTP, низколатентный обход DPI;
- *   поддержка hy2 / wireguard / xhttp / httpupgrade с 8.A.1.
- * - **mihomo** — TUIC, AnyTLS, Mieru, native PROCESS-NAME routing.
- *   Используется когда сервер из подписки `engine_compat = ["mihomo"]`
- *   либо пользователь явно выбрал.
+ * VPN-движок. Выбирается per-session, не миксуется.
+ * - **sing-box** (default с 0.1.2 — заменил xray) — современный движок
+ *   с built-in TUN (gVisor stack), нативной поддержкой
+ *   vless+REALITY/Vision, hy2, tuic, wireguard, и встроенным
+ *   anti-DPI (`tls.fragment`, server-resolve через DoH). Подписка
+ *   запрашивается с UA `Happ/2.7.0` — Marzban-панели отдают xray-JSON
+ *   (мы конвертируем), Remnawave — sing-box JSON (passthrough).
+ * - **mihomo** — Clash Meta форк. AnyTLS, Mieru, native PROCESS-NAME
+ *   routing. Используется когда сервер из подписки `engine_compat`
+ *   содержит "mihomo" либо пользователь явно выбрал.
  */
-export type Engine = "xray" | "mihomo";
+export type Engine = "sing-box" | "mihomo";
 
 /**
  * Правило per-process routing (этап 8.D). Применяется только в Mihomo
@@ -267,6 +271,19 @@ export type Settings = {
    *  обычную. Срабатывает только если VPN был отключён нами же
    *  по trusted-правилу (а не самим пользователем). */
   autoConnectOnLeave: boolean;
+
+  /** Предпочитаемая нода в proxy-группах mihomo (8.F).
+   *  Запоминается между сессиями: пользователь до connect выбрал
+   *  «Latvia» в группе `→ Nemefisto VPN` — после connect мы
+   *  автоматически переключаем эту группу на Latvia через external-
+   *  controller. Записи скапливаются по разным группам — у каждой
+   *  своя предпочитаемая нода. `null` значение в map не используется
+   *  (отсутствие ключа = нет преференса).
+   *
+   *  Имена групп берутся из YAML подписки и нестабильны между
+   *  провайдерами — при смене подписки старые ключи будут невалидны
+   *  и просто проигнорируются. */
+  preferredMihomoNodes: Record<string, string>;
 };
 
 /**
@@ -277,7 +294,16 @@ export type Settings = {
  * routing-правилами (RU-сайты direct, ads block и т.д.). Для Xray это
  * то что надо.
  */
-export const DEFAULT_USER_AGENT_XRAY = "Happ/2.7.0";
+/**
+ * UA по умолчанию для sing-box-движка (default с 0.1.2).
+ *
+ * `Happ/2.7.0` — стандартный UA современных VPN-клиентов. Marzban-панели
+ * по этому UA отдают полный Xray JSON-конфиг (мы конвертируем его в
+ * sing-box JSON через `convert_xray_json_to_singbox`). Remnawave-панели
+ * по этому же UA отдают **sing-box JSON** напрямую — мы используем его
+ * через passthrough (`patch_singbox_json`).
+ */
+export const DEFAULT_USER_AGENT_SINGBOX = "Happ/2.7.0";
 
 /**
  * UA по умолчанию для Mihomo-движка.
@@ -290,7 +316,7 @@ export const DEFAULT_USER_AGENT_MIHOMO = "clash-verge/v2.0.0";
 
 /** Backwards-compat alias — используется в местах где UA всё ещё
  *  «общий». Equivalent to `DEFAULT_USER_AGENT_XRAY`. */
-export const DEFAULT_USER_AGENT = DEFAULT_USER_AGENT_XRAY;
+export const DEFAULT_USER_AGENT = DEFAULT_USER_AGENT_SINGBOX;
 
 /**
  * Эффективный UA для запроса подписки. Если пользователь явно правил
@@ -303,7 +329,7 @@ export function effectiveUserAgent(
   userAgentTouched: boolean
 ): string {
   if (userAgentTouched) return userAgent;
-  return engine === "mihomo" ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_XRAY;
+  return engine === "mihomo" ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_SINGBOX;
 }
 
 const DEFAULTS: Settings = {
@@ -346,7 +372,7 @@ const DEFAULTS: Settings = {
   killSwitchStrict: false,
   autoApplyMinimalRuRules: false,
   dnsLeakProtection: false,
-  engine: "xray",
+  engine: "sing-box",
   engineTouched: false,
   userAgentTouched: false,
   appRules: [],
@@ -358,6 +384,7 @@ const DEFAULTS: Settings = {
   trustedSsids: [],
   trustedSsidAction: "ignore",
   autoConnectOnLeave: false,
+  preferredMihomoNodes: {},
 };
 
 const KEY = "nemefisto.settings.v1";
@@ -367,7 +394,15 @@ const load = (): Settings => {
     const raw = localStorage.getItem(KEY);
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULTS, ...parsed };
+    const merged: Settings = { ...DEFAULTS, ...parsed };
+    // sing-box миграция (0.1.2): "xray" → "sing-box". Старые конфиги
+    // должны автоматически переехать на новый default-движок без
+    // сбрасывания engineTouched (уважаем что пользователь раньше
+    // явно выбрал не-Mihomo).
+    if ((merged.engine as unknown as string) === "xray") {
+      merged.engine = "sing-box";
+    }
+    return merged;
   } catch {
     return DEFAULTS;
   }

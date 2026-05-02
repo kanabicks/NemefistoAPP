@@ -7,6 +7,45 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Версия wire-протокола helper-сервиса. Бампается каждый раз когда
+/// меняется набор полей в `Request` / `Response` так, что старый helper
+/// не сможет корректно обработать запрос от нового клиента.
+///
+/// История:
+/// - 1: исходный набор (TunStart без extra_server_hosts).
+/// - 2 (0.1.2): добавлено `TunStart.extra_server_hosts` — для
+///   mihomo-passthrough bypass на все ноды подписки. Старый helper
+///   игнорит поле и добавляет bypass только на primary, что приводит
+///   к петле для других нод.
+/// - 3 (0.1.2 / 13.L): добавлены `MihomoStart` / `MihomoStop` для
+///   SYSTEM-spawn'а mihomo. Built-in TUN-режим mihomo требует админа
+///   на `CreateAdapter` WinTUN — без помощи helper'а Tauri-main
+///   (user-level) не может его запустить.
+/// - 4 (0.1.2 / debug): bump для форсирования reinstall'а helper'а
+///   на dev-машинах. Wire-формат не менялся, но мы добавили в
+///   helper-tun.rs диагностический writeln в tun2socks.log который
+///   показывает реальные значения socks-auth полей. Без bump'а
+///   `ensure_running` не переустанавливает старый helper.
+/// - 5/6 (0.1.2 / debug): итеративные bump'ы во время диагностики
+///   tun2proxy auth (см. git log). Wire-формат не менялся.
+/// - 7 (0.1.2 / sing-box миграция): добавлены `SingBoxStart` /
+///   `SingBoxStop` для SYSTEM-spawn'а sing-box (по аналогии с
+///   `MihomoStart`/`MihomoStop` из v3). Built-in TUN-режим sing-box
+///   требует админа на `CreateAdapter` WinTUN — без помощи helper'а
+///   Tauri-main (user-level) не может его запустить.
+///
+/// - 8 (0.1.2 / sing-box миграция Phase 5): выпилены `TunStart` /
+///   `TunStop` — клиент больше не использует tun2proxy pipeline (TUN
+///   делает sing-box или mihomo через built-in inbound). Helper-side
+///   функции `start()`/`stop()` для tun2proxy тоже удалены, остался
+///   только `cleanup_orphan_resources` для очистки legacy-адаптеров.
+///
+/// Tauri-main сравнивает с `Response::Version.protocol_version` при
+/// `ensure_running()` — если получил `<` (или 0 от helper'а без поля)
+/// форсит uninstall+install через UAC, чтобы пользователь получил
+/// помощь с дев-сборки или релиз-апгрейда без ручных шагов.
+pub const PROTOCOL_VERSION: u32 = 8;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
@@ -14,30 +53,6 @@ pub enum Request {
     Ping,
     /// Версия helper-а.
     Version,
-    /// Запустить tun2socks + сконфигурировать routing.
-    /// `socks_port` — наш Xray-SOCKS5 inbound на 127.0.0.1.
-    /// `server_host` — хост или IP внешнего VPN-сервера (резолвится для bypass-route).
-    /// `dns` — DNS-сервер, который выставится на TUN-интерфейс.
-    /// `tun2socks_path` — абсолютный путь к tun2socks-x86_64-pc-windows-msvc.exe
-    /// (helper не знает где лежит binaries-папка Tauri-приложения).
-    TunStart {
-        socks_port: u16,
-        server_host: String,
-        dns: String,
-        tun2socks_path: String,
-        /// SOCKS5 auth (этап 9.G): tun2socks использует
-        /// `socks5://user:pass@host:port` если оба заданы. Иначе noauth.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        socks_username: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        socks_password: Option<String>,
-        /// Маскировка TUN-имени (этап 12.E): если задано, helper создаёт
-        /// адаптер с этим именем. Иначе — стандартный `nemefisto-<pid>`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tun_name_override: Option<String>,
-    },
-    /// Остановить tun2socks и откатить добавленные routes.
-    TunStop,
     /// Включить kill switch (этап 13.D — настоящий WFP).
     ///
     /// `server_ips` — список IP-адресов VPN-сервера (Tauri-main делает
@@ -98,13 +113,56 @@ pub enum Request {
     /// Не destructive: только читает существование sublayer'а с
     /// нашим GUID.
     WfpQueryOrphan,
+    /// 13.L: запустить mihomo как SYSTEM-процесс. Нужно для built-in
+    /// TUN-режима — `CreateAdapter` WinTUN требует админа, и Tauri-main
+    /// (user-level) не может его поднять напрямую.
+    ///
+    /// `mihomo_exe_path` / `config_path` / `data_dir` — абсолютные пути.
+    /// Helper не знает где у Tauri лежат sidecar-binaries, поэтому
+    /// получает их явно.
+    ///
+    /// stdout/stderr процесса перенаправляются в
+    /// `C:\ProgramData\NemefistoVPN\mihomo.log` (помощник имеет туда
+    /// SYSTEM-доступ; Tauri-main как user тоже может читать для
+    /// диагностики).
+    MihomoStart {
+        config_path: String,
+        mihomo_exe_path: String,
+        data_dir: String,
+    },
+    /// 13.L: остановить SYSTEM-spawned mihomo. Идемпотентно: если
+    /// helper не запускал mihomo — no-op.
+    MihomoStop,
+    /// sing-box миграция (v7): запустить sing-box как SYSTEM-процесс.
+    /// Нужно для built-in TUN-режима — `CreateAdapter` WinTUN требует
+    /// админа, и Tauri-main (user-level) не может его поднять напрямую.
+    /// Семантически зеркалит `MihomoStart`.
+    ///
+    /// `singbox_exe_path` / `config_path` / `data_dir` — абсолютные пути.
+    /// stdout/stderr процесса перенаправляются в
+    /// `C:\ProgramData\NemefistoVPN\sing-box.log`.
+    SingBoxStart {
+        config_path: String,
+        singbox_exe_path: String,
+        data_dir: String,
+    },
+    /// sing-box миграция (v7): остановить SYSTEM-spawned sing-box.
+    /// Идемпотентно: если helper не запускал sing-box — no-op.
+    SingBoxStop,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
     Pong,
-    Version { version: String },
+    Version {
+        version: String,
+        /// `PROTOCOL_VERSION` помощника. Если поле отсутствует в JSON
+        /// (старый helper до 0.1.2) — десериализуется в 0, и
+        /// Tauri-main триггерит reinstall.
+        #[serde(default)]
+        protocol_version: u32,
+    },
     /// Успешный результат операции без полезной нагрузки.
     Ok,
     /// 14.E: ответ на `WfpQueryOrphan`. `has_orphan` — есть ли

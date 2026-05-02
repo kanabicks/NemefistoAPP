@@ -21,7 +21,7 @@ import {
   OnboardingTour,
   isOnboardingCompleted,
 } from "./components/OnboardingTour";
-import { ProxiesPanel } from "./components/ProxiesPanel";
+import { MihomoGroupsInline } from "./components/MihomoGroupsInline";
 import { useBackupModalStore } from "./lib/backup";
 import { Header } from "./components/Header";
 import { PowerStack } from "./components/PowerStack";
@@ -81,15 +81,16 @@ function App() {
   // Кнопка «личный кабинет» показывается только когда подписка
   // прислала `profile-web-page-url` (захардкоженный fallback убран).
   const hasDashboardUrl = useHasDashboardUrl();
-  // 8.F: показать ProxiesPanel когда подключён mihomo-profile.
-  const [proxiesPanelOpen, setProxiesPanelOpen] = useState(false);
   const engine = useSettingsStore((x) => x.engine);
-  const isRunningStatus = status === "running";
   const selectedServer =
     selectedIndex !== null ? servers[selectedIndex] : null;
-  const isMihomoProfile = selectedServer?.protocol === "mihomo-profile";
-  const showProxiesPanelButton =
-    isRunningStatus && engine === "mihomo" && isMihomoProfile;
+  // 8.F (UI v2): mihomo-профиль рендерится не как одна-карточка-«профиль»
+  // в ServerSelector, а как inline-сетка прокси-групп через
+  // MihomoGroupsInline (страновые карточки, FlClash-style). Когда true —
+  // ServerSelector скрываем (синтетическая запись «Профиль Mihomo»
+  // одинокая в списке смысла не несёт).
+  const showMihomoGroups =
+    engine === "mihomo" && selectedServer?.protocol === "mihomo-profile";
   const socksPort = useVpnStore((s) => s.socksPort);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -370,7 +371,12 @@ function App() {
               ) : (
                 <>
                   <SubscriptionMeta />
-                  <ServerSelector />
+                  {/* mihomo-profile: вместо одинокой синтетической карточки
+                      «Профиль Mihomo» показываем сразу группы и страновые
+                      ноды. ServerSelector скрываем, чтобы не дублировать
+                      пустую запись поверх настоящих карточек. */}
+                  {!showMihomoGroups && <ServerSelector />}
+                  {showMihomoGroups && <MihomoGroupsInline />}
                   <BandwidthMeter />
                 </>
               )}
@@ -410,20 +416,6 @@ function App() {
             </button>
           )}
 
-          {/* 8.F: переход в ProxiesPanel — только когда активен
-              mihomo-profile (full YAML с proxy-groups). Показывается под
-              dashboard-link или вместо него. */}
-          {showProxiesPanelButton && (
-            <button
-              type="button"
-              onClick={() => setProxiesPanelOpen(true)}
-              className="dashboard-link"
-            >
-              <span>прокси-группы</span>
-              <span className="dashboard-link-arrow">→</span>
-            </button>
-          )}
-
           <Footer />
         </div>
       </div>
@@ -435,9 +427,6 @@ function App() {
       <CrashRecoveryDialog />
       <BackupPreview />
       <OnboardingHost />
-      {proxiesPanelOpen && (
-        <ProxiesPanel onClose={() => setProxiesPanelOpen(false)} />
-      )}
       <Toaster />
     </>
   );

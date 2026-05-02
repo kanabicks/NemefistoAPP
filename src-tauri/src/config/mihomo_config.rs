@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 
 use super::server::ProxyEntry;
-use super::xray_config::AntiDpiOptions;
+use super::sing_box_config::AntiDpiOptions;
 
 /// Per-process routing rule (этап 8.D). Принимается из фронта через
 /// `connect()` и транслируется в Mihomo `PROCESS-NAME,<exe>,<action>`.
@@ -698,6 +698,26 @@ pub struct FullYamlPatch<'a> {
     /// но в подписке-профиле обычно DNS уже сконфигурен. Если нужно
     /// принудительно — пользователь явно включит в Settings).
     pub anti_dpi: Option<&'a AntiDpiOptions>,
+    /// 0.1.2 / 13.L: использовать встроенный TUN-режим mihomo вместо
+    /// нашего pipeline `external tun2socks via helper`.
+    ///
+    /// Когда `true`:
+    /// - Сохраняем `tun.enable: true` из YAML (НЕ переписываем в false);
+    /// - Mihomo сам создаёт WinTUN-адаптер, ставит routing-таблицу,
+    ///   биндит DIRECT-outbound к физ-интерфейсу, обходит сам себя
+    ///   на уровне sockopt (никаких петель — mihomo знает свой TUN);
+    /// - Tauri-main НЕ дёргает helper.tun_start — mihomo всё делает сам.
+    ///
+    /// Когда `false` (default — proxy-режим или fallback):
+    /// - Переписываем `tun.enable: false`, mihomo работает как обычный
+    ///   SOCKS5/HTTP-сервер на mixed-port;
+    /// - В TUN-режиме helper поднимает наш tun2socks и направляет
+    ///   трафик в mihomo SOCKS5 (старый путь).
+    ///
+    /// **Требование**: mihomo должен быть запущен с правами админа
+    /// (создание WinTUN-адаптера). Для этого запускаем mihomo через
+    /// helper-сервис (он SYSTEM), а не напрямую как Tauri sidecar.
+    pub use_builtin_tun: bool,
 }
 
 /// 8.F: применяет patch к полному mihomo-YAML из подписки и возвращает
@@ -768,24 +788,59 @@ pub fn patch_full_yaml(raw_yaml: &str, patch: &FullYamlPatch) -> Result<MihomoCo
     );
 
     // ── log-level ─────────────────────────────────────────────────────
+    // Стратегия:
+    //   - `silent` / отсутствует → форсим `warning` (по умолчанию мы
+    //     режем шум, но оставляем error/warning видимыми);
+    //   - любое явное значение (`info` / `debug`) — оставляем как есть.
+    //     Если провайдер прислал `info`, значит ему нужны verbose-логи
+    //     для диагностики (rule-decisions, provider-loads, и т.п.);
+    //     перезаписывать его выбор плохая идея — мы тогда теряем
+    //     причину когда mihomo внезапно умирает на init-фазе.
+    //
+    // На прод-релизе можно подумать про toggle «debug logs» в Settings,
+    // но сейчас пользователь сам решает уровень через YAML.
     let current_log = root
         .get("log-level")
         .and_then(|v| v.as_str())
-        .unwrap_or("info");
-    if current_log == "silent" || current_log == "error" {
-        root.insert("log-level".into(), "info".into());
+        .unwrap_or("");
+    if current_log.is_empty() || current_log == "silent" {
+        root.insert("log-level".into(), "warning".into());
     }
 
-    // ── tun.enable → false (наш tun2socks-pipeline) ───────────────────
-    // Если в подписке есть `tun:` секция — модифицируем enable=false,
-    // остальное (stack/exclude-address/auto-route) оставляем как есть
-    // на случай будущего 13.L. Mihomo при enable=false просто игнорит
-    // секцию.
+    // ── tun.enable: зависит от режима ─────────────────────────────────
+    // **builtin-TUN путь (13.L)**: оставляем `tun.enable: true` — mihomo
+    // сам создаст WinTUN, поставит маршруты, обработает DIRECT через
+    // auto-detect-interface. Никакого нашего tun2socks/half-route'а.
+    //
+    // **внешний tun2socks путь** (default): принудительно
+    // `tun.enable: false` — mihomo работает только как SOCKS-server,
+    // тоннель управляется нашим helper'ом.
     if let Some(tun) = root
         .get_mut(&Value::String("tun".into()))
         .and_then(|v| v.as_mapping_mut())
     {
-        tun.insert("enable".into(), false.into());
+        if patch.use_builtin_tun {
+            tun.insert("enable".into(), true.into());
+            // auto-detect-interface жизненно важен — он скажет mihomo
+            // какой физ-интерфейс использовать для bypass'а собственного
+            // TUN'а в DIRECT-outbound. Без него mihomo не знает куда
+            // привязать direct-сокет, петля.
+            tun.insert("auto-detect-interface".into(), true.into());
+            // auto-route: пусть mihomo сам ставит half-routes/0.0.0.0
+            tun.entry(Value::String("auto-route".into()))
+                .or_insert_with(|| true.into());
+        } else {
+            tun.insert("enable".into(), false.into());
+        }
+    } else if patch.use_builtin_tun {
+        // Подписка не имеет `tun:` секции — собираем минимально-
+        // рабочую с нашими дефолтами.
+        let mut tun_map = Mapping::new();
+        tun_map.insert("enable".into(), true.into());
+        tun_map.insert("stack".into(), "mixed".into());
+        tun_map.insert("auto-route".into(), true.into());
+        tun_map.insert("auto-detect-interface".into(), true.into());
+        root.insert("tun".into(), Value::Mapping(tun_map));
     }
 
     // ── ipv6 — оставляем как у провайдера ─────────────────────────────
@@ -881,6 +936,7 @@ mod patch_tests {
             external_controller_secret: "test-secret-uuid",
             app_rules: &[],
             anti_dpi: None,
+            use_builtin_tun: false,
         }
     }
 
@@ -1011,5 +1067,142 @@ proxy-groups:
             .unwrap();
         assert_eq!(auth.len(), 1);
         assert_eq!(auth[0].as_str(), Some("nemefisto:secret-pass"));
+    }
+
+    /// 0.1.2: реальная подписка пользователя с load-balance подгруппой,
+    /// select-обёрткой, rule-providers и сложными OR-правилами + emoji
+    /// в имени группы. Регрессия — раньше тестов с такой структурой
+    /// не было, и можно было поломать парсинг при правке patch_full_yaml.
+    #[test]
+    fn patches_complex_real_world_subscription() {
+        let yaml = r#"
+mixed-port: 7890
+mode: rule
+log-level: info
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 1.1.1.1
+proxies:
+  - {name: 'germany', type: vless, server: de.x.com, port: 443}
+  - {name: 'latvia',  type: vless, server: lv.x.com, port: 443}
+proxy-groups:
+  - name: "🇪🇺  Fastest"
+    type: load-balance
+    url: https://cp.cloudflare.com/generate_204
+    interval: 600
+    strategy: consistent-hashing
+    proxies:
+      - germany
+      - latvia
+  - name: 'ariyvpn'
+    type: 'select'
+    proxies:
+      - "🇪🇺  Fastest"
+rule-providers:
+  geosite-ru:
+    type: http
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/category-ru.mrs
+    path: ./geosite-ru.mrs
+    interval: 86400
+  geoip-ru:
+    type: http
+    behavior: ipcidr
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geoip/ru.mrs
+    path: ./geoip-ru.mrs
+    interval: 86400
+rules:
+  - IP-CIDR,3.68.63.139/32,DIRECT,no-resolve
+  - PROCESS-NAME,FortiClient.exe,DIRECT
+  - DOMAIN-SUFFIX,sportlevel.com,DIRECT
+  - OR,((RULE-SET,geosite-ru),(RULE-SET,geoip-ru)),DIRECT
+  - MATCH,ariyvpn
+"#;
+        let cfg = patch_full_yaml(yaml, &base_patch())
+            .expect("реальная подписка должна патчиться");
+        // log-level: info в подписке — сохраняется как есть. Только
+        // silent/missing мы форсим в warning.
+        assert!(
+            cfg.yaml.contains("log-level: info"),
+            "log-level=info из подписки должен сохраниться"
+        );
+        // tun.enable должно быть false — наш tun2socks pipeline активный
+        assert!(cfg.yaml.contains("enable: false"));
+        // rule-providers должны сохраниться целиком
+        assert!(cfg.yaml.contains("geosite-ru"));
+        assert!(cfg.yaml.contains("geoip-ru"));
+        assert!(cfg.yaml.contains("category-ru.mrs"));
+        // rules в исходном порядке (мы только префиксы добавляем)
+        let pos_iprule = cfg.yaml.find("3.68.63.139").expect("ip-cidr rule");
+        let pos_match = cfg.yaml.find("MATCH,ariyvpn").expect("match rule");
+        assert!(pos_iprule < pos_match, "порядок rules сохраняется");
+        // proxy-group с emoji в имени — должна пройти YAML round-trip
+        // без потери символов
+        assert!(cfg.yaml.contains("🇪🇺"));
+        // OR-rule с rule-set'ами должно сохраниться как строка
+        assert!(cfg.yaml.contains("RULE-SET,geosite-ru"));
+        // ariyvpn group должна сохраниться
+        assert!(cfg.yaml.contains("ariyvpn"));
+    }
+
+    /// 13.L: `use_builtin_tun=true` сохраняет `tun.enable: true` из
+    /// подписки и форсит `auto-detect-interface: true`. Это позволяет
+    /// mihomo самостоятельно создать WinTUN, поставить маршруты, и
+    /// корректно bypass'ить собственный TUN на DIRECT-outbound'е.
+    #[test]
+    fn patch_keeps_tun_enabled_for_builtin_tun_mode() {
+        let yaml = r#"
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+"#;
+        let mut p = base_patch();
+        p.use_builtin_tun = true;
+        let cfg = patch_full_yaml(yaml, &p).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let tun = v.as_mapping().unwrap()["tun"].as_mapping().unwrap();
+        assert_eq!(tun["enable"], Value::Bool(true), "tun.enable=true сохранён");
+        assert_eq!(
+            tun["auto-detect-interface"],
+            Value::Bool(true),
+            "auto-detect-interface форсирован для bypass-а DIRECT"
+        );
+    }
+
+    /// 13.L: `use_builtin_tun=true` для подписки БЕЗ tun-секции —
+    /// собираем минимальную с разумными дефолтами. mihomo не должен
+    /// упасть на отсутствии `tun:` блока когда мы хотим built-in.
+    #[test]
+    fn patch_synthesizes_tun_for_builtin_when_missing() {
+        let yaml = r#"
+proxies: []
+proxy-groups:
+  - name: select
+    type: select
+    proxies: []
+"#;
+        let mut p = base_patch();
+        p.use_builtin_tun = true;
+        let cfg = patch_full_yaml(yaml, &p).expect("patch ok");
+        let v: Value = serde_yaml::from_str(&cfg.yaml).unwrap();
+        let tun = v.as_mapping().unwrap()["tun"].as_mapping().unwrap();
+        assert_eq!(tun["enable"], Value::Bool(true));
+        assert_eq!(tun["auto-detect-interface"], Value::Bool(true));
+        assert_eq!(tun["auto-route"], Value::Bool(true));
     }
 }

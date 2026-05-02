@@ -38,9 +38,9 @@ const TARGET_RELEASE = join(SRC_TAURI, "target", "release");
 const TRIPLET = "x86_64-pc-windows-msvc";
 
 const REQUIRED_RESOURCES = [
-  "xray-x86_64-pc-windows-msvc.exe",
+  // 0.1.2 sing-box миграция: основной движок (заменил xray + tun2proxy).
+  "sing-box-x86_64-pc-windows-msvc.exe",
   "mihomo-x86_64-pc-windows-msvc.exe",
-  "tun2socks-x86_64-pc-windows-msvc.exe",
   "wintun.dll",
   "geoip.dat",
   "geosite.dat",
@@ -153,8 +153,10 @@ const missing = REQUIRED_RESOURCES.filter(
 if (missing.length > 0) {
   fail(
     `в src-tauri/binaries/ отсутствуют файлы: ${missing.join(", ")}.\n` +
-      "         Скачай их вручную (xray-core, tun2socks, wintun.dll, geoip.dat,\n" +
-      "         geosite.dat) и положи в binaries/ перед release-сборкой."
+      "         Скачай их вручную (xray-core, mihomo, tun2proxy, wintun.dll,\n" +
+      "         geoip.dat, geosite.dat) и положи в binaries/ перед release-сборкой.\n" +
+      "         tun2proxy: github.com/tun2proxy/tun2proxy/releases (Windows zip,\n" +
+      "         переименовать tun2proxy-bin.exe → tun2proxy-x86_64-pc-windows-msvc.exe)."
   );
 }
 

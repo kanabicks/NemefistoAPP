@@ -177,6 +177,28 @@ pub async fn select_proxy(
     Ok(())
 }
 
+/// `DELETE /connections` — закрыть все активные TCP-соединения mihomo.
+///
+/// Зачем: `select_proxy` переключает только **новые** соединения. Браузер
+/// держит keep-alive с прежней нодой через тот же сокет — пока он не
+/// закрылся, трафик продолжает идти через старый outbound. Чтобы смена
+/// прокси применилась сразу, после `select_proxy` зовём это API —
+/// mihomo закрывает все TCP-сессии, браузер при следующем запросе
+/// переподключается через свежий outbound.
+pub async fn close_all_connections(ep: &ControllerEndpoint) -> Result<()> {
+    let client = build_client()?;
+    let resp = client
+        .delete(url(ep, "/connections"))
+        .bearer_auth(&ep.secret)
+        .send()
+        .await
+        .context("DELETE /connections")?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("HTTP {}", resp.status()));
+    }
+    Ok(())
+}
+
 /// `GET /proxies/:name/delay` — измерить latency для одной ноды через
 /// заданный url. Возвращает мс или `None` при timeout/fail.
 ///

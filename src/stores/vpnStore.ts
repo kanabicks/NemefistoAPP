@@ -218,10 +218,17 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     // берём из заголовка; иначе — пользовательский выбор.
     const settings = useSettingsStore.getState();
     const meta = useSubscriptionStore.getState().meta;
-    const headerEngine = meta?.engine === "xray" || meta?.engine === "mihomo"
-      ? meta.engine
-      : null;
-    const engine: "xray" | "mihomo" =
+    // sing-box миграция (0.1.2): подписка может всё ещё присылать
+    // `X-Nemefisto-Engine: xray` — мы автоматически маппим в "sing-box"
+    // (sing-box покрывает всё что покрывал xray, без потери семантики).
+    const headerEngineRaw = meta?.engine;
+    const headerEngine: "sing-box" | "mihomo" | null =
+      headerEngineRaw === "mihomo"
+        ? "mihomo"
+        : headerEngineRaw === "sing-box" || headerEngineRaw === "xray"
+        ? "sing-box"
+        : null;
+    const engine: "sing-box" | "mihomo" =
       !settings.engineTouched && headerEngine
         ? headerEngine
         : settings.engine;
@@ -248,6 +255,23 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         socksPassword: result.socks_password ?? null,
         errorMessage: null,
       });
+      // 8.F: для mihomo-движка применяем сохранённые пользователем
+      // preferredMihomoNodes (см. ProxiesPanel — клик по ноде до connect
+      // запоминает её как предпочитаемую). external-controller только
+      // что поднялся — Rust сохранил endpoint в connect, теперь дёргаем
+      // /proxies/:group для каждой записи. Ошибки глотаем — обычно это
+      // означает что имя группы не совпадает (пользователь сменил
+      // подписку). UI panel дальше работает в live-режиме как обычно.
+      if (engine === "mihomo") {
+        const preferred = useSettingsStore.getState().preferredMihomoNodes;
+        for (const [group, name] of Object.entries(preferred)) {
+          try {
+            await invoke("mihomo_select_proxy", { group, name });
+          } catch {
+            // имя группы/ноды устарело — игнорируем
+          }
+        }
+      }
     } catch (e) {
       set({ status: "error", errorMessage: String(e) });
     }

@@ -28,18 +28,43 @@ const HELPER_FILENAME_TRIPLET: &str = "nemefisto-helper-x86_64-pc-windows-msvc.e
 const PING_TIMEOUT_AFTER_INSTALL: Duration = Duration::from_secs(20);
 const PING_POLL_INTERVAL: Duration = Duration::from_millis(300);
 
-/// Гарантирует что helper отвечает по pipe-у. Если уже отвечает — мгновенно
-/// возвращает Ok. Если нет — запускает auto-install через UAC и ждёт пока
-/// сервис начнёт отвечать.
+/// Гарантирует что helper отвечает по pipe-у И умеет наш wire-протокол.
+/// Если уже отвечает с правильной версией — мгновенно возвращает Ok.
+/// Иначе — запускает auto-install через UAC и ждёт пока сервис начнёт
+/// отвечать.
+///
+/// Зачем version-check: при апгрейде клиента (v0.1.1 → 0.1.2) старый
+/// helper может всё ещё крутиться в системе и не понимать новые поля
+/// в TunStart (`extra_server_hosts`). Без проверки connect отрабатывал
+/// бы успешно, но bypass-route добавлялся бы только на primary host —
+/// для mihomo-passthrough это значит петля на остальных нодах.
 ///
 /// Возможные исходы:
-/// - `Ok(())` — helper доступен (был доступен изначально, или поставлен).
+/// - `Ok(())` — helper доступен с актуальным протоколом.
 /// - `Err(...)` — helper не найден в файловой системе, либо UAC отменён,
 ///   либо сервис установился но не отвечает за 20 секунд.
 pub async fn ensure_running() -> Result<()> {
-    // 1. Быстрая проверка — может уже работает
-    if helper_client::ping().await.is_ok() {
-        return Ok(());
+    // 1. Быстрая проверка — может уже работает с правильной версией
+    if let Ok(()) = helper_client::ping().await {
+        match helper_client::version().await {
+            Ok((_, proto)) if proto >= helper_client::MIN_HELPER_PROTOCOL_VERSION => {
+                return Ok(());
+            }
+            Ok((ver, proto)) => {
+                eprintln!(
+                    "[helper-bootstrap] helper версии {ver} (protocol={proto}), \
+                     требуется ≥ {}, переустанавливаем",
+                    helper_client::MIN_HELPER_PROTOCOL_VERSION
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[helper-bootstrap] не удалось получить версию helper: {e:#}, \
+                     переустанавливаем"
+                );
+            }
+        }
+        // Fall through к reinstall
     }
 
     // 2. Найти helper.exe
@@ -49,26 +74,33 @@ pub async fn ensure_running() -> Result<()> {
         ))?;
 
     eprintln!(
-        "[helper-bootstrap] helper не отвечает, запускаю install через UAC: {}",
+        "[helper-bootstrap] запускаю install через UAC: {}",
         helper.display()
     );
 
-    // 3. Запуск с UAC
+    // 3. Запуск с UAC. install-команда helper'а идемпотентная —
+    // auto uninstall+install при наличии существующего сервиса.
     spawn_elevated(&helper, "install")?;
 
-    // 4. Ждём пока сервис поднимется и начнёт отвечать
+    // 4. Ждём пока сервис поднимется и начнёт отвечать с правильной версией
     let deadline = Instant::now() + PING_TIMEOUT_AFTER_INSTALL;
     while Instant::now() < deadline {
         tokio::time::sleep(PING_POLL_INTERVAL).await;
         if helper_client::ping().await.is_ok() {
-            eprintln!("[helper-bootstrap] helper отвечает, установка успешна");
-            return Ok(());
+            // Новый сервис должен отвечать новым протоколом. Если нет —
+            // что-то пошло не так на стороне install.
+            if let Ok((_, proto)) = helper_client::version().await {
+                if proto >= helper_client::MIN_HELPER_PROTOCOL_VERSION {
+                    eprintln!("[helper-bootstrap] helper отвечает, установка успешна");
+                    return Ok(());
+                }
+            }
         }
     }
 
     bail!(
-        "helper-сервис установился, но не отозвался за {}с. Проверьте \
-         services.msc → NemefistoHelper",
+        "helper-сервис установился, но не отозвался с актуальным протоколом за {}с. \
+         Проверьте services.msc → NemefistoHelper",
         PING_TIMEOUT_AFTER_INSTALL.as_secs()
     )
 }

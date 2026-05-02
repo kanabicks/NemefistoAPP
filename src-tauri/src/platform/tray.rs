@@ -18,7 +18,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 
 use crate::platform;
-use crate::vpn::{MihomoState, XrayState};
+use crate::vpn::{MihomoState, SingBoxState};
 
 /// Идентификатор tray-icon. Используется потом в `tray_set_status` для
 /// `app.tray_by_id`. Один трей на приложение.
@@ -127,8 +127,8 @@ fn toggle_main_window(app: &AppHandle) {
 /// пункта «Выйти» в меню трея — обычное закрытие окна (X) приложение
 /// не закрывает, только сворачивает в трей.
 pub fn quit_app(app: &AppHandle) {
-    let xray = app.state::<XrayState>();
-    let _ = xray.stop();
+    let sing_box = app.state::<SingBoxState>();
+    let _ = sing_box.stop();
     let mihomo = app.state::<MihomoState>();
     let _ = mihomo.stop();
     let _ = platform::proxy::clear_system_proxy();

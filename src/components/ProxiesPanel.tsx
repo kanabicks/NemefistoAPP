@@ -1,24 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../stores/toastStore";
+import { useVpnStore } from "../stores/vpnStore";
+import { useSubscriptionStore } from "../stores/subscriptionStore";
+import { useSettingsStore } from "../stores/settingsStore";
 
 /**
  * 8.F — Панель прокси-групп Mihomo.
  *
- * Показывается когда подключён mihomo-profile (full YAML с
- * `proxy-groups`). Через external-controller API:
- *  - читает все группы и ноды (`mihomo_proxies`),
- *  - даёт переключать ноду в `select`-группе кликом
- *    (`mihomo_select_proxy`),
- *  - запускает тест задержки (`mihomo_delay_test`).
+ * Два режима:
  *
- * Polling: автообновление каждые 3 секунды пока панель открыта.
+ * **Live (VPN running)** — данные из mihomo external-controller через
+ * `mihomo_proxies`. Видна история latency, можно тыкать ноды для
+ * переключения, прогонять `delay_test`. Polling 3 сек.
  *
- * Цветовая схема latency:
- *  - зелёный    < 200ms
- *  - жёлтый     200..500
- *  - оранжевый  500..1000
- *  - красный    >= 1000ms или 0 (timeout)
+ * **Static (VPN остановлен)** — синтетический snapshot из
+ * `selectedServer.raw.{groups, proxies}`. UI тот же — карточки групп с
+ * раскрытием и список нод внутри — но без latency (не из чего брать) и
+ * без активного выбора. Это даёт FlClash-style обзор стран ДО connect,
+ * чтобы пользователь видел что в подписке вообще лежит.
  */
 
 type ProxyInfo = {
@@ -41,6 +41,19 @@ const GROUP_TYPES = new Set([
   "LoadBalance",
   "Relay",
 ]);
+
+/** YAML-тип группы (kebab-case) → external-controller тип (PascalCase).
+ *  Mihomo external-controller отдаёт типы в PascalCase, а в YAML принято
+ *  писать `type: select|url-test|...`. Чтобы рендерить group-emoji и
+ *  определять «можно ли выбирать ноду» одинаково в live и static режимах,
+ *  нормализуем YAML-тип к PascalCase при построении static-snapshot. */
+const YAML_TO_API_GROUP_TYPE: Record<string, string> = {
+  select: "Selector",
+  "url-test": "URLTest",
+  fallback: "Fallback",
+  "load-balance": "LoadBalance",
+  relay: "Relay",
+};
 
 /** Тип группы → emoji-бейдж + русская подпись. */
 const TYPE_LABELS: Record<string, { emoji: string; label: string }> = {
@@ -69,14 +82,64 @@ function delayLabel(d: number | null): string {
   return d == null ? "—" : `${d} мс`;
 }
 
+/** Собрать ProxiesSnapshot из raw.groups/raw.proxies подписки. Используется
+ *  до connect — UI рендерит то же самое, но без latency-history и без
+ *  активной ноды (мы пока не подняли mihomo, поэтому реальный «now» не
+ *  знаем — берём первую из списка group.proxies как «по умолчанию»). */
+function buildStaticSnapshot(
+  rawGroups: Array<{ name: string; type: string; proxies: string[] }>,
+  rawProxies: Array<{ name: string; type: string }>
+): ProxiesSnapshot {
+  const out: Record<string, ProxyInfo> = {};
+  for (const p of rawProxies) {
+    out[p.name] = {
+      name: p.name,
+      type: p.type,
+      now: null,
+      all: [],
+      history: [],
+      udp: false,
+    };
+  }
+  for (const g of rawGroups) {
+    const apiType = YAML_TO_API_GROUP_TYPE[g.type] ?? "Selector";
+    out[g.name] = {
+      name: g.name,
+      type: apiType,
+      now: g.proxies[0] ?? null,
+      all: g.proxies,
+      history: [],
+      udp: false,
+    };
+  }
+  return { proxies: out };
+}
+
 export function ProxiesPanel({ onClose }: { onClose: () => void }) {
+  const status = useVpnStore((s) => s.status);
+  const selectedIndex = useVpnStore((s) => s.selectedIndex);
+  const servers = useSubscriptionStore((s) => s.servers);
+  const preferredNodes = useSettingsStore((s) => s.preferredMihomoNodes);
+  const setSetting = useSettingsStore((s) => s.set);
+
+  const isRunning = status === "running";
+  const liveMode = isRunning;
+
+  /** Запомнить выбор пользователя на будущее: ключ — имя группы,
+   *  значение — имя ноды. Используется в vpnStore.connect после старта
+   *  mihomo чтобы автоматически переключиться на предпочитаемую ноду. */
+  const setPreferred = (group: string, name: string) => {
+    setSetting("preferredMihomoNodes", { ...preferredNodes, [group]: name });
+  };
+
   const [snap, setSnap] = useState<ProxiesSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(liveMode);
   const [error, setError] = useState<string | null>(null);
   const [busyTesting, setBusyTesting] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const refresh = async () => {
+    if (!liveMode) return;
     try {
       const data = await invoke<ProxiesSnapshot>("mihomo_proxies");
       setSnap(data);
@@ -88,11 +151,27 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // Live: периодический pull external-controller. Static: построить
+  // snapshot один раз из raw подписки.
   useEffect(() => {
-    void refresh();
-    const t = window.setInterval(() => void refresh(), 3000);
-    return () => window.clearInterval(t);
-  }, []);
+    if (liveMode) {
+      void refresh();
+      const t = window.setInterval(() => void refresh(), 3000);
+      return () => window.clearInterval(t);
+    }
+    const entry = selectedIndex !== null ? servers[selectedIndex] : null;
+    if (!entry || entry.protocol !== "mihomo-profile") {
+      setSnap(null);
+      setLoading(false);
+      return;
+    }
+    const raw = entry.raw as
+      | { groups?: Array<{ name: string; type: string; proxies: string[] }>; proxies?: Array<{ name: string; type: string }> }
+      | undefined;
+    setSnap(buildStaticSnapshot(raw?.groups ?? [], raw?.proxies ?? []));
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMode, selectedIndex, servers]);
 
   // Только группы (исключаем встроенные DIRECT/REJECT/GLOBAL и
   // прокси-ноды — они показываются вложенно в группах).
@@ -104,6 +183,16 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [snap]);
 
+  // По умолчанию раскрываем первую группу — пользователю обычно нужно
+  // сразу увидеть её содержимое (особенно когда группа одна, как в
+  // типовых подписках с одним select-роутером).
+  useEffect(() => {
+    if (groups.length > 0 && expanded.size === 0) {
+      setExpanded(new Set([groups[0].name]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups.length]);
+
   const toggleGroup = (name: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -114,6 +203,20 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
   };
 
   const selectNode = async (group: string, name: string) => {
+    // В обоих режимах сохраняем как предпочитаемую — это и для подсказки
+    // UI «активная: …» в static, и для авто-применения при следующем
+    // connect (vpnStore.connect → applyPreferredMihomoNodes).
+    setPreferred(group, name);
+
+    if (!liveMode) {
+      showToast({
+        kind: "success",
+        title: "выбрано",
+        message: `${group} → ${name}. применится при подключении`,
+        durationMs: 3500,
+      });
+      return;
+    }
     try {
       await invoke("mihomo_select_proxy", { group, name });
       showToast({
@@ -132,6 +235,7 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
   };
 
   const testNode = async (name: string) => {
+    if (!liveMode) return;
     setBusyTesting(name);
     try {
       const ms = await invoke<number | null>("mihomo_delay_test", { name });
@@ -158,17 +262,27 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
         className="recovery-dialog"
         style={{ maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column" }}
       >
-        <div className="recovery-title">прокси-группы (mihomo)</div>
+        <div className="recovery-title">
+          прокси-группы (mihomo){liveMode ? "" : " · до подключения"}
+        </div>
 
         {loading && <div className="recovery-text">загрузка…</div>}
-        {error && (
-          <pre className="recovery-error">{error}</pre>
-        )}
+        {error && <pre className="recovery-error">{error}</pre>}
 
         {!loading && !error && groups.length === 0 && (
           <div className="recovery-text">
             в текущем профиле нет групп. подключитесь к mihomo-профилю с
             подписки чтобы увидеть proxy-groups.
+          </div>
+        )}
+
+        {!liveMode && groups.length > 0 && (
+          <div
+            className="recovery-text"
+            style={{ fontSize: 11, color: "var(--fg-dim)" }}
+          >
+            кликни ноду → применится при подключении. латентность и
+            «тест» — после старта VPN.
           </div>
         )}
 
@@ -232,22 +346,29 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                       }}
                     >
                       {info.label}
-                      {activeName ? ` · активна: ${activeName}` : ""}
+                      {(() => {
+                        const active = liveMode
+                          ? activeName
+                          : preferredNodes[g.name] ?? activeName;
+                        return active ? ` · ${liveMode ? "активна" : "выбрана"}: ${active}` : "";
+                      })()}
                       {` · ${memberInfos.length} нод`}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ fontSize: 11, padding: "4px 8px" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void testNode(g.name);
-                    }}
-                    disabled={busyTesting === g.name}
-                  >
-                    {busyTesting === g.name ? "…" : "тест"}
-                  </button>
+                  {liveMode && (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void testNode(g.name);
+                      }}
+                      disabled={busyTesting === g.name}
+                    >
+                      {busyTesting === g.name ? "…" : "тест"}
+                    </button>
+                  )}
                   <span style={{ color: "var(--fg-dim)" }}>
                     {isExpanded ? "▾" : "▸"}
                   </span>
@@ -266,7 +387,16 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                   >
                     {memberInfos.map((m) => {
                       const d = lastDelay(m);
-                      const isActive = m.name === activeName;
+                      // Live: активная — то что external-controller вернул
+                      // в `now`. Static: что пользователь сохранил
+                      // в preferredMihomoNodes (или первая в group по
+                      // дефолту). Selector — единственный тип где выбор
+                      // имеет смысл; URL-test/Fallback решают сами.
+                      const preferredName =
+                        preferredNodes[g.name] ?? activeName;
+                      const isActive = liveMode
+                        ? m.name === activeName
+                        : m.name === preferredName;
                       const canSelect = g.type === "Selector";
                       return (
                         <li
@@ -287,7 +417,13 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                           onClick={() =>
                             canSelect && !isActive && void selectNode(g.name, m.name)
                           }
-                          title={canSelect ? "выбрать эту ноду" : "управляется автоматически"}
+                          title={
+                            canSelect
+                              ? liveMode
+                                ? "выбрать эту ноду"
+                                : "запомнить как предпочитаемую — применится при подключении"
+                              : "управляется автоматически"
+                          }
                         >
                           <span
                             style={{
@@ -301,29 +437,45 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                           >
                             {isActive ? "● " : "  "}
                             {m.name}
+                            {!liveMode && m.type !== "unknown" && (
+                              <span
+                                style={{
+                                  marginLeft: 6,
+                                  fontSize: 10,
+                                  color: "var(--fg-dim)",
+                                  opacity: 0.6,
+                                }}
+                              >
+                                {m.type}
+                              </span>
+                            )}
                           </span>
-                          <span
-                            className={delayClass(d)}
-                            style={{
-                              fontSize: 11,
-                              minWidth: 50,
-                              textAlign: "right",
-                            }}
-                          >
-                            {delayLabel(d)}
-                          </span>
-                          <button
-                            type="button"
-                            className="btn-ghost"
-                            style={{ fontSize: 10, padding: "2px 6px" }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void testNode(m.name);
-                            }}
-                            disabled={busyTesting === m.name}
-                          >
-                            {busyTesting === m.name ? "…" : "тест"}
-                          </button>
+                          {liveMode && (
+                            <span
+                              className={delayClass(d)}
+                              style={{
+                                fontSize: 11,
+                                minWidth: 50,
+                                textAlign: "right",
+                              }}
+                            >
+                              {delayLabel(d)}
+                            </span>
+                          )}
+                          {liveMode && (
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              style={{ fontSize: 10, padding: "2px 6px" }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void testNode(m.name);
+                              }}
+                              disabled={busyTesting === m.name}
+                            >
+                              {busyTesting === m.name ? "…" : "тест"}
+                            </button>
+                          )}
                         </li>
                       );
                     })}
@@ -335,9 +487,11 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="recovery-actions">
-          <button type="button" className="btn-ghost" onClick={() => void refresh()}>
-            обновить
-          </button>
+          {liveMode && (
+            <button type="button" className="btn-ghost" onClick={() => void refresh()}>
+              обновить
+            </button>
+          )}
           <button type="button" className="btn-primary" onClick={onClose}>
             закрыть
           </button>

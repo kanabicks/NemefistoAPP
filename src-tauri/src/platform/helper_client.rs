@@ -22,26 +22,6 @@ const PIPE_NAME: &str = r"\\.\pipe\nemefisto-helper";
 pub enum HelperRequest {
     Ping,
     Version,
-    TunStart {
-        socks_port: u16,
-        server_host: String,
-        dns: String,
-        tun2socks_path: String,
-        /// SOCKS5 auth (этап 9.G): если задан, tun2socks подключится с
-        /// учётными данными `socks5://user:pass@127.0.0.1:port`. Xray
-        /// принимает auth: password только когда обе строки заданы.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        socks_username: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        socks_password: Option<String>,
-        /// Маскировка TUN-имени (этап 12.E): если задано — helper создаёт
-        /// адаптер с этим именем вместо стандартного `nemefisto-<pid>`.
-        /// UI должен сгенерировать имя случайным образом, чтобы оно было
-        /// разным от запуска к запуску.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tun_name_override: Option<String>,
-    },
-    TunStop,
     /// Включить kill switch (этап 13.D — настоящий WFP).
     /// `server_ips` — массив IP уже резолвленный в Tauri-main.
     /// `allow_lan` — пускать ли локальную сеть.
@@ -75,18 +55,48 @@ pub enum HelperRequest {
     /// 14.E: read-only проверка остатков WFP-фильтров от прошлой
     /// сессии. Helper смотрит существование sublayer с нашим GUID.
     WfpQueryOrphan,
+    /// 13.L: запустить mihomo как SYSTEM-процесс (для built-in TUN).
+    MihomoStart {
+        config_path: String,
+        mihomo_exe_path: String,
+        data_dir: String,
+    },
+    /// 13.L: остановить SYSTEM-spawned mihomo. Идемпотентно.
+    MihomoStop,
+    /// sing-box миграция (v7): запустить sing-box как SYSTEM-процесс
+    /// для built-in TUN-режима (CreateAdapter WinTUN требует админа).
+    SingBoxStart {
+        config_path: String,
+        singbox_exe_path: String,
+        data_dir: String,
+    },
+    /// sing-box миграция (v7): остановить SYSTEM-spawned sing-box.
+    /// Идемпотентно.
+    SingBoxStop,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum HelperResponse {
     Pong,
-    Version { version: String },
+    Version {
+        version: String,
+        /// 0.1.2: версия wire-протокола helper'а. Старые helper'ы
+        /// (v0.1.1 и раньше) не возвращают это поле — десериализуем
+        /// в 0, что триггерит auto-reinstall в `helper_bootstrap`.
+        #[serde(default)]
+        protocol_version: u32,
+    },
     Ok,
     /// 14.E: ответ на `WfpQueryOrphan`.
     WfpOrphan { has_orphan: bool },
     Error { message: String },
 }
+
+/// Минимально-поддерживаемая версия протокола. Если helper отвечает
+/// меньшей — `helper_bootstrap` форсит uninstall+install. Бампается
+/// синхронно с константой в `nemefisto_helper::protocol`.
+pub const MIN_HELPER_PROTOCOL_VERSION: u32 = 8;
 
 /// Открыть pipe с retry — сервис может быть busy сразу после старта или
 /// перезапуска. Возвращает первый успешный клиент за 1 секунду или ошибку.
@@ -136,40 +146,22 @@ pub async fn ping() -> Result<()> {
     }
 }
 
-/// Поднять TUN-режим: helper запустит tun2socks, добавит маршруты,
-/// настроит DNS на TUN-интерфейсе.
-///
-/// Опционально:
-/// - `socks_username` / `socks_password` — для SOCKS5 auth (9.G);
-///   передаётся в tun2socks как `socks5://user:pass@host:port`.
-/// - `tun_name_override` — кастомное имя TUN-адаптера для маскировки
-///   от детекта приложений по имени интерфейса (12.E).
-pub async fn tun_start(
-    socks_port: u16,
-    server_host: String,
-    dns: String,
-    tun2socks_path: String,
-    socks_username: Option<String>,
-    socks_password: Option<String>,
-    tun_name_override: Option<String>,
-) -> Result<()> {
-    let resp = send(HelperRequest::TunStart {
-        socks_port,
-        server_host,
-        dns,
-        tun2socks_path,
-        socks_username,
-        socks_password,
-        tun_name_override,
-    })
-    .await?;
-    match resp {
-        HelperResponse::Ok => Ok(()),
-        HelperResponse::Error { message } => bail!("{message}"),
-        other => bail!("неожиданный ответ helper: {other:?}"),
+/// Получить версию helper-сервиса. Используется `helper_bootstrap` для
+/// проверки совместимости wire-протокола: если helper старше нашего
+/// `MIN_HELPER_PROTOCOL_VERSION` — форсим reinstall.
+pub async fn version() -> Result<(String, u32)> {
+    match send(HelperRequest::Version).await? {
+        HelperResponse::Version {
+            version,
+            protocol_version,
+        } => Ok((version, protocol_version)),
+        HelperResponse::Error { message } => bail!("helper: {message}"),
+        other => bail!("ожидали Version, получили {other:?}"),
     }
 }
 
+/// Поднять TUN-режим: helper запустит tun2socks, добавит маршруты,
+/// настроит DNS на TUN-интерфейсе.
 /// Включить kill switch — WFP-фильтры на уровне ядра блокируют весь
 /// outbound кроме allowlist'а (этап 13.D).
 ///
@@ -238,6 +230,69 @@ pub async fn kill_switch_force_cleanup() -> Result<()> {
     }
 }
 
+/// 13.L: spawn mihomo как SYSTEM-процесс через helper. Используется
+/// в built-in TUN-режиме где требуются админ-права на CreateAdapter.
+pub async fn mihomo_start(
+    config_path: String,
+    mihomo_exe_path: String,
+    data_dir: String,
+) -> Result<()> {
+    let resp = send(HelperRequest::MihomoStart {
+        config_path,
+        mihomo_exe_path,
+        data_dir,
+    })
+    .await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// 13.L: остановить SYSTEM-spawned mihomo. Идемпотентно — если helper
+/// не запускал mihomo, вернёт Ok сразу.
+pub async fn mihomo_stop() -> Result<()> {
+    let resp = send(HelperRequest::MihomoStop).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// sing-box миграция: spawn sing-box как SYSTEM-процесс через helper.
+/// Используется в built-in TUN-режиме где требуются админ-права на
+/// CreateAdapter. Семантически зеркалит `mihomo_start`.
+pub async fn singbox_start(
+    config_path: String,
+    singbox_exe_path: String,
+    data_dir: String,
+) -> Result<()> {
+    let resp = send(HelperRequest::SingBoxStart {
+        config_path,
+        singbox_exe_path,
+        data_dir,
+    })
+    .await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// Остановить SYSTEM-spawned sing-box. Идемпотентно — если helper не
+/// запускал sing-box, вернёт Ok сразу.
+pub async fn singbox_stop() -> Result<()> {
+    let resp = send(HelperRequest::SingBoxStop).await?;
+    match resp {
+        HelperResponse::Ok => Ok(()),
+        HelperResponse::Error { message } => bail!("{message}"),
+        other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
 /// Cleanup orphan TUN-ресурсов: адаптеры с префиксом `nemefisto-` и
 /// half-default routes через `198.18.0.1`. Часть UI-кнопки
 /// «восстановить сеть». Безопасно вызывать только когда VPN не активен
@@ -264,16 +319,3 @@ pub async fn wfp_query_orphan() -> Result<bool> {
     }
 }
 
-/// Остановить TUN-режим. Идемпотентно: если TUN не был активен, helper
-/// вернёт error «TUN-режим не запущен» — мы тихо игнорируем.
-pub async fn tun_stop() -> Result<()> {
-    let resp = send(HelperRequest::TunStop).await?;
-    match resp {
-        HelperResponse::Ok => Ok(()),
-        // Игнорируем «не запущен» — нормальное состояние при disconnect
-        // в proxy-режиме или повторном вызове.
-        HelperResponse::Error { message } if message.contains("не запущен") => Ok(()),
-        HelperResponse::Error { message } => bail!("{message}"),
-        other => bail!("неожиданный ответ helper: {other:?}"),
-    }
-}

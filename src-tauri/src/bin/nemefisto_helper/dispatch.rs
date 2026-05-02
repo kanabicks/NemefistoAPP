@@ -5,8 +5,9 @@
 //! `Response::Error`.
 
 use super::firewall;
-use super::protocol::{Request, Response};
-use super::tun;
+use super::mihomo;
+use super::protocol::{Request, Response, PROTOCOL_VERSION};
+use super::sing_box;
 use super::wfp;
 
 const HELPER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -16,32 +17,7 @@ pub async fn handle(req: Request) -> Response {
         Request::Ping => Response::Pong,
         Request::Version => Response::Version {
             version: HELPER_VERSION.to_string(),
-        },
-        Request::TunStart {
-            socks_port,
-            server_host,
-            dns,
-            tun2socks_path,
-            socks_username,
-            socks_password,
-            tun_name_override,
-        } => match tun::start(
-            socks_port,
-            &server_host,
-            &dns,
-            &tun2socks_path,
-            socks_username.as_deref(),
-            socks_password.as_deref(),
-            tun_name_override.as_deref(),
-        )
-        .await
-        {
-            Ok(()) => Response::Ok,
-            Err(e) => Response::err(format!("tun_start: {e:#}")),
-        },
-        Request::TunStop => match tun::stop().await {
-            Ok(()) => Response::Ok,
-            Err(e) => Response::err(format!("tun_stop: {e:#}")),
+            protocol_version: PROTOCOL_VERSION,
         },
         Request::KillSwitchEnable {
             server_ips,
@@ -93,6 +69,30 @@ pub async fn handle(req: Request) -> Response {
         Request::WfpQueryOrphan => match wfp::has_orphan_filters() {
             Ok(has_orphan) => Response::WfpOrphan { has_orphan },
             Err(e) => Response::err(format!("wfp_query_orphan: {e:#}")),
+        },
+        Request::MihomoStart {
+            config_path,
+            mihomo_exe_path,
+            data_dir,
+        } => match mihomo::start(&config_path, &mihomo_exe_path, &data_dir).await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("mihomo_start: {e:#}")),
+        },
+        Request::MihomoStop => match mihomo::stop().await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("mihomo_stop: {e:#}")),
+        },
+        Request::SingBoxStart {
+            config_path,
+            singbox_exe_path,
+            data_dir,
+        } => match sing_box::start(&config_path, &singbox_exe_path, &data_dir).await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("sing_box_start: {e:#}")),
+        },
+        Request::SingBoxStop => match sing_box::stop().await {
+            Ok(()) => Response::Ok,
+            Err(e) => Response::err(format!("sing_box_stop: {e:#}")),
         },
     }
 }

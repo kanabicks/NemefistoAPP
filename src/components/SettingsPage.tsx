@@ -7,7 +7,7 @@ import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useRuntimeStore } from "../stores/runtimeStore";
 import {
   DEFAULT_USER_AGENT_MIHOMO,
-  DEFAULT_USER_AGENT_XRAY,
+  DEFAULT_USER_AGENT_SINGBOX,
   PRESET_BACKGROUND,
   PRESET_BUTTON_STYLE,
   useSettingsStore,
@@ -84,7 +84,7 @@ const CATEGORIES: CategoryMeta[] = [
     id: "engine",
     icon: "⚙️",
     title: "Движок",
-    desc: "Xray / Mihomo, правила приложений",
+    desc: "sing-box / Mihomo, правила приложений",
   },
   {
     id: "tunnel",
@@ -143,12 +143,17 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [category, setCategory] = useState<SettingsCategory | null>(null);
 
   // 8.B: эффективный движок (с override-логикой для server-driven UX).
-  // Используется в anti-DPI секции, чтобы скрыть/предупредить о
-  // фрагментации/шумах, которые работают только в Xray.
+  // sing-box миграция (0.1.2): legacy header "xray" автоматически
+  // мапится в "sing-box".
+  const headerEngineRaw = subMeta?.engine;
+  const headerEngine: Engine | null =
+    headerEngineRaw === "mihomo"
+      ? "mihomo"
+      : headerEngineRaw === "sing-box" || headerEngineRaw === "xray"
+      ? "sing-box"
+      : null;
   const effectiveEngine: Engine =
-    !s.engineTouched && (subMeta?.engine === "mihomo" || subMeta?.engine === "xray")
-      ? (subMeta.engine as Engine)
-      : s.engine;
+    !s.engineTouched && headerEngine ? headerEngine : s.engine;
   const mihomoActive = effectiveEngine === "mihomo";
 
   const copyHwid = async () => {
@@ -316,12 +321,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     type="text"
                     value={s.userAgent}
                     onChange={(e) => s.set("userAgent", e.target.value)}
-                    placeholder={mihomoActive ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_XRAY}
+                    placeholder={mihomoActive ? DEFAULT_USER_AGENT_MIHOMO : DEFAULT_USER_AGENT_SINGBOX}
                     className="input"
                   />
                   <div className="settings-row-hint">
-                    автоматически: <b>Happ/2.7.0</b> для Xray (Marzban-style xray-json
-                    с готовым routing), <b>clash-verge</b> для Mihomo (clash YAML).
+                    автоматически: <b>Happ/2.7.0</b> для sing-box (Marzban-style
+                    xray-json с готовым routing — мы конвертируем в sing-box JSON),
+                    <b>clash-verge</b> для Mihomo (clash YAML напрямую).
                     если правишь вручную — фиксируется как есть, на оба движка.
                   </div>
                 </div>
@@ -461,14 +467,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 title="auto-failover"
                 desc="при пинге выбранного сервера >3000мс автоматически переключаться на следующий по списку"
               />
-              <ComingSoonNote
-                title="доверенные wi-fi сети (SSID)"
-                desc="список домашних wi-fi → vpn автоматически выключается. в гостевой сети — снова включается"
-              />
-              <ComingSoonNote
-                title="глобальные горячие клавиши"
-                desc="Ctrl+Shift+V toggle vpn, Ctrl+Shift+T переключить proxy/TUN"
-              />
             </>
           )}
 
@@ -488,20 +486,16 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       )}
                     </div>
                     <div className="settings-row-hint">
-                      <b>xray</b> — REALITY/Vision/XHTTP, низкая латентность, оптимально для
-                      vless/vmess/trojan/ss/hy2/wireguard. <b>mihomo</b> — нужен для
-                      tuic / anytls / mieru и для per-process routing
+                      <b>sing-box</b> — современный движок с быстрым стартом
+                      и встроенным TUN. оптимально для
+                      vless/vmess/trojan/ss/hy2/tuic/wireguard. <b>mihomo</b> —
+                      нужен для anytls / mieru, для XHTTP-серверов и для
+                      per-process routing (правила приложений)
                     </div>
                   </div>
                   <select
                     className="select-field"
-                    value={
-                      !s.engineTouched && subMeta?.engine === "mihomo"
-                        ? "mihomo"
-                        : !s.engineTouched && subMeta?.engine === "xray"
-                        ? "xray"
-                        : s.engine
-                    }
+                    value={effectiveEngine}
                     onChange={(e) => {
                       const next = e.target.value as Engine;
                       s.set("engine", next);
@@ -517,18 +511,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       })();
                     }}
                   >
-                    <option value="xray">Xray</option>
+                    <option value="sing-box">sing-box</option>
                     <option value="mihomo">Mihomo</option>
                   </select>
                 </div>
               </section>
 
               <AppRulesSection mihomoActive={mihomoActive} />
-
-              <ComingSoonNote
-                title="mihomo native TUN"
-                desc="TUN-режим без tun2socks — Mihomo сам открывает WinTUN. правила приложений начнут работать в TUN тоже"
-              />
             </>
           )}
 
@@ -602,13 +591,25 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     )}
                 </div>
 
-                {/* 8.B: фрагментация и шумы поддерживает только Xray. При
-                    активном Mihomo — баннер «будут проигнорированы». */}
+                {/* Anti-DPI имеет разный support по движкам.
+                    sing-box: tls.fragment (boolean, без тонкой настройки size/sleep)
+                    + DoH-резолв адреса сервера. UDP noises upstream sing-box
+                    НЕ поддерживает.
+                    mihomo: anti-DPI обвязка не реализована (DNS-resolve работает). */}
                 {mihomoActive && (
                   <div className="hint-warning">
-                    активен mihomo — фрагментация и шумы будут проигнорированы
-                    (поддерживаются только xray). doh-резолв продолжает работать
-                    через dns mihomo
+                    активен mihomo — фрагментация и шумы не применяются
+                    (anti-DPI обвязка реализована только для sing-box).
+                    doh-резолв продолжает работать через dns mihomo.
+                  </div>
+                )}
+                {!mihomoActive && (
+                  <div className="hint-info" style={{ marginBottom: 8 }}>
+                    в sing-box фрагментация работает как простой ON/OFF —
+                    тонкие параметры (size/sleep/interval) sing-box не
+                    принимает. шумы (noises) в upstream sing-box не
+                    поддерживаются и игнорируются. для тонкой настройки
+                    используйте Mihomo (но anti-DPI там пока не реализовано).
                   </div>
                 )}
 
@@ -617,7 +618,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     <div className="settings-row-label">фрагментация tcp</div>
                     <div className="settings-row-hint">
                       режет tls clienthello на куски — обходит большинство dpi
-                      {mihomoActive && " (только xray)"}
+                      {mihomoActive && " (только sing-box)"}
                     </div>
                   </div>
                   <Toggle
@@ -749,7 +750,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     <div className="settings-row-label">блокировать сеть при падении vpn</div>
                     <div className="settings-row-hint">
                       защита от утечек на уровне ядра windows (wfp). работает
-                      даже если xray крашнется. защита от orphan-фильтров
+                      даже если vpn-движок крашнется. защита от orphan-фильтров
                       тройная: dynamic-session + heartbeat-watchdog (60с) +
                       cleanup при старте helper-сервиса
                     </div>
@@ -763,7 +764,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <div>
                     <div className="settings-row-label">строгий режим</div>
                     <div className="settings-row-hint">
-                      даже сам xray/mihomo может ходить только на vpn-сервер.
+                      даже сам sing-box/mihomo может ходить только на vpn-сервер.
                       direct-маршруты (например <code>geosite:ru → DIRECT</code>{" "}
                       из вашего конфига) блокируются. для тех кто хочет
                       гарантированно «всё через vpn». ⚠️ ru-сайты в split-routing
@@ -851,8 +852,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <div>
                     <div className="settings-row-label">выгрузить диагностику</div>
                     <div className="settings-row-hint">
-                      сохранит zip с логами xray, версией приложения, текущим
-                      состоянием и списком запущенных vpn-процессов в папку
+                      сохранит zip с логами sing-box/mihomo, версией приложения,
+                      текущим состоянием и списком запущенных vpn-процессов в папку
                       Documents. без телеметрии — только локально, ты сам
                       решаешь кому отправить файл если нужна помощь
                     </div>
@@ -943,10 +944,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             <>
               <div className="settings-row-hint" style={{ marginBottom: 12 }}>
                 routing-профили задают какие домены/IP идут через VPN, какие
-                напрямую, какие блокируются. правила применяются к Xray и
-                Mihomo при connect. для xray-json конфигов из подписки
-                (с собственным routing) — НЕ применяются (приоритет у
-                подписки)
+                напрямую, какие блокируются. правила применяются к sing-box и
+                Mihomo при connect. для xray-json / sing-box-json конфигов
+                из подписки (с собственным routing) — НЕ применяются
+                (приоритет у подписки)
               </div>
               <RoutingProfilesPanel />
               <section className="settings-section">
@@ -1230,8 +1231,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 <div className="about-grid">
                   <span className="about-key">версия</span>
                   <span className="about-val">v.{APP_VERSION} · build 2026.4</span>
-                  <span className="about-key">xray-core</span>
-                  <span className="about-val">26.x</span>
+                  <span className="about-key">sing-box</span>
+                  <span className="about-val">1.13.x</span>
                   <span className="about-key">mihomo</span>
                   <span className="about-val">v1.19.24</span>
                   {subMeta?.webPageUrl && (
@@ -1365,20 +1366,22 @@ function ComingSoonNote({ title, desc }: { title: string; desc: string }) {
  * Секция Settings → Движок → «правила приложений (Mihomo)». Список
  * правил `<exe-name> → PROXY|DIRECT|BLOCK` + форма добавления нового.
  *
- * Mihomo нативно умеет PROCESS-NAME matcher; Xray на Windows — нет
- * (планируется через WFP в 13.G). Если активен Xray — баннер сверху
- * предупреждает что правила игнорируются. Хранятся всегда — при
- * переключении движка на Mihomo сразу применятся.
+ * Mihomo нативно умеет PROCESS-NAME matcher; sing-box на Windows — нет
+ * (рассматривается через WFP в этапе 13.G). Если активен sing-box —
+ * баннер сверху предупреждает что правила игнорируются. Хранятся всегда —
+ * при переключении движка на Mihomo сразу применятся.
  */
 function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
   const rules = useSettingsStore((s) => s.appRules);
   const set = useSettingsStore((s) => s.set);
-  // 8.D: PROCESS-NAME matcher Mihomo на Windows работает только когда
-  // соединение приходит к Mihomo напрямую от приложения (proxy-режим).
-  // В TUN-режиме между приложением и Mihomo стоит tun2socks — Mihomo
-  // видит PID tun2socks, а не исходного приложения, и matcher не
-  // срабатывает. Это уйдёт когда сделаем 13.L (Mihomo built-in TUN
-  // через gVisor — там Mihomo сам видит ядерный PID).
+  // 8.D: PROCESS-NAME matcher Mihomo на Windows работает в двух
+  // случаях: (1) proxy-режим — приложение коннектится напрямую к
+  // mixed-inbound Mihomo; (2) TUN-режим с mihomo-profile подпиской
+  // (Mihomo built-in TUN через WinTUN, helper SYSTEM-spawn) — Mihomo
+  // сам владеет адаптером и видит ядерный PID. Для URI-серверов
+  // (vless/vmess/...) в TUN-режиме всё ещё используется tun2proxy
+  // sidecar pipeline — там Mihomo видит PID tun2proxy, не исходного
+  // приложения, matcher не срабатывает.
   const vpnMode = useVpnStore((s) => s.mode);
   const tunMode = vpnMode === "tun";
 
@@ -1418,19 +1421,20 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
 
       {!mihomoActive && (
         <div className="hint-warning">
-          активен xray — правила сейчас не применяются (на windows
-          per-process routing работает только в mihomo через
-          PROCESS-NAME matcher). переключи движок чтобы заработало
+          активен sing-box — правила приложений работают только с движком{" "}
+          <b>mihomo</b> (через нативный <code>PROCESS-NAME</code> matcher).
+          переключи движок в Settings → движок чтобы правила заработали.
         </div>
       )}
 
       {mihomoActive && tunMode && (
-        <div className="hint-danger">
-          <b>в TUN-режиме правила сейчас не работают.</b> между приложением
-          и Mihomo стоит tun2socks, и Mihomo видит соединения от него,
-          а не от исходного процесса. переключи режим на <b>proxy</b>
-          чтобы правила применились. полное решение для TUN придёт с
-          этапом 13.L (Mihomo native TUN)
+        <div className="hint-warning">
+          в TUN-режиме правила приложений работают только когда подписка
+          отдала <b>полный mihomo-config</b> (тип сервера{" "}
+          <code>mihomo-profile</code>) — там Mihomo владеет TUN-адаптером
+          напрямую и видит реальные процессы. Для URI-серверов
+          (vless/vmess/trojan/hy2/...) в TUN правила не применяются —
+          переключи на <b>proxy-режим</b>.
         </div>
       )}
 
@@ -1629,7 +1633,7 @@ function LogsBlock() {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">логи xray</div>
+      <div className="settings-section-title">логи vpn-движка</div>
       {!loaded ? (
         <button
           type="button"

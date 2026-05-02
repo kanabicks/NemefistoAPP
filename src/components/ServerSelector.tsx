@@ -3,6 +3,7 @@ import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { PingBadge } from "./PingBadge";
+import { ServerPreviewModal } from "./ServerPreviewModal";
 
 /**
  * Маленький бейдж рядом с пингом — показывает движок-совместимость
@@ -13,14 +14,17 @@ import { PingBadge } from "./PingBadge";
 function EngineBadge({ compat }: { compat?: string[] }) {
   if (!compat || compat.length === 0 || compat.length > 1) return null;
   const e = compat[0];
-  if (e !== "xray" && e !== "mihomo") return null;
-  const label = e === "xray" ? "X" : "M";
+  // Legacy "xray" из старых кешей localStorage маппится в "sing-box" —
+  // sing-box покрывает все xray-совместимые серверы (после миграции 0.1.2).
+  const normalized = e === "xray" ? "sing-box" : e;
+  if (normalized !== "sing-box" && normalized !== "mihomo") return null;
+  const label = normalized === "mihomo" ? "M" : "S";
   const title =
-    e === "xray"
-      ? "поддерживается только Xray"
-      : "поддерживается только Mihomo";
+    normalized === "mihomo"
+      ? "поддерживается только Mihomo"
+      : "только sing-box (Mihomo-несовместимый формат)";
   return (
-    <span className="engine-badge" title={title} data-engine={e}>
+    <span className="engine-badge" title={title} data-engine={normalized}>
       {label}
     </span>
   );
@@ -45,6 +49,9 @@ export function ServerSelector() {
   const sort = useSettingsStore((s) => s.sort);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Превью конфига выбранного сервера (открывается chevron-кнопкой
+  // справа на server-row). Mirrors поведение Happ-клиента.
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   // 12.C: фильтры в drawer
   // - searchQuery: case-insensitive подстрока в name (включая флаг-эмодзи)
@@ -253,6 +260,20 @@ export function ServerSelector() {
                       {selectedIndex === i && (
                         <span className="server-row-check">✓</span>
                       )}
+                      <button
+                        type="button"
+                        className="server-row-chevron"
+                        title="посмотреть конфиг"
+                        aria-label="посмотреть конфиг"
+                        onClick={(e) => {
+                          // Останавливаем родительский onClick (он бы выбрал
+                          // сервер) — открываем превью без смены selection.
+                          e.stopPropagation();
+                          setPreviewIndex(i);
+                        }}
+                      >
+                        ›
+                      </button>
                     </div>
                   );
                 })}
@@ -261,6 +282,12 @@ export function ServerSelector() {
           )}
         </div>
       </div>
+      {previewIndex !== null && (
+        <ServerPreviewModal
+          serverIndex={previewIndex}
+          onClose={() => setPreviewIndex(null)}
+        />
+      )}
     </>
   );
 }

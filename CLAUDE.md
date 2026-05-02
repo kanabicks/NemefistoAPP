@@ -9,21 +9,40 @@
 - **Фреймворк**: Tauri 2.0 (выбран ради будущей кроссплатформенности)
 - **Фронтенд**: React + TypeScript + Tailwind CSS + Zustand для state
 - **Бэкенд**: Rust (асинхронность через tokio)
-- **VPN-ядро**: Xray-core как sidecar-процесс (xray.exe), управление через gRPC API Xray
-- **Альтернативное ядро (с этапа 8.B)**: Mihomo (форк Clash Meta) как второй sidecar
-- **TUN-драйвер**: WinTUN (от команды WireGuard)
-- **tun2socks**: hev-socks5-tunnel или tun2socks из sing-box как sidecar
+- **VPN-ядро (default с 0.1.2)**: **sing-box** 1.13.x как sidecar-процесс
+  (sing-box.exe). Поддерживает vless+REALITY/Vision, vmess, trojan, ss,
+  hy2, **TUIC**, wireguard. **Built-in TUN** (gVisor stack, auto_route)
+  через helper SYSTEM-spawn — без отдельного tun2socks/tun2proxy.
+- **Альтернативное ядро (с этапа 8.B)**: Mihomo (форк Clash Meta) как
+  второй sidecar. Используется для **AnyTLS**, **XHTTP** transport,
+  **per-process routing** (через нативный `PROCESS-NAME` matcher).
+- **TUN-драйвер**: WinTUN (от команды WireGuard) — оба движка имеют
+  built-in TUN inbound, который создаёт WinTUN-адаптер напрямую.
 - **Безопасное хранилище**: Windows Credential Manager через `keyring-rs`
 - **Логирование**: crate `tracing` с ротацией файлов
 
+> **0.1.2 миграция**: до этой версии VPN-ядро было **Xray-core** + tun2proxy
+> (отдельный sidecar для TUN-режима). Перешли на sing-box ради быстрого
+> старта (нет 20-сек warmup'а REALITY-handshake'а), нативного TUN и более
+> компактного bundle (~51 МБ экономии: xray ~35 + tun2proxy ~6 + tun2socks
+> ~10). Xray-json от Marzban-панелей конвертируется на лету в sing-box JSON
+> через `config/sing_box_config::convert_xray_json_to_singbox`. Семантика
+> dispatch'а трафика идентична Happ-клиенту (RU-direct правила, balancer
+> через urltest, и т.д.).
+
 ## Архитектурные принципы
-1. **Долгоживущие ресурсы**: Xray sidecar и WinTUN-адаптер создаются при старте приложения и живут до его закрытия. Не пересоздаём при connect/disconnect.
+1. **Долгоживущие ресурсы**: VPN-движок (sing-box или Mihomo) и
+   WinTUN-адаптер создаются при connect и закрываются при disconnect. До
+   0.1.2 был долгоживущий Xray-sidecar (для warmup'а), но sing-box
+   стартует за ~1.4s — warmup не нужен.
 2. **State machine коннекта**: Idle → Warming → Ready → Connecting → Connected → Ready (после отключения). Никогда не возвращаемся в Idle пока приложение запущено.
 3. **Оптимистичный UI**: UI сразу отражает намерение пользователя, бэкенд догоняет в фоне.
 4. **Умные дефолты, минимум вопросов**: При первом запуске спрашиваем только URL подписки. Всё остальное (протокол, сервер, DNS, kill switch) имеет разумные значения по умолчанию.
-5. **Прогрев**: При старте приложения резолвим DNS серверов, пингуем их в фоне, готовим TUN, запускаем Xray в idle. Первый клик «Connect» — менее 500ms.
+5. **Быстрый старт без прогрева**: sing-box стартует за ~1.4s и сразу
+   готов принимать соединения — нет нужды в warmup'е (как было с Xray).
+   Первый клик «Connect» — около ~1.5s до первого пакета через VPN.
 6. **Server-driven UX**: провайдер подписки может задать дефолты (тема, движок, маршрутизация, объявления) через HTTP-заголовки. Пользователь всегда может переопределить.
-7. **Никакой телеметрии и remote control**: приложение не отправляет диагностические/аналитические данные. Все логи — локальные (`%TEMP%\NemefistoVPN\xray-stderr.log` + tracing-файл). Код открыт. Deep-link и заголовки подписки имеют строгий whitelist — не могут запускать процессы, читать файлы вне стандартных путей, отключать Settings, или скрывать серверы. Никаких эквивалентов «HandlerService»-style сервисов в кодовой базе.
+7. **Никакой телеметрии и remote control**: приложение не отправляет диагностические/аналитические данные. Все логи — локальные (`%TEMP%\NemefistoVPN\sing-box-stderr.log` + `mihomo-stderr.log` + tracing-файл). Код открыт. Deep-link и заголовки подписки имеют строгий whitelist — не могут запускать процессы, читать файлы вне стандартных путей, отключать Settings, или скрывать серверы. Никаких эквивалентов «HandlerService»-style сервисов в кодовой базе.
 8. **Защита от локального детекта**: сторонний процесс на машине не должен дёшево обнаружить, что VPN-клиент запущен. Защита layered: (1) **9.H** рандомизация портов inbound `[30000, 60000)` — стандартные `7890/1080/1087` не отвечают; (2) **9.G** SOCKS5 password-auth для TUN/LAN — даже если порт найден, без пароля нельзя проверить тип трафика; (3) **12.E** маскировка имени TUN-адаптера (`wlan99` / `Local Area Connection N` / `Ethernet N`) — `GetAdaptersAddresses` не выдаёт «nemefisto-». Угроза задокументирована: https://habr.com/ru/news/1020902/.
 
 ## Соглашения по коду
@@ -99,20 +118,22 @@
 несовместимо с сервером — UI показывает предупреждение и предлагает
 переключить движок.
 
-### Корректная таблица совместимости протоколов
+### Корректная таблица совместимости протоколов (после миграции 0.1.2)
 
-| Протокол / транспорт | Xray | Mihomo |
+| Протокол / транспорт | sing-box (default) | Mihomo |
 |---|---|---|
 | VLESS, VMess, Trojan, SS, SOCKS5 | ✅ | ✅ |
-| **Hysteria2** | ✅ (1.8.16+) | ✅ |
-| **WireGuard** | ✅ (1.8.6+) | ✅ |
-| **TUIC** | ❌ | ✅ |
-| **AnyTLS** | ❌ | ✅ |
+| **Hysteria2** | ✅ | ✅ |
+| **WireGuard** | ✅ (через `endpoints[]`) | ✅ |
+| **TUIC** | ✅ | ✅ |
+| **AnyTLS** | ❌ (только Mihomo) | ✅ |
 | Transport: TCP, WS, gRPC, h2 | ✅ | ✅ |
-| Transport: **XHTTP** | ✅ (1.8.18+) | ✅ (1.18+) |
+| Transport: **XHTTP** | ❌ (xray-only, нужен Mihomo) | ✅ (1.18+) |
 | Transport: **HTTPUpgrade** | ✅ | ✅ |
 | Security: TLS, REALITY | ✅ | ✅ |
 | Vision (XTLS) | ✅ | ✅ |
+| Built-in TUN (WinTUN, gVisor) | ✅ через helper SYSTEM-spawn | ✅ через helper SYSTEM-spawn |
+| Per-process routing (`PROCESS-NAME`) | ❌ | ✅ нативно |
 
 ### Универсальный парсер подписок
 
@@ -1266,8 +1287,41 @@ Effort: ~3-4 недели full-time.
 ## Дорожная карта по сессиям
 
 ### Готово
-- **8.A** + **8.A.1** — универсальный парсер подписок + hotfix Xray
-  (hy2/wg/xhttp/httpupgrade).
+- **0.1.2 — sing-box миграция** (главное изменение релиза):
+  - Полная замена Xray-core → sing-box 1.13.x как основной VPN-движок.
+    sing-box стартует за ~1.4s (vs ~20s warmup у Xray на REALITY-handshake)
+    и имеет нативный TUN-inbound (gVisor stack, auto_route, auto_detect_interface)
+    — больше не нужен отдельный tun2proxy/tun2socks sidecar.
+  - **Bundle уменьшен на ~51 МБ** (выпилены `xray.exe` ~35 МБ +
+    `tun2proxy.exe` ~6 МБ + legacy `tun2socks.exe` ~10 МБ).
+  - **Helper PROTOCOL_VERSION → 8** (forced UAC reinstall помощника на
+    апгрейде). `TunStart`/`TunStop` RPC выпилены — built-in TUN
+    запускается через `SingBoxStart` / `MihomoStart` (SYSTEM-spawn для
+    `CreateAdapter` WinTUN).
+  - **xray-json от Marzban** конвертируется на лету через
+    `config/sing_box_config::convert_xray_json_to_singbox`. Поддержка:
+    URI-конвертеры (vless/vmess/trojan/ss/hy2/tuic/wg/socks),
+    `routing.rules[]` (включая `domain_regex` для `regexp:\.ru$` и др.),
+    `routing.balancers[]` → `urltest` outbound (`leastLoad` ≈
+    RTT-выбор), `burstObservatory.pingConfig.interval` → `urltest.interval`.
+  - **Remnawave passthrough**: для подписок отдающих готовый sing-box
+    JSON используется `patch_singbox_json` — наши правки минимальны
+    (наши mixed/tun inbounds, миграция legacy `outbound: "block"/"dns-out"`
+    → action `reject`/`hijack-dns`).
+  - **TUIC** теперь поддержан обоими движками (`engines_both`).
+    **AnyTLS** остаётся Mihomo-only.
+  - **XHTTP transport** не поддерживается upstream sing-box — для таких
+    серверов bail с понятным сообщением «используйте Mihomo». Hiddify-форк
+    отвергнут (мёртвый проект с 2024).
+  - **63+ unit-тестов** + 8 smoke-тестов с реальной валидацией через
+    `sing-box check`.
+  - **Bonus features**: превью-кнопка `›` на server-row (modal с raw +
+    generated tabs), фильтр network-noise в логах (wsasend connection
+    aborted), переписанная anti-DPI обвязка под sing-box-нативный
+    `tls.fragment` + DoH-bootstrap.
+
+- **8.A** + **8.A.1** — универсальный парсер подписок (legacy этап до
+  миграции; теперь xray-json конвертируется в sing-box JSON).
 - **8.B** — Mihomo как второй sidecar (TUIC/AnyTLS/Mieru-ready).
   YAML-конфиг через `config::mihomo_config::build()`, `mixed-port`
   один на SOCKS5+HTTP, DNS включён всегда против leak'ов. UI: Settings
@@ -1395,7 +1449,13 @@ Effort: ~3-4 недели full-time.
 - полноценный WFP-кill switch (13.D) вместо текущего firewall-варианта.
 
 ### Долги
-- TUN 15-секундная задержка первого запроса.
+- ~~TUN 15-секундная задержка первого запроса.~~ ✅ **Закрыто в 0.1.2** —
+  миграция с Xray на sing-box (sing-box не имеет warmup'а REALITY-handshake'а).
+- **XHTTP transport** в sing-box: upstream не умеет, для таких серверов
+  bail с предложением Mihomo. Долгосрочное решение — либо ждать XHTTP
+  в upstream sing-box, либо вернуть xray-core как **третий выбор движка**
+  (hybrid, как у Happ). Пока низкий приоритет — реальные подписки на
+  XHTTP редкость.
 
 ### Идеи из сравнения с другими клиентами
 

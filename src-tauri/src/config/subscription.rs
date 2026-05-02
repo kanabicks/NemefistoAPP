@@ -529,7 +529,10 @@ fn build_subscription_meta(headers: &reqwest::header::HeaderMap) -> Option<Subsc
         &["none", "fluent", "cupertino", "vice", "arcade", "glacier"],
     );
     meta.mode = header_enum("x-nemefisto-mode", &["proxy", "tun"]);
-    meta.engine = header_enum("x-nemefisto-engine", &["xray", "mihomo"]);
+    // sing-box миграция (0.1.2): принимаем "xray" из старых подписок
+    // (server-driven X-Nemefisto-Engine) — на фронте это маппится в
+    // "sing-box". Whitelist расширяем чтобы не дропать legacy-значение.
+    meta.engine = header_enum("x-nemefisto-engine", &["sing-box", "mihomo", "xray"]);
 
     // Anti-DPI заголовки (этап 10)
     let header_bool = |name: &str| -> Option<bool> {
@@ -661,14 +664,16 @@ fn parse_proxy_uri(uri: &str) -> Result<ProxyEntry> {
 }
 
 /// Стандартная пара движков для протоколов, поддерживаемых обоими ядрами.
+/// sing-box миграция (0.1.2): "xray" → "sing-box". sing-box покрывает
+/// все xray-совместимые протоколы (vless/vmess/trojan/ss/hy2/wg/socks)
+/// плюс TUIC.
 fn engines_both() -> Vec<String> {
-    vec!["xray".to_string(), "mihomo".to_string()]
+    vec!["sing-box".to_string(), "mihomo".to_string()]
 }
 
-/// Только Mihomo. Используется для протоколов, которые Xray-core нативно
-/// НЕ поддерживает — это **TUIC** и **AnyTLS**. Hysteria2 и WireGuard
-/// раньше тоже были тут, но Xray их добавил (1.8.16+ и 1.8.6+ соответственно),
-/// поэтому теперь они в `engines_both()`.
+/// Только Mihomo. Используется для протоколов, которые sing-box upstream
+/// нативно НЕ поддерживает: **AnyTLS**. TUIC поддержан и sing-box и Mihomo
+/// (теперь в `engines_both()`).
 fn engines_mihomo_only() -> Vec<String> {
     vec!["mihomo".to_string()]
 }
@@ -872,7 +877,8 @@ fn parse_tuic(uri: &str) -> Result<ProxyEntry> {
         server: host.to_string(),
         port,
         raw: serde_json::Value::Object(raw),
-        engine_compat: engines_mihomo_only(),
+        // sing-box миграция (0.1.2): TUIC поддержан и sing-box и Mihomo.
+        engine_compat: engines_both(),
     })
 }
 
@@ -1109,8 +1115,10 @@ fn parse_xray_json(text: &str) -> Result<Vec<ProxyEntry>> {
                 server: "127.0.0.1".to_string(),
                 port: 0,
                 raw: cfg,
-                // Готовый Xray JSON конфигурируется только Xray-ядром.
-                engine_compat: vec!["xray".to_string()],
+                // sing-box миграция (0.1.2): xray-json конвертируется в
+                // sing-box JSON через `convert_xray_json_to_singbox`.
+                // Mihomo формат не понимает — поэтому только sing-box.
+                engine_compat: vec!["sing-box".to_string()],
             }
         })
         .collect();
@@ -1642,11 +1650,44 @@ fn mihomo_profile_entry(
     raw_yaml: &str,
     map: &serde_yaml::Mapping,
 ) -> Result<ProxyEntry> {
-    let proxy_count = map
+    // Список нод из `proxies:` — имя + тип. Используется UI для FlClash-
+    // подобной отрисовки (страновые карточки) до connect, когда external-
+    // controller ещё не поднят. Сервер/порт сюда не кладём — UI их не
+    // показывает, а лишний серверный JSON сериализовать дорого для крупных
+    // подписок (>100 нод).
+    let proxies: Vec<serde_json::Value> = map
         .get("proxies")
         .and_then(|v| v.as_sequence())
-        .map(|s| s.len())
-        .unwrap_or(0);
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|p| {
+                    let m = p.as_mapping()?;
+                    let name = m.get("name").and_then(|v| v.as_str())?.to_string();
+                    let proxy_type = m
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    // `server` нужен для TUN-режима: для mihomo-profile
+                    // мы должны добавить bypass-route на хост каждой
+                    // ноды, чтобы внутренние коннекты движка не уходили
+                    // в TUN (бесконечная петля). Сохраняем тут чтобы
+                    // не парсить YAML повторно в commands::connect.
+                    let server = m
+                        .get("server")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(serde_json::json!({
+                        "name": name,
+                        "type": proxy_type,
+                        "server": server,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let proxy_count = proxies.len();
 
     let groups: Vec<serde_json::Value> = map
         .get("proxy-groups")
@@ -1695,6 +1736,10 @@ fn mihomo_profile_entry(
         serde_json::Value::Array(groups),
     );
     raw.insert(
+        "proxies".to_string(),
+        serde_json::Value::Array(proxies),
+    );
+    raw.insert(
         "proxy_count".to_string(),
         serde_json::Value::Number(serde_json::Number::from(proxy_count)),
     );
@@ -1735,11 +1780,11 @@ fn yaml_proxy_to_entry(v: serde_yaml::Value) -> Result<ProxyEntry> {
     let raw = serde_json::to_value(&v)
         .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
 
-    // Engine-compat по протоколу. Mihomo-only — только TUIC и AnyTLS;
-    // остальное (включая hy2/wireguard, которые поддерживает современный
-    // Xray-core) — оба ядра.
+    // Engine-compat по протоколу. Mihomo-only — только AnyTLS (sing-box
+    // upstream его не умеет). TUIC поддержан обоими (sing-box умеет TUIC
+    // нативно с самого начала). hy2/wireguard — оба ядра тоже.
     let engine_compat = match protocol.as_str() {
-        "tuic" | "anytls" => engines_mihomo_only(),
+        "anytls" => engines_mihomo_only(),
         _ => engines_both(),
     };
 
@@ -1870,5 +1915,48 @@ rules:
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0]["type"], "load-balance");
         assert_eq!(groups[1]["type"], "select");
+    }
+
+    /// 0.1.2: для full-mihomo подписок с реальными нодами в `proxies:` секции
+    /// мы должны выгружать `[{name, type}]` в `raw.proxies` — это нужно UI
+    /// чтобы рендерить FlClash-style страновые карточки до connect, не
+    /// дожидаясь external-controller. Без этого панель «прокси-группы»
+    /// показывает только заголовки групп без членов.
+    #[test]
+    fn extracts_proxies_metadata_for_ui() {
+        let yaml = r#"
+mixed-port: 7890
+mode: rule
+proxies:
+  - name: 'Germany'
+    type: vless
+    server: de.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+  - name: 'Latvia'
+    type: vless
+    server: lv.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+proxy-groups:
+  - name: '→ Nemefisto VPN'
+    type: select
+    proxies:
+      - Germany
+      - Latvia
+rules:
+  - MATCH,→ Nemefisto VPN
+"#;
+        let entries = parse_clash_yaml(yaml).expect("should parse");
+        assert_eq!(entries.len(), 1);
+        let raw = entries[0].raw.as_object().unwrap();
+        assert_eq!(raw["proxy_count"], 2);
+        let proxies = raw["proxies"].as_array().unwrap();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0]["name"], "Germany");
+        assert_eq!(proxies[0]["type"], "vless");
+        assert_eq!(proxies[0]["server"], "de.example.com");
+        assert_eq!(proxies[1]["name"], "Latvia");
+        assert_eq!(proxies[1]["server"], "lv.example.com");
     }
 }

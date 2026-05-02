@@ -1524,6 +1524,168 @@ input, textarea { font: inherit; cursor: text; }
   color: var(--ok);
   flex-shrink: 0;
 }
+/* Chevron справа на server-row — открывает превью спарсенного конфига
+   (как в Happ-клиенте). Visible-only-on-hover чтобы не отвлекать в
+   обычном просмотре. */
+.server-row-chevron {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.server-row:hover .server-row-chevron,
+.server-row-chevron:focus-visible {
+  opacity: 1;
+}
+.server-row-chevron:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+/* ── ServerPreviewModal: превью конфига (raw + generated sing-box) ─── */
+.preview-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: preview-modal-in 0.18s ease-out;
+}
+@keyframes preview-modal-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.preview-modal {
+  width: 100%;
+  max-width: 540px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.preview-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.preview-modal-title { flex: 1; min-width: 0; }
+.preview-modal-name {
+  font-family: var(--display);
+  font-size: 16px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-modal-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-modal-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.preview-modal-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.preview-modal-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.preview-modal-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.preview-modal-tab:hover { color: var(--text); }
+.preview-modal-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent, #5cf);
+}
+.preview-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.25);
+}
+.preview-modal-pre {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-modal-loading,
+.preview-modal-error {
+  padding: 20px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.preview-modal-error { color: var(--err, #f66); }
+.preview-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+}
 
 /* ── Settings: список категорий (page-based навигация) ────────────────
    Дизайн-язык такой же как у `.server-pill` на главном экране:
@@ -2005,6 +2167,175 @@ input, textarea { font: inherit; cursor: text; }
   letter-spacing: 0.22em;
   color: var(--fg-mute);
   text-transform: uppercase;
+}
+
+/* ── 8.F: Inline-вид прокси-групп Mihomo (FlClash-style сетка карточек) ── */
+.mihomo-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mihomo-group {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 14px 14px 12px;
+}
+.mihomo-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.mihomo-group-title-block {
+  flex: 1;
+  min-width: 0;
+}
+.mihomo-group-title {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mihomo-group-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+.mihomo-group-sub .dot-sep { opacity: 0.5; }
+.mihomo-group-active {
+  color: var(--fg-dim);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+}
+.mihomo-test-btn {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.mihomo-test-btn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--line-strong);
+  background: rgba(255,255,255,0.04);
+}
+.mihomo-test-btn:disabled { opacity: 0.4; cursor: default; }
+.mihomo-group-arrow {
+  font-size: 12px;
+  color: var(--fg-mute);
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+.mihomo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.mihomo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 8px);
+  background: rgba(255,255,255,0.025);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--fg);
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  min-height: 56px;
+}
+.mihomo-card:hover {
+  border-color: var(--line-strong);
+  background: rgba(255,255,255,0.05);
+}
+.mihomo-card:active { transform: scale(0.98); }
+.mihomo-card.is-active {
+  border-color: var(--accent);
+  background: rgba(255,255,255,0.06);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.mihomo-card.is-readonly {
+  cursor: default;
+  opacity: 0.7;
+}
+.mihomo-card.is-readonly:hover {
+  background: rgba(255,255,255,0.025);
+  border-color: var(--line);
+}
+.mihomo-card-name {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 16px;  /* место под чекмарк в углу */
+}
+.mihomo-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.mihomo-card-proto { opacity: 0.8; }
+.mihomo-card-delay { font-weight: 500; }
+.mihomo-card-delay.delay-good { color: #5cc62a; }
+.mihomo-card-delay.delay-ok   { color: #f3b441; }
+.mihomo-card-delay.delay-slow { color: #ff8a3d; }
+.mihomo-card-delay.delay-bad  { color: #ff5544; }
+.mihomo-card-delay.delay-none { color: var(--fg-mute); opacity: 0.6; }
+.mihomo-card-check {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* На совсем узких экранах (<480px) карточки в 2 колонки минимум */
+@media (max-width: 480px) {
+  .mihomo-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mihomo-card-name { font-size: 12px; }
 }
 
 /* ── Боковые ambient-панели на широких окнах ──────────────────────────── */

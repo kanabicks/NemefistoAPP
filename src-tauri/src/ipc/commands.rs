@@ -1,12 +1,10 @@
 //! Tauri commands, доступные из фронтенда через `invoke`.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use serde::Serialize;
 use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::Mutex as AsyncMutex;
 
 /// Параметры активного kill-switch. Сохраняем при successful connect()
@@ -32,101 +30,33 @@ impl KillSwitchState {
 }
 
 use crate::config::mihomo_config::AppRule;
+use crate::config::sing_box_config::AntiDpiOptions;
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
-use crate::config::xray_config::{self, AntiDpiOptions};
-use crate::config::{mihomo_config, HwidState, ProxyEntry, SubscriptionState};
+use crate::config::{mihomo_config, sing_box_config, HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
 use crate::vpn;
-use crate::vpn::{find_free_port, ping_entry, random_high_port, MihomoState, XrayState};
-
-/// Имя файла с triplet-суффиксом — формат, в котором лежит исходный
-/// бинарь в `binaries/`, и в котором Tauri (большинство версий) кладёт
-/// его в bundle рядом с основным exe.
-const TUN2SOCKS_FILENAME: &str = "tun2socks-x86_64-pc-windows-msvc.exe";
-/// На случай если конкретная версия Tauri стрипает triplet после bundle.
-const TUN2SOCKS_FILENAME_PLAIN: &str = "tun2socks.exe";
-
-/// Прогревочный запрос через SOCKS5 чтобы заставить Xray установить
-/// upstream-соединение с VPN-сервером до того как мы перенаправим в TUN
-/// весь системный трафик. Без прогрева первый user-запрос ждёт burstObservatory
-/// probes + REALITY-handshake = 10-20 секунд видимой задержки.
-///
-/// Цикл: TCP-connect к 127.0.0.1:socks_port → SOCKS5 NoAuth handshake →
-/// CONNECT cloudflare.com:443 → читаем ответ. Xray в этот момент:
-///   1. Запускает burstObservatory probes (если есть balancer).
-///   2. Выбирает best outbound.
-///   3. Делает REALITY/TLS handshake к VPN-серверу.
-///   4. Открывает upstream TCP к cloudflare.com через VPN.
-///   5. Возвращает SOCKS5 success.
-///
-/// После этого вся машинерия Xray «горячая» и user-запросы идут мгновенно.
-async fn warmup_xray(socks_port: u16) -> Result<(), String> {
-    // Ждём пока Xray откроет 1080 (он стартует асинхронно)
-    let connect_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    let mut stream = loop {
-        match TcpStream::connect(("127.0.0.1", socks_port)).await {
-            Ok(s) => break s,
-            Err(_) if tokio::time::Instant::now() < connect_deadline => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(e) => return Err(format!("Xray не открыл SOCKS5 за 3с: {e}")),
-        }
-    };
-
-    // SOCKS5 handshake (no auth)
-    let timeout = Duration::from_secs(15);
-    tokio::time::timeout(timeout, async {
-        stream.write_all(&[0x05, 0x01, 0x00]).await
-            .map_err(|e| format!("write greeting: {e}"))?;
-        let mut greet_resp = [0u8; 2];
-        stream.read_exact(&mut greet_resp).await
-            .map_err(|e| format!("read greeting: {e}"))?;
-        if greet_resp != [0x05, 0x00] {
-            return Err(format!("неожиданный greeting-ответ: {greet_resp:?}"));
-        }
-
-        // CONNECT 1.1.1.1:443 (используем IP чтобы не зависеть от DNS)
-        let request: [u8; 10] = [
-            0x05,                           // SOCKS5
-            0x01,                           // CONNECT
-            0x00,                           // reserved
-            0x01,                           // ATYP = IPv4
-            1, 1, 1, 1,                     // 1.1.1.1
-            0x01, 0xBB,                     // port 443
-        ];
-        stream.write_all(&request).await
-            .map_err(|e| format!("write connect: {e}"))?;
-        let mut resp_head = [0u8; 4];
-        stream.read_exact(&mut resp_head).await
-            .map_err(|e| format!("read connect-response head: {e}"))?;
-        if resp_head[1] != 0x00 {
-            return Err(format!("SOCKS5 CONNECT failed: код {}", resp_head[1]));
-        }
-        // Дочитываем addr+port (зависит от ATYP в resp_head[3])
-        let to_skip = match resp_head[3] {
-            0x01 => 4 + 2, // IPv4
-            0x03 => {
-                let mut len_buf = [0u8; 1];
-                stream.read_exact(&mut len_buf).await
-                    .map_err(|e| format!("read domain len: {e}"))?;
-                len_buf[0] as usize + 2
-            }
-            0x04 => 16 + 2, // IPv6
-            _ => return Err(format!("неожиданный ATYP в response: {}", resp_head[3])),
-        };
-        let mut skip_buf = vec![0u8; to_skip];
-        let _ = stream.read_exact(&mut skip_buf).await;
-        Ok(())
-    })
-    .await
-    .map_err(|_| format!("warmup-запрос не завершился за {}с", timeout.as_secs()))?
-}
+use crate::vpn::{find_free_port, ping_entry, random_high_port, MihomoState, SingBoxState};
 
 // ─── Helper-функции для TUN-режима ────────────────────────────────────────────
 
-/// Извлечь хост VPN-сервера из ProxyEntry для bypass-route.
-/// Логика повторяет `vpn::ping::extract_target`, но возвращает только host.
+/// Извлечь хост VPN-сервера из ProxyEntry. Используется для kill-switch
+/// (резолв в IP перед включением WFP-фильтров) и для логов.
+///
+/// Логика повторяет `vpn::ping::extract_target`, возвращает только host
+/// (без порта). Для `mihomo-profile` берём первую ноду из `raw["proxies"]`.
 fn extract_server_host(entry: &ProxyEntry) -> Option<String> {
+    if entry.protocol == "mihomo-profile" {
+        return entry
+            .raw
+            .get("proxies")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.iter().find_map(|p| {
+                p.get("server")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+            }));
+    }
     if entry.protocol != "xray-json" {
         if entry.server.is_empty() {
             return None;
@@ -161,18 +91,16 @@ fn extract_server_host(entry: &ProxyEntry) -> Option<String> {
     None
 }
 
-/// Найти `tun2socks` в нескольких возможных локациях:
-///   1. `<exe-dir>/tun2socks-<triplet>.exe`          — стандартный bundle
-///                                                     externalBin;
-///   2. `<exe-dir>/tun2socks.exe`                    — на случай если
-///                                                     Tauri стрипает
-///                                                     triplet;
-///   3. `<exe-dir>/binaries/tun2socks-<triplet>.exe` — старый layout
-///                                                     для совместимости;
-///   4. `<exe-dir>/../../binaries/...`               — dev из
-///                                                     target/{debug,
-///                                                     release}/.
-/// Найти путь к sidecar-бинарю по короткому имени (`xray`/`mihomo`).
+/// Дополнительные хосты VPN-серверов для bypass-route (mihomo-passthrough).
+///
+/// В full-mihomo подписке проксей бывает 10-20+. Пользователь может на
+/// лету переключаться между ними через external-controller, и каждая —
+/// отдельный удалённый хост. Если bypass добавлен только на primary
+/// (`extract_server_host`), переключение на любую другую ноду сразу
+/// заворачивает её исходящий трафик в TUN → петля.
+///
+/// Возвращает все хосты КРОМЕ primary (того, что вернул
+/// Найти путь к sidecar-бинарю по короткому имени (`sing-box`/`mihomo`).
 /// Используется для kill-switch allow-app-id (этап 13.D) — нам нужно
 /// разрешить нашим VPN-движкам исходящий трафик.
 ///
@@ -197,26 +125,6 @@ fn resolve_sidecar_path(_app: &tauri::AppHandle, name: &str) -> Option<PathBuf> 
     if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
         candidates.push(dev_root.join("binaries").join(&triplet));
         candidates.push(dev_root.join("binaries").join(&plain));
-    }
-
-    candidates.into_iter().find(|c| c.is_file())
-}
-
-fn resolve_tun2socks_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-
-    // Production-кандидаты
-    let mut candidates: Vec<PathBuf> = vec![
-        exe_dir.join(TUN2SOCKS_FILENAME),
-        exe_dir.join(TUN2SOCKS_FILENAME_PLAIN),
-        exe_dir.join("binaries").join(TUN2SOCKS_FILENAME),
-        exe_dir.join("resources").join(TUN2SOCKS_FILENAME),
-    ];
-
-    // Dev: target/{profile}/ → подняться до src-tauri/, оттуда в binaries/
-    if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
-        candidates.push(dev_root.join("binaries").join(TUN2SOCKS_FILENAME));
     }
 
     candidates.into_iter().find(|c| c.is_file())
@@ -271,6 +179,108 @@ pub struct ConnectResult {
 pub struct SubscriptionResult {
     pub servers: Vec<ProxyEntry>,
     pub meta: Option<SubscriptionMeta>,
+}
+
+/// Превью спарсенного и сгенерированного конфига сервера. Используется
+/// диалогом «view config» (стрелочка справа на server-row) — пользователь
+/// может посмотреть что именно мы получили из подписки и что подсунем
+/// движку при connect.
+#[derive(Serialize)]
+pub struct ServerPreview {
+    pub name: String,
+    pub protocol: String,
+    pub server: String,
+    pub port: u16,
+    pub engine_compat: Vec<String>,
+    /// Сырой JSON/YAML того что пришло с подписки (отформатированно).
+    pub raw: String,
+    /// Сгенерированный sing-box-конфиг для этого entry (то, что
+    /// будет реально записано в `sing-box-config.json` при connect).
+    /// `None` если это `mihomo-profile` — там используется raw YAML
+    /// напрямую.
+    pub generated_singbox: Option<String>,
+}
+
+/// Сгенерировать sing-box-JSON для preview (без запуска). Вытащено
+/// в отдельную функцию чтобы commands.rs не разбухал.
+fn build_singbox_preview(entry: &ProxyEntry) -> Result<Option<String>, String> {
+    use crate::config::sing_box_config::{
+        build, convert_xray_json_to_singbox, patch_singbox_json, ConvertOptions, PatchOptions,
+    };
+    let value = if entry.protocol == "xray-json" {
+        let opts = ConvertOptions {
+            socks_port: 30000,
+            http_port: 30000,
+            listen: "127.0.0.1",
+            tun_mode: false,
+            tun_options: None,
+            anti_dpi: None,
+            socks_auth: None,
+        };
+        convert_xray_json_to_singbox(&entry.raw, &entry.name, &opts)
+            .map_err(|e| format!("конверсия xray-json: {e:#}"))?
+    } else if entry.protocol == "singbox-json" {
+        let opts = PatchOptions {
+            socks_port: 30000,
+            listen: "127.0.0.1",
+            tun_mode: false,
+            tun_options: None,
+            socks_auth: None,
+        };
+        patch_singbox_json(entry.raw.clone(), &opts)
+            .map_err(|e| format!("патч sing-box JSON: {e:#}"))?
+    } else if entry.protocol == "mihomo-profile" {
+        // Для mihomo-profile нет sing-box-конфига — используется raw YAML.
+        return Ok(None);
+    } else {
+        let cfg = build(entry, 30000, 30000, "127.0.0.1", false, None, None, None)
+            .map_err(|e| e.to_string())?;
+        cfg.json
+    };
+    Ok(Some(
+        serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?,
+    ))
+}
+
+/// Превью конфига сервера с указанным индексом — без запуска движка.
+/// Используется UI-кнопкой «view config» (стрелочка справа на server-row).
+#[tauri::command]
+pub fn preview_server_config(
+    server_index: usize,
+    sub: State<'_, SubscriptionState>,
+) -> Result<ServerPreview, String> {
+    let entry = {
+        let servers = sub.servers.lock().map_err(|e| e.to_string())?;
+        servers
+            .get(server_index)
+            .cloned()
+            .ok_or_else(|| format!("сервер #{server_index} не найден в списке"))?
+    };
+
+    // Raw — отдаём в человекочитаемом формате. Для mihomo-profile это
+    // YAML-строка из raw.yaml; для всех остальных — JSON.
+    let raw = if entry.protocol == "mihomo-profile" {
+        entry
+            .raw
+            .get("yaml")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(пустой YAML)")
+            .to_string()
+    } else {
+        serde_json::to_string_pretty(&entry.raw).map_err(|e| e.to_string())?
+    };
+
+    let generated_singbox = build_singbox_preview(&entry)?;
+
+    Ok(ServerPreview {
+        name: entry.name,
+        protocol: entry.protocol,
+        server: entry.server,
+        port: entry.port,
+        engine_compat: entry.engine_compat,
+        raw,
+        generated_singbox,
+    })
 }
 
 /// Скачать подписку по URL, распарсить и сохранить список серверов.
@@ -348,8 +358,8 @@ pub async fn connect(
     auto_apply_minimal_ru_rules: Option<bool>,
     app_rules: Option<Vec<AppRule>>,
     app: tauri::AppHandle,
-    xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    sing_box: State<'_, SingBoxState>,
     mihomo_api: State<'_, vpn::MihomoApiState>,
     sub: State<'_, SubscriptionState>,
     ks_ctx: State<'_, KillSwitchState>,
@@ -378,22 +388,64 @@ pub async fn connect(
     // Клонируем ProxyEntry, чтобы сразу освободить lock на список серверов
     let entry = {
         let servers = sub.servers.lock().map_err(|e| e.to_string())?;
-        servers
-            .get(server_index)
-            .cloned()
-            .ok_or_else(|| format!("сервер #{server_index} не найден в списке"))?
+        servers.get(server_index).cloned().ok_or_else(|| {
+            format!(
+                "сервер #{server_index} не найден в списке (всего серверов: {}). \
+                 обновите подписку и выберите сервер заново",
+                servers.len()
+            )
+        })?
     };
 
-    // 8.B — выбор движка. Дефолт xray. Проверяем что сервер поддерживает
-    // выбранное ядро; иначе возвращаем понятную ошибку (UI должен предложить
-    // переключить движок до повторного клика).
-    let chosen_engine = engine.as_deref().unwrap_or("xray");
-    if !entry.engine_compat.iter().any(|e| e == chosen_engine) {
+    // sing-box миграция (0.1.2): движки только sing-box + mihomo.
+    // Дефолт — sing-box (быстрый старт + nativeTUN). Legacy "xray"
+    // engine из старого localStorage маппится в "sing-box" — sing-box
+    // покрывает все xray-протоколы (vless/vmess/trojan/ss/hy2/wg/socks)
+    // ПЛЮС TUIC. engine_compat массив тоже может содержать legacy
+    // "xray" — считаем что эти entries совместимы с sing-box.
+    let chosen_engine_raw = engine.as_deref().unwrap_or("sing-box");
+    let chosen_engine = if chosen_engine_raw == "xray" {
+        "sing-box"
+    } else {
+        chosen_engine_raw
+    };
+    let engine_ok = match chosen_engine {
+        "sing-box" => entry
+            .engine_compat
+            .iter()
+            .any(|e| e == "sing-box" || e == "xray"),
+        "mihomo" => entry.engine_compat.iter().any(|e| e == "mihomo"),
+        other => {
+            return Err(format!(
+                "неподдерживаемый движок: {other}; используйте sing-box или mihomo"
+            ));
+        }
+    };
+    if !engine_ok {
         return Err(format!(
             "сервер «{}» несовместим с движком {}; поддерживается: {}",
             entry.name,
             chosen_engine,
             entry.engine_compat.join(", ")
+        ));
+    }
+
+    // sing-box миграция (0.1.2): mihomo+URI+TUN больше не поддерживается
+    // (раньше работал через tun2proxy pipeline, который мы выпилили).
+    // mihomo built-in TUN работает только когда подписка отдала full
+    // mihomo-profile (с tun: enable в YAML). Для URI-серверов mihomo
+    // в TUN-режиме — sidecar без TUN-туннеля, не имеет смысла.
+    if chosen_engine == "mihomo"
+        && mode == "tun"
+        && entry.protocol != "mihomo-profile"
+    {
+        return Err(format!(
+            "сервер «{}» (тип {}): Mihomo+TUN работает только для подписок \
+             в формате mihomo-profile (full clash YAML). Решения:\n\
+             • переключиться на движок sing-box (Settings → движок) — он \
+               умеет TUN для всех протоколов\n\
+             • или переключить режим на proxy (системный прокси)",
+            entry.name, entry.protocol
         ));
     }
 
@@ -404,7 +456,7 @@ pub async fn connect(
     // У Mihomo один mixed-port на SOCKS5+HTTP, поэтому для него используем
     // одно и то же значение для обоих "портов" (всё равно один сокет).
     let default_socks = find_free_port(random_high_port());
-    let default_http = if chosen_engine == "mihomo" {
+    let _default_http = if chosen_engine == "mihomo" {
         default_socks
     } else {
         find_free_port(random_high_port())
@@ -430,36 +482,168 @@ pub async fn connect(
     // direct-outbound получит `streamSettings.sockopt.interface = <name>` —
     // на Windows это `IP_UNICAST_IF`, который форсит маршрутизацию сокета
     // через указанный интерфейс минуя routing-таблицу (то есть мимо TUN).
-    let physic_iface = if tun_mode {
-        platform::network::get_default_route_interface_name()
-    } else {
-        None
-    };
+    // physic_iface больше не нужен — sing-box и mihomo-profile делают
+    // auto_detect_interface сами в built-in TUN. Xray-ветка с
+    // sockopt.interface удалена в 0.1.2.
+    let _ = tun_mode;
 
-    // Для TUN-режима готовим параметры до старта Xray, чтобы при ошибке
-    // (нет helper-а / tun2socks) не пришлось гасить уже запущенный процесс.
-    let tun_params = if mode == "tun" {
-        let server_host = extract_server_host(&entry).ok_or_else(|| {
-            "не удалось определить хост сервера для TUN-режима".to_string()
-        })?;
-        let tun2socks_path = resolve_tun2socks_path().ok_or_else(|| {
-            format!(
-                "{TUN2SOCKS_FILENAME} не найден ни рядом с приложением, ни в src-tauri/binaries/"
+    // sing-box миграция (0.1.2): разветвление по движку.
+    // - sing-box (default): JSON-конфиг, mixed inbound (SOCKS5+HTTP) на
+    //   одном порту, built-in TUN-inbound в TUN-режиме (helper SYSTEM-spawn).
+    // - Mihomo: YAML с mixed-port; mihomo built-in TUN если
+    //   подписка пришла как полный mihomo-profile (в URI-режиме TUN
+    //   запрещён — см. валидацию выше).
+    let (socks_port, http_port) = if chosen_engine == "sing-box" {
+        let auth_pair = socks_auth
+            .as_ref()
+            .map(|(u, p)| (u.as_str(), p.as_str()));
+
+        // 11.F + 13.Q: активный routing-профиль или встроенный минимальный
+        // RU-шаблон. Для xray-json/singbox-json (custom config из подписки)
+        // профиль НЕ применяем — у пользователя свои правила приоритетнее.
+        let active_profile = routing_store
+            .inner
+            .lock()
+            .ok()
+            .and_then(|g| g.active().map(|e| e.profile.clone()))
+            .or_else(|| {
+                if auto_apply_minimal_ru_rules.unwrap_or(false) {
+                    Some(crate::config::routing_profile::RoutingProfile::minimal_ru())
+                } else {
+                    None
+                }
+            });
+
+        // Маппим AntiDpiOptions из xray-формата в sing-box-формат.
+        // Большинство полей совпадают по семантике (имена идентичны),
+        // sing-box просто игнорирует те что не поддерживает (см.
+        // sing_box_config::apply_anti_dpi_to_outbound).
+        let sb_anti_dpi = anti_dpi.as_ref().map(|a| sing_box_config::AntiDpiOptions {
+            fragmentation: a.fragmentation,
+            fragmentation_packets: a.fragmentation_packets.clone(),
+            fragmentation_length: a.fragmentation_length.clone(),
+            fragmentation_interval: a.fragmentation_interval.clone(),
+            noises: a.noises,
+            noises_type: a.noises_type.clone(),
+            noises_packet: a.noises_packet.clone(),
+            noises_delay: a.noises_delay.clone(),
+            server_resolve: a.server_resolve,
+            server_resolve_doh: a.server_resolve_doh.clone(),
+            server_resolve_bootstrap: a.server_resolve_bootstrap.clone(),
+        });
+
+        // TUN-параметры (имя адаптера маскируется по 12.E если включено)
+        let tun_options = if tun_mode {
+            let interface_name = if tun_masking.unwrap_or(false) {
+                generate_masked_tun_name()
+            } else {
+                format!("nemefisto-{}", std::process::id())
+            };
+            Some(sing_box_config::TunOptions {
+                interface_name,
+                address: "198.18.0.1/15".to_string(),
+                mtu: 9000,
+            })
+        } else {
+            None
+        };
+
+        // Генерим конфиг по типу подписки.
+        let mut config_json = if entry.protocol == "xray-json" {
+            // Marzban-style: конвертируем xray-JSON → sing-box JSON.
+            let opts = sing_box_config::ConvertOptions {
+                socks_port: default_socks,
+                http_port: default_socks,
+                listen,
+                tun_mode,
+                tun_options: tun_options.as_ref(),
+                anti_dpi: sb_anti_dpi.as_ref(),
+                socks_auth: auth_pair,
+            };
+            sing_box_config::convert_xray_json_to_singbox(&entry.raw, &entry.name, &opts)
+                .map_err(|e| format!("конверсия xray-json → sing-box: {e:#}"))?
+        } else if entry.protocol == "singbox-json" {
+            // Remnawave passthrough: минимальные правки (наши inbounds,
+            // auth, миграция legacy block/dns outbound'ов).
+            let opts = sing_box_config::PatchOptions {
+                socks_port: default_socks,
+                listen,
+                tun_mode,
+                tun_options: tun_options.as_ref(),
+                socks_auth: auth_pair,
+            };
+            sing_box_config::patch_singbox_json(entry.raw.clone(), &opts)
+                .map_err(|e| format!("патч sing-box JSON: {e:#}"))?
+        } else {
+            // URI-парсер entries (vless/vmess/trojan/ss/hy2/tuic/wg/socks).
+            let cfg = sing_box_config::build(
+                &entry,
+                default_socks,
+                default_socks,
+                listen,
+                tun_mode,
+                tun_options.as_ref(),
+                sb_anti_dpi.as_ref(),
+                auth_pair,
             )
-        })?;
-        let path_str = tun2socks_path
-            .to_str()
-            .ok_or_else(|| "путь к tun2socks содержит не-UTF-8 символы".to_string())?
-            .to_string();
-        Some((server_host, path_str))
-    } else {
-        None
-    };
+            .map_err(|e| e.to_string())?;
+            cfg.json
+        };
 
-    // 8.B: разветвление по движку. Под Mihomo генерим YAML и запускаем
-    // mihomo sidecar; под Xray — текущий путь с JSON и xray sidecar.
-    // socks_port и http_port одинаковые для Mihomo (один mixed-port).
-    let (socks_port, http_port) = if chosen_engine == "mihomo" {
+        // 11.F + 13.Q: применяем активный routing-профиль (только для
+        // URI-entries, у passthrough-конфигов свои правила).
+        if entry.protocol != "xray-json" && entry.protocol != "singbox-json" {
+            if let Some(p) = active_profile.as_ref() {
+                sing_box_config::apply_routing_profile(&mut config_json, p);
+            }
+        }
+
+        // Гасим другой движок если что-то осталось от прошлого сеанса.
+        let _ = mihomo.stop();
+        let _ = platform::helper_client::mihomo_stop().await;
+        mihomo.mark_helper_spawned(false);
+
+        // Сериализуем JSON в строку.
+        let config_str = serde_json::to_string_pretty(&config_json)
+            .map_err(|e| format!("сериализация sing-box-конфига: {e}"))?;
+
+        if tun_mode {
+            // Built-in TUN: helper SYSTEM-spawn (нужен админ для
+            // CreateAdapter WinTUN). Конфиг и data-dir в ProgramData —
+            // shared read+write для helper-SYSTEM и Tauri-user.
+            let shared_dir = std::path::PathBuf::from(r"C:\ProgramData\NemefistoVPN");
+            std::fs::create_dir_all(&shared_dir)
+                .map_err(|e| format!("создание ProgramData/NemefistoVPN: {e}"))?;
+            let config_path = shared_dir.join("sing-box-config.json");
+            std::fs::write(&config_path, &config_str)
+                .map_err(|e| format!("запись sing-box-config.json: {e}"))?;
+            let exe_path = resolve_sidecar_path(&app, "sing-box")
+                .ok_or_else(|| "sing-box binary не найден".to_string())?;
+            let config_pstr = config_path.to_string_lossy().into_owned();
+            let exe_pstr = exe_path.to_string_lossy().into_owned();
+            let data_pstr = shared_dir.to_string_lossy().into_owned();
+
+            if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+                return Err(format!("helper-сервис недоступен: {e}"));
+            }
+            // Гасим прошлый sing-box если что-то осталось
+            let _ = platform::helper_client::singbox_stop().await;
+            let _ = sing_box.stop();
+
+            platform::helper_client::singbox_start(config_pstr, exe_pstr, data_pstr)
+                .await
+                .map_err(|e| format!("helper.singbox_start: {e}"))?;
+            sing_box.mark_helper_spawned(true);
+            *sing_box.mixed_port.lock().map_err(|e| format!("mutex: {e}"))? = default_socks;
+            stamp("sing-box built-in TUN: spawned via helper");
+        } else {
+            // Proxy-режим: Tauri sidecar (user-level OK, нет CreateAdapter).
+            sing_box.start_with_config(&app, &config_str, default_socks)?;
+            stamp("sing-box: spawned via Tauri sidecar");
+        }
+
+        (default_socks, default_socks)
+    } else if chosen_engine == "mihomo" {
         let auth_pair = socks_auth
             .as_ref()
             .map(|(u, p)| (u.as_str(), p.as_str()));
@@ -496,6 +680,14 @@ pub async fn connect(
                 .get("yaml")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "mihomo-profile без raw.yaml".to_string())?;
+            // 13.L: для mihomo-profile в TUN-режиме используем mihomo
+            // built-in TUN — он сам управляет адаптером и обходит свой
+            // же direct outbound. Без этого петли между half-routes
+            // через TUN и mihomo's DIRECT неизбежны.
+            //
+            // В proxy-режиме (без TUN) — обычный SOCKS-server, наш
+            // tun2socks pipeline не запускается.
+            let use_builtin_tun = tun_mode;
             let patch = mihomo_config::FullYamlPatch {
                 mixed_port: default_socks,
                 listen,
@@ -504,6 +696,7 @@ pub async fn connect(
                 external_controller_secret: &controller_secret,
                 app_rules: rules_slice,
                 anti_dpi: anti_dpi.as_ref(),
+                use_builtin_tun,
             };
             mihomo_config::patch_full_yaml(raw_yaml, &patch)
                 .map_err(|e| format!("патч full-mihomo YAML: {e:#}"))?
@@ -519,10 +712,50 @@ pub async fn connect(
             )
             .map_err(|e| e.to_string())?
         };
-        // На всякий случай гасим Xray если он был активен от прошлой сессии
-        // на другом движке (не должно бывать, но дешёвая страховка).
-        let _ = xray.stop();
-        mihomo.start_with_config(&app, &cfg.yaml, cfg.mixed_port)?;
+        // На всякий случай гасим sing-box если он был активен от прошлой
+        // сессии на другом движке (не должно бывать, но дешёвая страховка).
+        let _ = sing_box.stop();
+        let _ = platform::helper_client::singbox_stop().await;
+        sing_box.mark_helper_spawned(false);
+
+        // 13.L: для built-in TUN запускаем mihomo через helper-сервис
+        // (он SYSTEM, имеет права на CreateAdapter WinTUN). Tauri-main
+        // как user-level не справится. Иначе — старый sidecar-spawn.
+        let builtin_tun = entry.protocol == "mihomo-profile" && tun_mode;
+        if builtin_tun {
+            // Конфиг и data-dir в ProgramData — туда у обоих процессов
+            // (helper-SYSTEM и Tauri-user) стандартный read+write.
+            let shared_dir = std::path::PathBuf::from(r"C:\ProgramData\NemefistoVPN");
+            std::fs::create_dir_all(&shared_dir)
+                .map_err(|e| format!("создание ProgramData/NemefistoVPN: {e}"))?;
+            let config_path = shared_dir.join("mihomo-config.yaml");
+            std::fs::write(&config_path, &cfg.yaml)
+                .map_err(|e| format!("запись mihomo-config.yaml: {e}"))?;
+            let exe_path = resolve_sidecar_path(&app, "mihomo")
+                .ok_or_else(|| "mihomo binary не найден".to_string())?;
+            let config_str = config_path.to_string_lossy().into_owned();
+            let exe_str = exe_path.to_string_lossy().into_owned();
+            let data_str = shared_dir.to_string_lossy().into_owned();
+
+            // Гарантируем что helper доступен и нужной версии
+            if let Err(e) = platform::helper_bootstrap::ensure_running().await {
+                return Err(format!("helper-сервис недоступен: {e}"));
+            }
+            // Перед стартом — гасим helper-mihomo и Tauri-mihomo если
+            // что-то осталось от прошлой сессии.
+            let _ = platform::helper_client::mihomo_stop().await;
+            let _ = mihomo.stop();
+
+            platform::helper_client::mihomo_start(config_str, exe_str, data_str)
+                .await
+                .map_err(|e| format!("helper.mihomo_start: {e}"))?;
+            mihomo.mark_helper_spawned(true);
+            // mixed_port запоминаем для is_xray_running и др.
+            *mihomo.mixed_port.lock().map_err(|e| format!("mutex: {e}"))? = cfg.mixed_port;
+            stamp("mihomo built-in TUN: spawned via helper");
+        } else {
+            mihomo.start_with_config(&app, &cfg.yaml, cfg.mixed_port)?;
+        }
 
         // 8.F: сохраняем endpoint controller'а — UI достучится через
         // mihomo_proxies / mihomo_select_proxy / mihomo_delay_test.
@@ -534,65 +767,14 @@ pub async fn connect(
 
         (cfg.mixed_port, cfg.mixed_port)
     } else {
-        // xray-json: патчим внешний конфиг (порты + listen)
-        // иначе: генерируем конфиг из ProxyEntry
-        let (mut config_json, sp, hp) = if entry.protocol == "xray-json" {
-            let patched = xray_config::patch_xray_json(
-                entry.raw.clone(),
-                default_socks,
-                default_http,
-                listen,
-                tun_mode,
-                physic_iface.as_deref(),
-            );
-            (patched, default_socks, default_http)
-        } else {
-            let auth_pair = socks_auth
-                .as_ref()
-                .map(|(u, p)| (u.as_str(), p.as_str()));
-            let cfg = xray_config::build(
-                &entry,
-                default_socks,
-                default_http,
-                listen,
-                tun_mode,
-                physic_iface.as_deref(),
-                anti_dpi.as_ref(),
-                auth_pair,
-            )
-            .map_err(|e| e.to_string())?;
-            (cfg.json, cfg.socks_port, cfg.http_port)
-        };
-
-        // 11.F + 13.Q: применить активный routing-профиль или встроенный
-        // минимальный RU-шаблон. Для xray-json (custom config из подписки)
-        // — НЕ применяем, у пользователя свои правила приоритетнее.
-        if entry.protocol != "xray-json" {
-            let active_profile = routing_store
-                .inner
-                .lock()
-                .ok()
-                .and_then(|g| g.active().map(|e| e.profile.clone()))
-                .or_else(|| {
-                    if auto_apply_minimal_ru_rules.unwrap_or(false) {
-                        Some(crate::config::routing_profile::RoutingProfile::minimal_ru())
-                    } else {
-                        None
-                    }
-                });
-            if let Some(p) = active_profile.as_ref() {
-                xray_config::apply_routing_profile(&mut config_json, p);
-            }
-        }
-
-        // Запускаем Xray ДО поднятия TUN — иначе резолв server-а в Xray уйдёт
-        // через TUN, а tun2socks не сможет соединиться с upstream-Xray.
-        let _ = mihomo.stop();
-        xray.start_with_config(&app, &config_json, sp, hp)?;
-        (sp, hp)
+        // sing-box миграция (0.1.2): xray-движок выпилен. Ветка
+        // недостижима — chosen_engine validation выше пропускает только
+        // sing-box и mihomo. Этот else существует только для
+        // exhaustiveness — на случай добавления нового движка.
+        unreachable!("неподдерживаемый движок прошёл валидацию: {chosen_engine}");
     };
 
-    stamp("xray/mihomo started");
+    stamp("vpn engine started");
 
     match mode.as_str() {
         "proxy" => {
@@ -601,62 +783,17 @@ pub async fn connect(
             stamp("system proxy set");
         }
         "tun" => {
-            // Прогреваем Xray ДО перенаправления трафика в TUN. Иначе первый
-            // user-запрос ждёт burstObservatory + REALITY handshake (10-20с).
-            stamp("tun: warmup_xray begin");
-            if let Err(e) = warmup_xray(socks_port).await {
-                eprintln!("[connect] warmup_xray не удался ({e}) — продолжаем, первый запрос может тормозить");
-            }
-            stamp("tun: warmup_xray done");
-
-            // Гарантируем что helper-сервис запущен. Если нет — будет UAC
-            // и авто-установка. После первого согласия пользователя сервис
-            // ставится с AutoStart и больше UAC не запрашивает.
-            if let Err(e) = platform::helper_bootstrap::ensure_running().await {
-                let _ = xray.stop();
-                let _ = mihomo.stop();
-                return Err(format!("helper-сервис недоступен: {e}"));
-            }
-            stamp("tun: helper ensure_running done");
-
-            // tun_params гарантировано Some — установлено выше
-            let (server_host, tun2socks_path) = tun_params.unwrap();
-            // Для маскировки TUN-имени (12.E) генерируем нейтральное имя
-            // только для этого запуска. Helper создаст адаптер с ним.
-            let tun_name_override = if tun_masking.unwrap_or(false) {
-                Some(generate_masked_tun_name())
-            } else {
-                None
-            };
-            // SOCKS5 креды (9.G): tun2socks подключится с auth.
-            let (auth_user, auth_pass) = match &socks_auth {
-                Some((u, p)) => (Some(u.clone()), Some(p.clone())),
-                None => (None, None),
-            };
-            stamp("tun: tun_start IPC begin");
-            if let Err(e) = platform::helper_client::tun_start(
-                socks_port,
-                server_host,
-                "1.1.1.1".to_string(),
-                tun2socks_path,
-                auth_user,
-                auth_pass,
-                tun_name_override,
-            )
-            .await
-            {
-                // Откатываем активный движок если TUN не поднялся
-                let _ = xray.stop();
-                let _ = mihomo.stop();
-                return Err(format!(
-                    "TUN-режим не запустился: {e}\n\nПроверьте services.msc → NemefistoHelper, и что tun2socks.exe + wintun.dll лежат рядом друг с другом."
-                ));
-            }
-            stamp("tun: tun_start IPC done");
+            // sing-box миграция (0.1.2): TUN всегда через built-in
+            // TUN-inbound движка. sing-box делает это всегда; Mihomo —
+            // когда подписка приходит как полный mihomo-profile (full
+            // YAML с tun: enable). Для других случаев Mihomo+TUN+URI
+            // была проверка ранее в connect (bail с понятным сообщением).
+            // Tun2proxy + helper.tun_start выпилены.
+            stamp("tun: built-in TUN — движок сам поднимает WinTUN-адаптер");
         }
         other => {
-            let _ = xray.stop();
             let _ = mihomo.stop();
+            let _ = sing_box.stop();
             return Err(format!("неизвестный режим: {other}"));
         }
     }
@@ -682,12 +819,11 @@ pub async fn connect(
             if server_host.parse::<std::net::IpAddr>().is_ok() {
                 // ОК
             } else {
-                let _ = xray.stop();
                 let _ = mihomo.stop();
+                let _ = sing_box.stop();
+                let _ = platform::helper_client::mihomo_stop().await;
+                let _ = platform::helper_client::singbox_stop().await;
                 let _ = platform::proxy::clear_system_proxy();
-                if tun_mode {
-                    let _ = platform::helper_client::tun_stop().await;
-                }
                 return Err(format!(
                     "kill switch: не удалось резолвить server_host={server_host}"
                 ));
@@ -720,7 +856,7 @@ pub async fn connect(
                 // Все возможные кандидаты sidecar — добавим все которые
                 // существуют. WFP игнорирует дубликаты с разными path
                 // как «всё allow».
-                for name in ["xray", "mihomo"] {
+                for name in ["mihomo", "sing-box"] {
                     push_if_exists(exe_dir.join(format!("{name}.exe")));
                     push_if_exists(
                         exe_dir.join(format!("{name}-x86_64-pc-windows-msvc.exe")),
@@ -743,18 +879,6 @@ pub async fn connect(
                         );
                     }
                 }
-                // tun2socks (для TUN-режима)
-                push_if_exists(exe_dir.join("tun2socks.exe"));
-                push_if_exists(
-                    exe_dir.join("tun2socks-x86_64-pc-windows-msvc.exe"),
-                );
-                if let Some(dev_root) = exe_dir.parent().and_then(|p| p.parent()) {
-                    push_if_exists(
-                        dev_root
-                            .join("binaries")
-                            .join("tun2socks-x86_64-pc-windows-msvc.exe"),
-                    );
-                }
                 // Сам vpn-client.exe — родительский процесс. Tauri может
                 // делать outbound (DNS-проверки leak-test, deep-link
                 // регистрация, и т.д.), а также на некоторых системах
@@ -767,13 +891,10 @@ pub async fn connect(
         }
         // Resolve-функции тоже подключим (на случай если выше что-то
         // упустили). Дедупликация ниже не нужна — WFP ОК с дубликатами.
-        if let Some(p) = resolve_sidecar_path(&app, "xray") {
+        if let Some(p) = resolve_sidecar_path(&app, "sing-box") {
             push_if_exists(p);
         }
         if let Some(p) = resolve_sidecar_path(&app, "mihomo") {
-            push_if_exists(p);
-        }
-        if let Some(p) = resolve_tun2socks_path() {
             push_if_exists(p);
         }
         // Дедупликация по string чтобы не плодить identical filters.
@@ -784,8 +905,10 @@ pub async fn connect(
         // — у нас не было ensure_running).
         if !tun_mode {
             if let Err(e) = platform::helper_bootstrap::ensure_running().await {
-                let _ = xray.stop();
                 let _ = mihomo.stop();
+                let _ = sing_box.stop();
+                let _ = platform::helper_client::mihomo_stop().await;
+                let _ = platform::helper_client::singbox_stop().await;
                 let _ = platform::proxy::clear_system_proxy();
                 return Err(format!("kill switch: helper-сервис недоступен: {e}"));
             }
@@ -815,12 +938,11 @@ pub async fn connect(
         {
             // При ошибке откатываем всё — интернет НЕ должен оставаться
             // в полу-заблокированном состоянии.
-            let _ = xray.stop();
             let _ = mihomo.stop();
+            let _ = sing_box.stop();
+            let _ = platform::helper_client::mihomo_stop().await;
+            let _ = platform::helper_client::singbox_stop().await;
             let _ = platform::proxy::clear_system_proxy();
-            if tun_mode {
-                let _ = platform::helper_client::tun_stop().await;
-            }
             return Err(format!("kill switch не поднялся: {e}"));
         }
 
@@ -871,13 +993,17 @@ pub async fn connect(
 /// должны гарантировать что интернет вернётся, даже если helper исчез.
 #[tauri::command]
 pub async fn disconnect(
-    xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    sing_box: State<'_, SingBoxState>,
     mihomo_api: State<'_, vpn::MihomoApiState>,
     ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<(), String> {
-    // 1. TUN
-    let _ = platform::helper_client::tun_stop().await;
+    // 1. TUN/built-in TUN — гасим оба helper-spawned движка.
+    //    Все идемпотентны.
+    let _ = platform::helper_client::mihomo_stop().await;
+    mihomo.mark_helper_spawned(false);
+    let _ = platform::helper_client::singbox_stop().await;
+    sing_box.mark_helper_spawned(false);
     // 2. Kill switch — всегда вызываем, чтобы убрать остатки если
     //    включён был в прошлый сеанс (на случай если краш / повторный
     //    запуск). Helper тихо вернёт ok если он не был enabled.
@@ -888,16 +1014,16 @@ pub async fn disconnect(
     // ходить в API мёртвого процесса.
     mihomo_api.clear();
 
-    // 3. Оба движка (один точно не запущен — stop() для него no-op)
-    //    + system proxy. Параллельно выполняем чтобы быстрый disconnect.
-    let xray_err = xray.stop().err();
+    // 3. Оба движка (один не запущен — stop() для него no-op)
+    //    + system proxy.
     let mihomo_err = mihomo.stop().err();
+    let singbox_err = sing_box.stop().err();
     let proxy_err = platform::proxy::clear_system_proxy().err().map(|e| e.to_string());
 
-    if let Some(e) = xray_err {
+    if let Some(e) = mihomo_err {
         return Err(e);
     }
-    if let Some(e) = mihomo_err {
+    if let Some(e) = singbox_err {
         return Err(e);
     }
     if let Some(e) = proxy_err {
@@ -906,18 +1032,17 @@ pub async fn disconnect(
     Ok(())
 }
 
-/// Запущен ли VPN-движок (Xray или Mihomo) прямо сейчас.
+/// Запущен ли VPN-движок (sing-box или Mihomo) прямо сейчас.
 ///
-/// Имя оставлено `is_xray_running` для совместимости с фронтом — после
-/// этапа 8.B функция возвращает true если запущен **любой** из двух
-/// поддерживаемых движков. Семантика «работает ли VPN», не привязка к
-/// конкретному ядру.
+/// Имя оставлено `is_xray_running` для совместимости с фронтом —
+/// возвращает true если запущен **любой** из двух поддерживаемых
+/// движков. Семантика «работает ли VPN», не привязка к конкретному ядру.
 #[tauri::command]
 pub fn is_xray_running(
-    xray: State<'_, XrayState>,
     mihomo: State<'_, MihomoState>,
+    sing_box: State<'_, SingBoxState>,
 ) -> bool {
-    xray.is_running() || mihomo.is_running()
+    mihomo.is_running() || sing_box.is_running()
 }
 
 /// Обновить tray-icon под текущий VPN-статус (этап 13.A).
@@ -1272,21 +1397,45 @@ pub fn get_hwid(hwid: State<'_, HwidState>) -> String {
     hwid.0.clone()
 }
 
-/// Прочитать последние N байт лога Xray (`%TEMP%\NemefistoVPN\xray-stderr.log`).
+/// Прочитать последние ~32 КБ логов VPN-движка из всех известных
+/// log-файлов (`sing-box-stderr.log`, `mihomo-stderr.log`, плюс
+/// helper-side `C:\ProgramData\NemefistoVPN\sing-box.log` /
+/// `mihomo.log` если они есть).
 ///
-/// Возвращает строку из последних 32 КБ файла. Если файл не существует —
-/// пустую строку. Используется UI для отображения логов.
+/// Имя `read_xray_log` оставлено для совместимости с фронтом (UI
+/// `LogsBlock`). После 0.1.2 миграции содержимое — sing-box / mihomo,
+/// xray больше не используется.
 #[tauri::command]
 pub fn read_xray_log() -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
 
-    let path = std::env::temp_dir()
-        .join("NemefistoVPN")
-        .join("xray-stderr.log");
+    let tmp_dir = std::env::temp_dir().join("NemefistoVPN");
+    let prog_dir = std::path::PathBuf::from(r"C:\ProgramData\NemefistoVPN");
 
-    if !path.exists() {
-        return Ok(String::new());
-    }
+    let candidates = [
+        tmp_dir.join("sing-box-stderr.log"),
+        tmp_dir.join("mihomo-stderr.log"),
+        prog_dir.join("sing-box.log"),
+        prog_dir.join("mihomo.log"),
+    ];
+
+    // Берём самый свежий по mtime из существующих файлов.
+    let newest = candidates
+        .iter()
+        .filter(|p| p.exists())
+        .filter_map(|p| {
+            p.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| (p.clone(), t))
+        })
+        .max_by_key(|(_, t)| *t)
+        .map(|(p, _)| p);
+
+    let path = match newest {
+        Some(p) => p,
+        None => return Ok(String::new()),
+    };
 
     let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let len = file.metadata().map_err(|e| e.to_string())?.len();
@@ -1295,7 +1444,12 @@ pub fn read_xray_log() -> Result<String, String> {
     file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    let header = format!("=== {} ===\n", path.display());
+    Ok(format!(
+        "{}{}",
+        header,
+        String::from_utf8_lossy(&buf)
+    ))
 }
 
 /// Пинговать все серверы из текущей подписки параллельно (TCP-connect).
@@ -1489,6 +1643,16 @@ pub async fn mihomo_proxies(
 
 /// `PUT /proxies/:group` — выбрать ноду в select-группе. UI вызывает
 /// при клике на ноду; mihomo переключает activeNode без рестарта.
+///
+/// Сразу после успешного select зовём `DELETE /connections` — это
+/// форсит закрытие всех TCP-сессий через старый outbound. Без этого
+/// браузер держит keep-alive со старой нодой и трафик продолжает идти
+/// через неё, пока сессии не истекут (могут жить минутами). С close-
+/// connections новый запрос сразу пойдёт через свежий outbound, как
+/// FlClash/Clash Verge.
+///
+/// Ошибка `close_connections` не блокирует — селект уже применён,
+/// просто браузер чуть позже сам подхватит. Логируем и идём дальше.
 #[tauri::command]
 pub async fn mihomo_select_proxy(
     group: String,
@@ -1500,7 +1664,11 @@ pub async fn mihomo_select_proxy(
         .ok_or_else(|| "mihomo controller не активен".to_string())?;
     vpn::mihomo_api::select_proxy(&ep, &group, &name)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let Err(e) = vpn::mihomo_api::close_all_connections(&ep).await {
+        eprintln!("[mihomo] close_connections after select failed: {e:#}");
+    }
+    Ok(())
 }
 
 /// `GET /proxies/:name/delay` — измерить latency. Используется в

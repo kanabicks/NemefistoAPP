@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { effectiveUserAgent, useSettingsStore } from "./settingsStore";
+import { useVpnStore } from "./vpnStore";
 
 export type ProxyEntry = {
   name: string;
@@ -379,6 +380,35 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         lastFetchedAt: now,
         loading: false,
       });
+      // 0.1.2: при смене движка/подписки список серверов мог сильно
+      // сократиться (например xray-flat 5 серверов → mihomo-passthrough
+      // 1 синтетическая запись). Если selectedIndex теперь вне
+      // диапазона — сбрасываем, иначе следующий connect упадёт на
+      // «сервер #N не найден в списке». Также чистим если новый список
+      // пустой (нет смысла держать индекс).
+      //
+      // 0.1.2: если в списке ровно один сервер — выбираем его
+      // автоматом. Это критично для mihomo-passthrough (единственная
+      // запись «Профиль Mihomo» — без неё MihomoGroupsInline не
+      // отрисуется и пользователь видит только пустой ServerSelector
+      // вместо групп). Для обычных подписок с 1 нодой тоже полезно —
+      // выбирать там нечего, лишний клик ради тика галочки.
+      {
+        const vpn = useVpnStore.getState();
+        if (
+          vpn.selectedIndex !== null &&
+          (result.servers.length === 0 ||
+            vpn.selectedIndex >= result.servers.length)
+        ) {
+          useVpnStore.setState({ selectedIndex: null });
+        }
+        if (
+          useVpnStore.getState().selectedIndex === null &&
+          result.servers.length === 1
+        ) {
+          useVpnStore.setState({ selectedIndex: 0 });
+        }
+      }
       // Авто-пинг сразу после получения списка
       void get().pingAll();
 
@@ -429,6 +459,19 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       const servers = await invoke<ProxyEntry[]>("get_servers");
       if (servers.length > 0) {
         set({ servers });
+        // 0.1.2: тот же sanity-check что в fetchSubscription —
+        // если кешированный selectedIndex вне нового диапазона, чистим.
+        // И auto-select 0 когда сервер единственный (mihomo-passthrough).
+        const vpn = useVpnStore.getState();
+        if (vpn.selectedIndex !== null && vpn.selectedIndex >= servers.length) {
+          useVpnStore.setState({ selectedIndex: null });
+        }
+        if (
+          useVpnStore.getState().selectedIndex === null &&
+          servers.length === 1
+        ) {
+          useVpnStore.setState({ selectedIndex: 0 });
+        }
         // Метаданные кешируются параллельно — могут отсутствовать если
         // сервер их не присылал.
         try {

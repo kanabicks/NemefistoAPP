@@ -16,11 +16,13 @@ mod nemefisto_helper {
     pub mod crash_dumps;
     pub mod dispatch;
     pub mod firewall;
+    pub mod mihomo;
     pub mod pipe;
     pub mod protocol;
     pub mod routing;
     pub mod security;
     pub mod service;
+    pub mod sing_box;
     pub mod tun;
     pub mod wfp;
 }

@@ -15,6 +15,7 @@
 
 use std::fs::File;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager};
@@ -25,12 +26,21 @@ use tauri_plugin_shell::ShellExt;
 ///
 /// `current_pid` нужен для защиты от race: при быстром перезапуске старый
 /// listener Terminated не должен затереть state нового процесса.
+///
+/// `helper_spawned` — 13.L флаг для built-in TUN-режима. Когда `true`,
+/// mihomo запущен helper-сервисом (SYSTEM), не через Tauri sidecar.
+/// `child` в этом случае пуст (Tauri процессом не владеет), но
+/// `is_running()` всё равно возвращает true — UI/connect-checks
+/// должны видеть состояние корректно.
 pub struct MihomoState {
     child: Mutex<Option<CommandChild>>,
     current_pid: Mutex<Option<u32>>,
     /// `mixed-port` Mihomo: один сокет на SOCKS5 и HTTP одновременно
     /// (стандартная фича clash-style ядра, не требует двух inbound'ов).
     pub mixed_port: Mutex<u16>,
+    /// 13.L: mihomo запущен helper'ом (built-in TUN). Set/cleared в
+    /// connect/disconnect, влияет только на `is_running()`.
+    helper_spawned: AtomicBool,
 }
 
 impl MihomoState {
@@ -39,7 +49,15 @@ impl MihomoState {
             child: Mutex::new(None),
             current_pid: Mutex::new(None),
             mixed_port: Mutex::new(7890),
+            helper_spawned: AtomicBool::new(false),
         }
+    }
+
+    /// 13.L: пометить что mihomo сейчас запущен helper-сервисом
+    /// (built-in TUN-режим). На Tauri-стороне Child нет, но `is_running`
+    /// должен возвращать true.
+    pub fn mark_helper_spawned(&self, on: bool) {
+        self.helper_spawned.store(on, Ordering::SeqCst);
     }
 
     /// Запустить Mihomo с указанным YAML-конфигом.
@@ -103,8 +121,18 @@ impl MihomoState {
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
+                    // Mihomo (Go logrus) пишет ВСЁ в stdout — info, warning,
+                    // error. Чтобы пользователь мог открыть mihomo-stderr.log
+                    // и увидеть «provider download failed / config parse
+                    // error», складываем оба stream'а в один файл с
+                    // префиксом. Без этого `out`-канал терялся в eprintln.
                     CommandEvent::Stdout(line) => {
-                        eprintln!("[mihomo:out] {}", String::from_utf8_lossy(&line));
+                        let s = String::from_utf8_lossy(&line);
+                        eprintln!("[mihomo:out] {s}");
+                        if let Ok(mut f) = stderr_log_clone.lock() {
+                            let _ = writeln!(f, "{s}");
+                            let _ = f.flush();
+                        }
                     }
                     CommandEvent::Stderr(line) => {
                         let s = String::from_utf8_lossy(&line);
@@ -175,8 +203,11 @@ impl MihomoState {
         Ok(())
     }
 
-    /// Запущен ли Mihomo прямо сейчас.
+    /// Запущен ли Mihomo прямо сейчас (как Tauri-sidecar ИЛИ через helper).
     pub fn is_running(&self) -> bool {
+        if self.helper_spawned.load(Ordering::SeqCst) {
+            return true;
+        }
         self.child.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 }

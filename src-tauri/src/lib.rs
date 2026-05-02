@@ -16,12 +16,12 @@ use ipc::commands::{
     geofiles_refresh, geofiles_status, get_hwid, get_recovery_state, get_servers,
     get_subscription_meta, has_proxy_backup, hide_floating_window, is_xray_running,
     kill_switch_apply, kill_switch_force_cleanup, kill_switch_heartbeat, leak_test,
-    mihomo_delay_test, mihomo_proxies, mihomo_select_proxy, ping_servers, read_xray_log,
-    recover_network, restore_proxy_backup, routing_add_static, routing_add_url, routing_list,
-    routing_refresh, routing_remove, routing_set_active, secure_storage_delete, secure_storage_get,
-    secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
+    mihomo_delay_test, mihomo_proxies, mihomo_select_proxy, ping_servers, preview_server_config,
+    read_xray_log, recover_network, restore_proxy_backup, routing_add_static, routing_add_url,
+    routing_list, routing_refresh, routing_remove, routing_set_active, secure_storage_delete,
+    secure_storage_get, secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
 };
-use vpn::{MihomoState, XrayState};
+use vpn::{MihomoState, SingBoxState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -52,8 +52,8 @@ pub fn run() {
         // `@tauri-apps/plugin-global-shortcut`, при изменении настроек
         // (см. lib/hooks/useGlobalShortcuts.ts).
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(XrayState::new())
         .manage(MihomoState::new())
+        .manage(SingBoxState::new())
         .manage(vpn::MihomoApiState::new())
         .manage(SubscriptionState::new())
         .manage(KillSwitchState::new())
@@ -189,6 +189,7 @@ pub fn run() {
             mihomo_proxies,
             mihomo_select_proxy,
             mihomo_delay_test,
+            preview_server_config,
             detect_competing_vpns,
             check_routing_conflicts,
             routing_list,

@@ -1,17 +1,17 @@
 # nemefisto
 
-> приватный VPN-клиент под Windows на двух ядрах (Xray-core и Mihomo)
+> приватный VPN-клиент под Windows на двух ядрах (sing-box и Mihomo)
 > с защитой от DPI, утечек и локального детекта.
 > ноль телеметрии · открытый код · одна кнопка.
 
-«VPN одной кнопкой»: подключение менее чем за 2 секунды, минимум
+«VPN одной кнопкой»: подключение за ~1.5 секунды, минимум
 вопросов к пользователю, максимум совместимости с современными
 протоколами обхода блокировок. Архитектура изначально готова к
 портированию на macOS, iOS и Android — UI отделён от системного
 слоя, всё Windows-специфичное вынесено в `platform/`.
 
 ![tauri](https://img.shields.io/badge/tauri-2.0-white?style=flat-square&labelColor=050505)
-![xray](https://img.shields.io/badge/xray--core-26.x-white?style=flat-square&labelColor=050505)
+![sing-box](https://img.shields.io/badge/sing--box-1.13.x-white?style=flat-square&labelColor=050505)
 ![mihomo](https://img.shields.io/badge/mihomo-1.19-white?style=flat-square&labelColor=050505)
 ![license](https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=050505)
 ![telemetry](https://img.shields.io/badge/telemetry-zero-white?style=flat-square&labelColor=050505)
@@ -21,24 +21,28 @@
 ## / 01 — что это умеет
 
 ### Подключение
-- **Подключение в один клик** с прогревом sidecar-процессов при
-  старте — первое нажатие < 500 мс.
+- **Подключение в один клик** — sing-box стартует за ~1.4с, нет
+  warmup'а REALITY-handshake'а как было с Xray в 0.1.1.
 - **Два режима**: системный прокси (HKCU registry, без админа) и
-  TUN (весь трафик через WinTUN-адаптер, нужен helper-сервис).
+  TUN (весь трафик через WinTUN-адаптер, helper SYSTEM-spawn'ит
+  движок с built-in TUN inbound).
 - **Optimistic UI**: интерфейс мгновенно реагирует на намерение,
   бэкенд догоняет в фоне.
 
-### Протоколы и транспорты
+### Протоколы и транспорты (после миграции 0.1.2)
 
-|              | Xray | Mihomo |
+|              | sing-box (default) | Mihomo |
 |---|---|---|
 | VLESS, VMess, Trojan, SS, SOCKS5 | ✓ | ✓ |
 | Hysteria2 (с obfs salamander)    | ✓ | ✓ |
 | WireGuard                        | ✓ | ✓ |
-| TUIC                             | – | ✓ |
+| TUIC                             | ✓ | ✓ |
 | AnyTLS                           | – | ✓ |
-| TCP / WS / gRPC / h2 / xhttp / httpupgrade | ✓ | ✓ |
+| TCP / WS / gRPC / h2 / httpupgrade | ✓ | ✓ |
+| Transport XHTTP                  | – (xray-only) | ✓ |
 | TLS / REALITY / Vision (XTLS)    | ✓ | ✓ |
+| Built-in TUN (gVisor stack)      | ✓ | ✓ |
+| Per-process routing (`PROCESS-NAME`) | – | ✓ |
 
 Один пользователь использует одно ядро на сессию. Выбор движка
 автоматический (заголовок `X-Nemefisto-Engine` подписки), либо
@@ -47,8 +51,10 @@
 ### Подписки
 
 - **Универсальный парсер**: base64-список ссылок, raw-список,
-  Marzban-style xray-json (UA `Happ/2.7.0`), полный Xray JSON,
-  Mihomo YAML (UA `clash-verge/v2.0.0`), mixed-формат.
+  **Marzban-style xray-json** (UA `Happ/2.7.0`) — конвертируется на
+  лету в sing-box JSON через `convert_xray_json_to_singbox`, **Remnawave
+  sing-box JSON** (passthrough), полный Xray JSON, Mihomo YAML
+  (UA `clash-verge/v2.0.0`), mixed-формат.
 - **Server-driven UX**: провайдер подписки задаёт через HTTP-заголовки
   тему, фон, движок, режим, anti-DPI, объявления, ссылку на премиум,
   правила маршрутизации. Пользователь всегда может переопределить —
@@ -60,17 +66,21 @@
   срок, имя, поддержка, премиум, объявления.
 
 ### Anti-DPI обвязка
-- TCP-фрагментация TLS ClientHello (Xray freedom-fragment outbound).
-- Шумовые UDP-пакеты (`noises`).
+- TLS-фрагментация ClientHello (sing-box `tls.fragment`).
 - Server-address-resolve через DoH (минуя системный DNS).
 - Hysteria2 obfs `salamander` — пакеты маскируются под мусор.
-- Все три механизма управляются из Settings или подписки.
+- Управление из Settings или server-driven через HTTP-заголовки
+  подписки (`fragmentation-enable`, `noises-enable` и т.д.).
+- ⚠️ **Лимиты sing-box upstream**: фрагментация — boolean флаг
+  без тонкой настройки `size`/`sleep`; UDP-noises не поддерживаются.
+  Полная anti-DPI обвязка с тонкой настройкой требовала бы возврата
+  xray-core (см. `CLAUDE.md` → Долги).
 
 ### Защита от утечек
 - **Kill switch на WFP** (Windows Filtering Platform): фильтры на уровне
   ядра, DYNAMIC session — авто-снимаются если процесс падает,
   cleanup orphan-фильтров на старте helper'а, Service Recovery
-  через SCM. **Strict mode** — даже direct-маршруты xray
+  через SCM. **Strict mode** — даже direct-маршруты VPN-движка
   блокируются (для пользователей со split-routing «всё через VPN»).
 - **DNS leak protection**: `:53` блокируется кроме нашего VPN-DNS.
 - **Leak-test**: после connect — `cdn-cgi/trace.cloudflare` +
@@ -130,13 +140,13 @@
 | фреймворк      | Tauri 2.0                                         |
 | фронтенд       | React 19 · TypeScript · Tailwind 4 · Zustand 5    |
 | бэкенд         | Rust 2021 · tokio · anyhow · thiserror             |
-| VPN-ядра       | Xray-core · Mihomo (sidecar)                       |
-| TUN            | WinTUN + tun2socks (sing-box / hev-socks5-tunnel)   |
+| VPN-ядра       | sing-box 1.13.x (default) · Mihomo (sidecar)       |
+| TUN            | WinTUN + built-in TUN inbound движка (gVisor stack)|
 | HTTP           | reqwest (rustls)                                   |
 | WFP            | windows-sys (FwpmEngineOpen / FwpmFilterAdd / DYNAMIC session) |
 | хранилище      | winreg + keyring-rs (Credential Manager)           |
 | logs           | tracing + ротация файлов                           |
-| геобазы        | sha2 (verify) + reqwest no-proxy                   |
+| геобазы        | SagerNet rule-set'ы (.srs) + Loyalsoldier .dat для legacy |
 
 ---
 
@@ -184,11 +194,11 @@ pipe `\\.\pipe\nemefisto-helper`. Удалить — `.\nemefisto-helper.exe uni
 │   ├── src/
 │   │   ├── lib.rs                точка входа Tauri 2
 │   │   ├── ipc/commands.rs       все Tauri-команды
-│   │   ├── config/               подписки, Xray/Mihomo конфиги, routing-профили, geofiles
+│   │   ├── config/               подписки, sing-box / Mihomo конфиги, routing-профили, geofiles
 │   │   ├── platform/             Windows-специфика (proxy, network, tray, wifi, ...)
-│   │   ├── vpn/                  state machine, xray, mihomo, tun-helper-coord
-│   │   └── bin/nemefisto_helper/ helper-сервис: WFP, TUN, routing, named-pipe
-│   ├── binaries/                 xray.exe, mihomo.exe, tun2socks.exe, wintun.dll
+│   │   ├── vpn/                  state machine, sing_box, mihomo
+│   │   └── bin/nemefisto_helper/ helper-сервис: WFP, SYSTEM-spawn движков, named-pipe
+│   ├── binaries/                 sing-box.exe, mihomo.exe, wintun.dll, helper.exe
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 │
@@ -236,19 +246,23 @@ pipe `\\.\pipe\nemefisto-helper`. Удалить — `.\nemefisto-helper.exe uni
 
 ## / 08 — благодарности
 
-- [Xray-core](https://github.com/XTLS/Xray-core) — низколатентное
-  обходное ядро с REALITY и Vision.
+- [sing-box](https://github.com/SagerNet/sing-box) — современное
+  универсальное ядро с быстрым стартом, gVisor TCP/IP стеком и нативным
+  TUN. Используется как основной VPN-движок с 0.1.2.
 - [Mihomo](https://github.com/MetaCubeX/mihomo) — форк Clash Meta
-  с TUIC, AnyTLS и нативной per-process маршрутизацией.
+  с AnyTLS, XHTTP-transport и нативной per-process маршрутизацией.
 - [Tauri](https://tauri.app) — кроссплатформенный фреймворк, на
   котором всё держится.
 - [WinTUN](https://www.wintun.net) — userspace TUN-драйвер от команды
   WireGuard.
+- [SagerNet/sing-geosite](https://github.com/SagerNet/sing-geosite) +
+  [SagerNet/sing-geoip](https://github.com/SagerNet/sing-geoip) — rule-set
+  базы для split-routing'а в sing-box формате.
 - [Loyalsoldier/v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat) —
-  geoip/geosite базы.
+  geoip/geosite .dat базы (legacy, для совместимости).
 
 ```
 ─────────────────────────────────────────────────
-NO-TELEMETRY · XRAY + MIHOMO · WFP · OPEN-SOURCE
+NO-TELEMETRY · SING-BOX + MIHOMO · WFP · OPEN-SOURCE
 ─────────────────────────────────────────────────
 ```
