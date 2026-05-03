@@ -102,5 +102,8 @@ jobs:
           prerelease: true
           # Это и есть основная фича 14.I — генерация подписанного latest.json.
           includeUpdaterJson: true
-          # Помещает NSIS, latest.json и .sig в release assets.
-          args: --target x86_64-pc-windows-msvc
+          # Не передаём --target: prepare-bundle.mjs копирует helper.exe в
+          # target/release/ (без target-suffix), а тауриный bundler с
+          # --target ищет в target/<triplet>/release/. Убрав флаг,
+          # выравниваем CI и локальную сборку (юзер так же делает
+          # `npm run tauri:bundle` без target).
