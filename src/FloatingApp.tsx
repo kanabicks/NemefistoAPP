@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { getAllWindows } from "@tauri-apps/api/window";
 import { useVpnStore } from "./stores/vpnStore";
@@ -22,6 +23,7 @@ import "./FloatingApp.css";
  * за корневой div через `data-tauri-drag-region`.
  */
 export function FloatingApp() {
+  const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const selectedIndex = useVpnStore((s) => s.selectedIndex);
   const refresh = useVpnStore((s) => s.refresh);
@@ -165,14 +167,14 @@ export function FloatingApp() {
         onClick={onDotClick}
         title={
           isRunning
-            ? "vpn включён — клик чтобы отключить"
+            ? t("floating.vpnOn")
             : selectedIndex !== null
-            ? "vpn выключен — клик чтобы подключить"
-            : "выбери сервер в главном окне"
+            ? t("floating.vpnOff")
+            : t("floating.pickServer")
         }
       />
       <div className="floating-name" data-tauri-drag-region>
-        {selectedName ?? "нет сервера"}
+        {selectedName ?? t("floating.noServer")}
       </div>
       <div className="floating-bw" data-tauri-drag-region>
         <span>↑ {formatRate(bw.up)}</span>

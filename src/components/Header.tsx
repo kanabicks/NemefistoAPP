@@ -1,15 +1,13 @@
+import { useTranslation } from "react-i18next";
 import { useUtcClock } from "../lib/hooks/useUtcClock";
 import { openDashboard, useHasDashboardUrl } from "../lib/openExternal";
 import { SettingsIcon, UserIcon } from "./icons";
 
 /**
  * Шапка приложения: лого + UTC-часы + кнопки личного кабинета и настроек.
- *
- * Кнопка личного кабинета показывается ТОЛЬКО если подписка прислала
- * `profile-web-page-url` — без хедера кнопки нет (захардкоженный
- * fallback на нашу страницу убран).
  */
 export function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { t } = useTranslation();
   const utcTime = useUtcClock();
   const hasDashboardUrl = useHasDashboardUrl();
 
@@ -29,8 +27,8 @@ export function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
             type="button"
             className="icon-btn"
             onClick={openDashboard}
-            aria-label="личный кабинет"
-            title="личный кабинет"
+            aria-label={t("header.dashboard")}
+            title={t("header.dashboard")}
           >
             <UserIcon />
           </button>
@@ -39,8 +37,8 @@ export function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
           type="button"
           className="icon-btn"
           onClick={onOpenSettings}
-          aria-label="настройки"
-          title="настройки"
+          aria-label={t("header.settings")}
+          title={t("header.settings")}
         >
           <SettingsIcon />
         </button>

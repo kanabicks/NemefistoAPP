@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUpdateStore } from "../stores/updateStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { downloadAndInstall } from "../lib/updater";
@@ -14,6 +15,7 @@ import { showToast } from "../stores/toastStore";
  * установки приложение перезапускается автоматически.
  */
 export function UpdateModal() {
+  const { t } = useTranslation();
   const state = useUpdateStore((s) => s.state);
   const setState = useUpdateStore((s) => s.setState);
   const dismissedSet = useSettingsStore((s) => s.set);
@@ -51,7 +53,7 @@ export function UpdateModal() {
     } catch (e) {
       showToast({
         kind: "error",
-        title: "обновление не удалось",
+        title: t("modal.update.updateFailedTitle"),
         message: String(e),
       });
       setState({ kind: "idle" });
@@ -62,10 +64,10 @@ export function UpdateModal() {
     <div className="recovery-overlay" role="dialog" aria-modal="true">
       <div className="recovery-dialog" style={{ maxWidth: 460 }}>
         <div className="recovery-title">
-          доступна версия {update.version}
+          {t("modal.update.availableTitle", { version: update.version })}
         </div>
         <div className="recovery-text">
-          текущая версия:{" "}
+          {t("modal.update.currentVersion")}{" "}
           <span style={{ color: "var(--fg)" }}>{update.currentVersion}</span>
         </div>
         {update.notes ? (
@@ -93,7 +95,9 @@ export function UpdateModal() {
               className="recovery-text"
               style={{ marginBottom: 6, fontSize: 12 }}
             >
-              скачиваю обновление… {Math.round(progress * 100)}%
+              {t("modal.update.downloading", {
+                percent: Math.round(progress * 100),
+              })}
             </div>
             <div
               style={{
@@ -121,7 +125,7 @@ export function UpdateModal() {
             onClick={onDismiss}
             disabled={isDownloading}
           >
-            позже
+            {t("modal.update.later")}
           </button>
           <button
             type="button"
@@ -129,7 +133,7 @@ export function UpdateModal() {
             onClick={onInstall}
             disabled={isDownloading}
           >
-            {isDownloading ? "…" : "обновить и перезапустить"}
+            {isDownloading ? "…" : t("modal.update.installAndRestart")}
           </button>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -49,6 +50,7 @@ import { openDashboard, useHasDashboardUrl } from "./lib/openExternal";
  * нужные кусочки store'ов.
  */
 function App() {
+  const { t } = useTranslation();
   // VPN status / mode
   const status = useVpnStore((s) => s.status);
   const errorMessage = useVpnStore((s) => s.errorMessage);
@@ -154,8 +156,8 @@ function App() {
           import("./stores/toastStore").then(({ showToast }) => {
             showToast({
               kind: "warning",
-              title: "обнаружен прошлый сбой",
-              message: `найдено ${count} crash-dump'ов за неделю. в Settings → системное → диагностика можно собрать zip для саппорта`,
+              title: t("toast.crashDetected.title"),
+              message: t("toast.crashDetected.message", { count }),
               durationMs: 12000,
             });
           });
@@ -417,7 +419,7 @@ function App() {
               onClick={openDashboard}
               className="dashboard-link"
             >
-              <span>личный кабинет</span>
+              <span>{t("header.dashboard")}</span>
               <span className="dashboard-link-arrow">→</span>
             </button>
           )}

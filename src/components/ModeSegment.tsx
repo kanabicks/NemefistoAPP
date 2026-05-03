@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { VpnMode } from "../stores/vpnStore";
 
 /**
@@ -13,6 +14,7 @@ export function ModeSegment({
   onChange: (m: VpnMode) => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mode-seg" style={{ marginTop: 12 }}>
       {(["proxy", "tun"] as VpnMode[]).map((m) => (
@@ -23,7 +25,7 @@ export function ModeSegment({
           onClick={() => onChange(m)}
           className={mode === m ? "is-active" : ""}
         >
-          {m === "proxy" ? "системный прокси" : "tun"}
+          {m === "proxy" ? t("modeSegment.proxy") : t("modeSegment.tun")}
         </button>
       ))}
     </div>

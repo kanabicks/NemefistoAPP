@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useToastStore } from "../stores/toastStore";
 
 /**
@@ -7,6 +8,7 @@ import { useToastStore } from "../stores/toastStore";
  * `durationMs` или по клику.
  */
 export function Toaster() {
+  const { t } = useTranslation();
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
 
@@ -14,17 +16,17 @@ export function Toaster() {
 
   return (
     <div className="toaster">
-      {toasts.map((t) => (
+      {toasts.map((toast) => (
         <button
-          key={t.id}
+          key={toast.id}
           type="button"
-          className={`toast toast-${t.kind}`}
-          onClick={() => dismiss(t.id)}
-          title="нажми чтобы скрыть"
+          className={`toast toast-${toast.kind}`}
+          onClick={() => dismiss(toast.id)}
+          title={t("toaster.dismissTitle")}
         >
-          {t.title && <div className="toast-title">{t.title}</div>}
+          {toast.title && <div className="toast-title">{toast.title}</div>}
           <div className="toast-message">
-            {t.message.split("\n").map((line, i) => (
+            {toast.message.split("\n").map((line, i) => (
               <div key={i}>{line}</div>
             ))}
           </div>

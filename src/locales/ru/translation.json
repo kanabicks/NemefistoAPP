@@ -1,0 +1,821 @@
+{
+  "common": {
+    "ok": "ок",
+    "cancel": "отмена",
+    "apply": "применить",
+    "save": "сохранить",
+    "close": "закрыть",
+    "back": "назад",
+    "delete": "удалить",
+    "remove": "убрать",
+    "add": "добавить",
+    "loading": "загрузка…",
+    "yes": "да",
+    "no": "нет",
+    "later": "позже",
+    "now": "сейчас",
+    "copy": "копировать",
+    "copied": "скопировано",
+    "search": "поиск",
+    "filter": "фильтр",
+    "all": "все",
+    "none": "нет",
+    "auto": "авто",
+    "off": "выкл",
+    "on": "вкл",
+    "rename": "переименовать",
+    "refresh": "обновить",
+    "open": "открыть",
+    "select": "выбрать",
+    "warning": "внимание",
+    "error": "ошибка",
+    "success": "готово",
+    "version": "версия",
+    "language": "язык"
+  },
+  "header": {
+    "dashboard": "личный кабинет",
+    "settings": "настройки"
+  },
+  "footer": {
+    "left": "NO-LOGS · XRAY · VLESS · REALITY"
+  },
+  "welcome": {
+    "tag": "подключение за минуту",
+    "title": "добавь подписку",
+    "desc": {
+      "before": "вставь ссылку на свою подписку (URL вида",
+      "after": "), приложение скачает список серверов и сразу замерит до них пинги."
+    },
+    "load": "загрузить"
+  },
+  "power": {
+    "connect": "подключить",
+    "disconnect": "отключить",
+    "modeLabel": "режим — {{mode}}",
+    "lanCredsLabel": "логин/пароль для LAN",
+    "lanCredsCopyTitle": "скопировать user:pass"
+  },
+  "status": {
+    "pill": {
+      "stopped": "STANDBY",
+      "starting": "ПОДКЛЮЧЕНИЕ",
+      "running": "TUNNEL UP",
+      "stopping": "ОТКЛЮЧЕНИЕ",
+      "error": "ОШИБКА"
+    },
+    "label": {
+      "stopped": "не подключён",
+      "starting": "подключаемся…",
+      "running": "защищён",
+      "stopping": "отключаемся…",
+      "error": "ошибка"
+    }
+  },
+  "mode": {
+    "proxy": "системный прокси",
+    "tun": "tun (весь трафик)"
+  },
+  "modeSegment": {
+    "proxy": "системный прокси",
+    "tun": "tun"
+  },
+  "toaster": {
+    "dismissTitle": "нажми чтобы скрыть"
+  },
+  "leakTest": {
+    "title": "проверка утечек",
+    "failed": "не удалось проверить: {{error}}",
+    "noIp": "не удалось получить публичный ip — оба сервиса (cloudflare, ipwho.is) недоступны",
+    "yourIp": "твой ip сейчас",
+    "dnsLeakTitle": "dns leak",
+    "dnsLeakMessage": "резолвер ({{resolver}}) совпадает с публичным ip — днс не идёт через vpn",
+    "ipv6LeakTitle": "ipv6 leak",
+    "ipv6LeakMessage": "v6-адрес ({{addr}}) виден напрямую — туннель v6 не покрывает.\nвключите kill switch или отключите ipv6 в свойствах адаптера"
+  },
+  "floating": {
+    "vpnOn": "vpn включён — клик чтобы отключить",
+    "vpnOff": "vpn выключен — клик чтобы подключить",
+    "pickServer": "выбери сервер в главном окне",
+    "noServer": "нет сервера"
+  },
+  "bandwidth": {
+    "titleIface": "интерфейс: {{iface}}",
+    "titleNoIface": "интерфейс не определён"
+  },
+  "announce": {
+    "openLink": "открыть ссылку"
+  },
+  "subMeta": {
+    "units": {
+      "B": "Б",
+      "KB": "КБ",
+      "MB": "МБ",
+      "GB": "ГБ",
+      "TB": "ТБ"
+    },
+    "premium": "премиум",
+    "premiumTitle": "перейти на премиум",
+    "trafficUsedOf": "использовано {{used}} из {{total}}",
+    "trafficUsedUnlim": "использовано {{used}} · безлимит",
+    "unlimited": "безлимит",
+    "until": "до {{date}}",
+    "expiresToday": "истекает сегодня",
+    "expiredAgo_one": "истекла {{count}} день назад",
+    "expiredAgo_few": "истекла {{count}} дня назад",
+    "expiredAgo_many": "истекла {{count}} дней назад",
+    "expiredAgo_other": "истекла {{count}} дн. назад",
+    "barAria": "использовано {{percent}}%",
+    "updated": "обновлено {{when}}",
+    "neverUpdated": "не обновлялась",
+    "refreshTitle": "обновить подписку",
+    "justNow": "только что",
+    "longAgo": "давно",
+    "minutesAgo_one": "{{count}} мин назад",
+    "minutesAgo_few": "{{count}} мин назад",
+    "minutesAgo_many": "{{count}} мин назад",
+    "minutesAgo_other": "{{count}} мин назад",
+    "hoursAgo_one": "{{count}} ч назад",
+    "hoursAgo_few": "{{count}} ч назад",
+    "hoursAgo_many": "{{count}} ч назад",
+    "hoursAgo_other": "{{count}} ч назад",
+    "daysAgo_one": "{{count}} дн назад",
+    "daysAgo_few": "{{count}} дн назад",
+    "daysAgo_many": "{{count}} дн назад",
+    "daysAgo_other": "{{count}} дн назад"
+  },
+  "serverSelector": {
+    "pickServer": "выбери сервер",
+    "refreshPings": "обновить пинги",
+    "searchPlaceholder": "поиск по имени",
+    "viewConfig": "посмотреть конфиг",
+    "engineBadgeMihomo": "поддерживается только Mihomo",
+    "engineBadgeSingbox": "только sing-box (Mihomo-несовместимый формат)"
+  },
+  "toast": {
+    "crashDetected": {
+      "title": "обнаружен прошлый сбой",
+      "message": "найдено {{count}} crash-dump'ов за неделю. в Settings → системное → диагностика можно собрать zip для саппорта"
+    },
+    "recover": {
+      "successTitle": "сеть восстановлена",
+      "partialTitle": "частично восстановлено",
+      "cleaned": "очищено: {{items}}",
+      "nothingToClean": "ничего чистить не пришлось",
+      "okPrefix": "ок: {{items}}",
+      "errorsPrefix": "ошибки: {{errors}}",
+      "parts": {
+        "wfp": "wfp-фильтры",
+        "tunRoutes": "tun + маршруты",
+        "proxy": "системный прокси"
+      }
+    },
+    "diagnostics": {
+      "savedTitle": "диагностика сохранена",
+      "savedMessage": "файл: {{path}}\nоткроем папку?",
+      "failedTitle": "не получилось сохранить"
+    },
+    "backup": {
+      "exportedTitle": "выгружено",
+      "exportFailed": "не удалось выгрузить",
+      "readFailed": "не удалось прочитать backup"
+    },
+    "update": {
+      "checkTitle": "проверка обновлений",
+      "upToDate": "у вас уже последняя версия",
+      "checkFailed": "не удалось проверить"
+    }
+  },
+  "backup": {
+    "parseError": "не удалось распарсить JSON: {{error}}",
+    "expectedJson": "ожидался JSON-объект",
+    "unsupportedSchema": "неподдерживаемый schema_version: {{version}}",
+    "fieldLabels": {
+      "subscriptionUrl": "URL подписки",
+      "appRules": "правила приложений"
+    },
+    "values": {
+      "on": "вкл",
+      "off": "выкл",
+      "empty": "пусто",
+      "dash": "—",
+      "itemsCount_one": "{{count}} шт.",
+      "itemsCount_few": "{{count}} шт.",
+      "itemsCount_many": "{{count}} шт.",
+      "itemsCount_other": "{{count}} шт."
+    }
+  },
+  "deepLink": {
+    "exported": {
+      "title": "настройки выгружены",
+      "failedTitle": "не удалось выгрузить"
+    },
+    "importFromUrl": {
+      "title": "import-from-url",
+      "expectedHttpUrl": "ожидался http(s):// URL"
+    },
+    "importSettings": {
+      "title": "import-settings",
+      "notBase64OrJson": "не base64 и не JSON"
+    },
+    "routing": {
+      "title": "routing deep-link",
+      "autoroutingTitle": "autorouting",
+      "emptyPayload": "пустой payload",
+      "expectedUrl": "ожидался URL, получено:\n{{raw}}",
+      "profileTitle": "routing-профиль",
+      "activated": "добавлен и активирован",
+      "addedNotActive": "добавлен (активируйте в Settings)"
+    }
+  },
+  "vpnStore": {
+    "switching": {
+      "title": "переключение",
+      "message": "переключаемся на новый сервер…"
+    },
+    "vpnConflict": {
+      "title": "конфликт VPN",
+      "message": "Активный VPN на интерфейсе: {{list}}.\nОтключите его перед подключением."
+    }
+  },
+  "settings": {
+    "title": "настройки",
+    "fromSubscription": "из подписки",
+    "categories": {
+      "subscription": {
+        "title": "Подписка",
+        "desc": "URL, обновление, user agent, HWID"
+      },
+      "connection": {
+        "title": "Подключение",
+        "desc": "поведение при запуске, сортировка серверов"
+      },
+      "engine": {
+        "title": "Движок",
+        "desc": "sing-box / Mihomo, правила приложений"
+      },
+      "tunnel": {
+        "title": "Туннель",
+        "desc": "LAN, маскировка TUN-имени"
+      },
+      "security": {
+        "title": "Anti-DPI и защита",
+        "desc": "фрагментация, kill switch, leak protection"
+      },
+      "routing": {
+        "title": "Маршрутизация",
+        "desc": "geosite/geoip профили, авто-группы"
+      },
+      "appearance": {
+        "title": "Интерфейс",
+        "desc": "пресет, тема, фон, плавающее окно"
+      },
+      "system": {
+        "title": "Система и о программе",
+        "desc": "автозапуск, обновления, история, логи, сброс"
+      }
+    },
+    "comingSoon": {
+      "badge": "скоро",
+      "mergeSubs": {
+        "title": "слияние нескольких подписок",
+        "desc": "добавить 2-5 подписок параллельно, серверы из всех в одном списке с тегом источника"
+      },
+      "autoFailover": {
+        "title": "auto-failover",
+        "desc": "при пинге выбранного сервера >3000мс автоматически переключаться на следующий по списку"
+      },
+      "windowsHello": {
+        "title": "windows hello при запуске",
+        "desc": "требовать аутентификацию (face/pin/fingerprint) при старте приложения. полезно для общих компьютеров"
+      },
+      "wfpPerApp": {
+        "title": "WFP per-app routing",
+        "desc": "per-process правила в обоих движках через kernel-driver Windows Filtering Platform. альтернатива Mihomo PROCESS-NAME"
+      },
+      "autoUpdate": {
+        "title": "авто-обновление приложения",
+        "desc": "клиент сам проверит наличие новой версии, скачает подписанный установщик и обновится — без захода на сайт"
+      },
+      "history": {
+        "title": "история сессий",
+        "desc": "локальный лог connect/disconnect: время, сервер, режим, длительность, причина отключения"
+      },
+      "speedTest": {
+        "title": "speed-test через VPN",
+        "desc": "замер скорости через cloudflare CDN. опционально — авто-замер раз в неделю на всех серверах"
+      }
+    },
+    "subscription": {
+      "title": "подписка",
+      "dashboard": "личный кабинет →"
+    },
+    "autoRefresh": {
+      "title": "авто-обновление",
+      "label": "обновлять подписку",
+      "hint": "в фоне через заданный интервал",
+      "intervalHours": "интервал (часы)"
+    },
+    "dataSending": {
+      "title": "отправка данных",
+      "sendHwid": {
+        "label": "передавать HWID",
+        "hint": "отправляется в заголовке x-hwid · сервер сам регистрирует устройство в подписке"
+      },
+      "userAgent": {
+        "label": "user agent",
+        "autoBadge": "авто по движку",
+        "hint": "автоматически: Happ/2.7.0 для sing-box (Marzban-style xray-json с готовым routing — мы конвертируем в sing-box JSON), clash-verge для Mihomo (clash YAML напрямую). если правишь вручную — фиксируется как есть, на оба движка."
+      }
+    },
+    "hwid": {
+      "title": "hwid устройства",
+      "hint": "machineguid windows · передаётся автоматически в каждом запросе подписки",
+      "override": "override hwid",
+      "overrideActive": "активен override — приложение шлёт «{{value}}…» вместо системного hwid",
+      "resetOverride": "сбросить",
+      "placeholder": "оставь пустым чтобы использовать системный hwid"
+    },
+    "connection": {
+      "onStart": {
+        "title": "при запуске"
+      },
+      "refreshOnOpen": {
+        "label": "обновлять подписку",
+        "hint": "подгружать список серверов при каждом старте"
+      },
+      "pingOnOpen": {
+        "label": "пинговать серверы",
+        "hint": "замерять задержку до всех серверов"
+      },
+      "connectOnOpen": {
+        "label": "авто-подключение",
+        "hint": "подключаться к выбранному серверу при запуске"
+      },
+      "sort": {
+        "title": "сортировка серверов",
+        "none": "без сортировки",
+        "ping": "по пингу (от быстрых)",
+        "name": "по алфавиту"
+      }
+    },
+    "engine": {
+      "title": "vpn-ядро",
+      "label": "движок",
+      "hint": "sing-box — современный движок с быстрым стартом и встроенным TUN. оптимально для vless/vmess/trojan/ss/hy2/tuic/wireguard. mihomo — нужен для anytls / mieru, для XHTTP-серверов и для per-process routing (правила приложений)"
+    },
+    "appRules": {
+      "title": "правила приложений",
+      "singboxWarning": "активен sing-box — правила приложений работают только с движком mihomo (через нативный PROCESS-NAME matcher). переключи движок в Settings → движок чтобы правила заработали.",
+      "tunWarning": "в TUN-режиме правила приложений работают только когда подписка отдала полный mihomo-config (тип сервера mihomo-profile) — там Mihomo владеет TUN-адаптером напрямую и видит реальные процессы. Для URI-серверов (vless/vmess/trojan/hy2/...) в TUN правила не применяются — переключи на proxy-режим.",
+      "intro": "правила вида «<exe> → action» применяются Mihomo к процессам по имени исполняемого файла. например, можно пустить telegram через VPN, а steam — направить direct. имя exe берётся из диспетчера задач (телеграм.exe, steam.exe). работают только в proxy-режиме",
+      "actionTitles": {
+        "proxy": "через VPN",
+        "direct": "напрямую, мимо VPN",
+        "block": "блокируется"
+      },
+      "deleteTitle": "удалить правило",
+      "commentPlaceholder": "заметка (опционально)"
+    },
+    "tunnel": {
+      "network": {
+        "title": "сеть"
+      },
+      "allowLan": {
+        "label": "подключения из LAN",
+        "hint": "inbound слушает 0.0.0.0 — другие устройства в сети могут использовать этот прокси (логин/пароль показываются после connect)"
+      },
+      "tunMasking": {
+        "label": "маскировка TUN-имени",
+        "hint": "имя адаптера выглядит как обычный сетевой интерфейс (wlan99 / Local Area Connection / Ethernet). помогает от приложений-шпионов которые детектят VPN по имени адаптера через GetAdaptersAddresses"
+      },
+      "tunOnlyStrict": {
+        "label": "только TUN-режим (strict)",
+        "hint": "скрыть переключатель proxy/tun на главном экране и работать только через TUN-адаптер. без локального SOCKS5-сокета на loopback — для параноиков, не желающих оставлять никакой VPN-поверхности на 127.0.0.1"
+      }
+    },
+    "antiDpi": {
+      "title": "anti-dpi",
+      "mihomoWarning": "активен mihomo — фрагментация и шумы не применяются (anti-DPI обвязка реализована только для sing-box). doh-резолв продолжает работать через dns mihomo.",
+      "singboxInfo": "в sing-box фрагментация работает как простой ON/OFF — тонкие параметры (size/sleep/interval) sing-box не принимает. шумы (noises) в upstream sing-box не поддерживаются и игнорируются. для тонкой настройки используйте Mihomo (но anti-DPI там пока не реализовано).",
+      "fragmentation": {
+        "label": "фрагментация tcp",
+        "hint": "режет tls clienthello на куски — обходит большинство dpi",
+        "singboxOnly": " (только sing-box)",
+        "packetsLabel": "какие пакеты",
+        "packetsAll": "все",
+        "lengthLabel": "длина (байт)",
+        "intervalLabel": "интервал (мс)"
+      },
+      "noises": {
+        "label": "шумовые пакеты",
+        "hint": "фейковые udp-пакеты для запутывания dpi"
+      },
+      "dohResolve": {
+        "label": "doh-резолв сервера",
+        "hint": "адрес vpn-сервера резолвится через doh, минуя системный dns (помогает при dns-блокировках)",
+        "endpointLabel": "doh endpoint",
+        "bootstrapLabel": "bootstrap ip"
+      }
+    },
+    "killSwitch": {
+      "title": "kill switch",
+      "main": {
+        "label": "блокировать сеть при падении vpn",
+        "hint": "защита от утечек на уровне ядра windows (wfp). работает даже если vpn-движок крашнется. защита от orphan-фильтров тройная: dynamic-session + heartbeat-watchdog (60с) + cleanup при старте helper-сервиса"
+      },
+      "strict": {
+        "label": "строгий режим",
+        "hint": "даже сам sing-box/mihomo может ходить только на vpn-сервер. direct-маршруты (например geosite:ru → DIRECT из вашего конфига) блокируются. для тех кто хочет гарантированно «всё через vpn». ⚠️ ru-сайты в split-routing перестанут открываться. требует включённого kill-switch"
+      },
+      "dnsLeak": {
+        "label": "блокировать прямые dns-запросы",
+        "hint": "все :53/udp+tcp кроме vpn-dns заблокированы. защищает от dns-leak'а. ⚠️ в proxy-режиме может ломать приложения которые используют системный dns мимо прокси (некоторые игры, мессенджеры). лучше использовать в tun-режиме"
+      },
+      "recover": {
+        "label": "восстановить сеть",
+        "hint": "если интернет «полу-сломан» после краша / отключения — одной кнопкой убирает wfp-фильтры, orphan tun-адаптеры, half-default routes и системный прокси. безопасно жать в любой момент когда vpn не активен",
+        "button": "восстановить"
+      }
+    },
+    "diagnostics": {
+      "label": "выгрузить диагностику",
+      "hint": "сохранит zip с логами sing-box/mihomo, версией приложения, текущим состоянием и списком запущенных vpn-процессов в папку Documents. без телеметрии — только локально, ты сам решаешь кому отправить файл если нужна помощь",
+      "button": "выгрузить"
+    },
+    "leakTest": {
+      "title": "проверка утечек",
+      "description": "делает два запроса параллельно: cloudflare cdn-trace для публичного ip + страны (с fallback на ipwho.is для города) и cloudflare doh whoami.cloudflare для ip dns-резолвера. если ip-резолвера совпадает с твоим публичным — значит dns-запросы видны как твои собственные (leak).",
+      "auto": {
+        "label": "авто-проверка после подключения",
+        "hint": "через ~1.5 сек после connect показать тост с реальным ip"
+      },
+      "run": {
+        "label": "проверить сейчас",
+        "hint": "запустить тест вручную — результат в правом нижнем углу",
+        "button": "запустить"
+      }
+    },
+    "routing": {
+      "intro": "routing-профили задают какие домены/IP идут через VPN, какие напрямую, какие блокируются. правила применяются к sing-box и Mihomo при connect. для xray-json / sing-box-json конфигов из подписки (с собственным routing) — НЕ применяются (приоритет у подписки)",
+      "autoTemplate": {
+        "title": "авто-шаблон",
+        "label": "«минимальные правила РФ» если профиль не выбран",
+        "hint": "когда нет активного routing-профиля — применяется встроенный шаблон: geosite:ru + geoip:ru + LAN → DIRECT, реклама (geosite:category-ads-all) → BLOCK, остальное → PROXY. полезно из коробки без импорта внешних правил"
+      }
+    },
+    "appearance": {
+      "preset": {
+        "title": "пресет",
+        "label": "готовый стиль",
+        "hint": "уникальная палитра, фон и стиль кнопки разом",
+        "options": {
+          "none": "без пресета"
+        }
+      },
+      "themeStyle": {
+        "title": "тема и стиль",
+        "presetHint": "управляется пресетом"
+      },
+      "theme": {
+        "label": "тема",
+        "hint": "палитра приложения и кристалла",
+        "options": {
+          "dark": "тёмная",
+          "light": "светлая"
+        }
+      },
+      "background": {
+        "label": "фон",
+        "hint": "3d-сцена за интерфейсом",
+        "options": {
+          "crystal": "кристалл",
+          "tunnel": "тоннель",
+          "globe": "глобус",
+          "particles": "частицы"
+        }
+      },
+      "buttonStyle": {
+        "label": "стиль кнопки",
+        "hint": "оформление главной кнопки connect",
+        "options": {
+          "glass": "стекло",
+          "flat": "плоский",
+          "neon": "неон",
+          "metallic": "металл"
+        }
+      },
+      "floating": {
+        "title": "плавающее окно",
+        "label": "мини-окно поверх всего",
+        "hint": "статус vpn и текущая скорость ↑/↓ в маленьком окошке. клик по точке — toggle, двойной клик по окну — открыть главное"
+      }
+    },
+    "system": {
+      "autostart": {
+        "title": "автозапуск",
+        "label": "запуск с системой",
+        "hint": "приложение само запустится при входе в windows (через task scheduler, без UAC)"
+      }
+    },
+    "shortcuts": {
+      "title": "горячие клавиши",
+      "intro": "работают глобально, даже когда окно nemefisto скрыто. кликни поле, нажми нужную комбинацию (минимум один модификатор: ctrl/alt/shift/win). esc — отмена, backspace — очистить.",
+      "toggleVpn": {
+        "label": "включить / выключить vpn",
+        "hint": "как нажатие на главную кнопку — connect или disconnect"
+      },
+      "showHide": {
+        "label": "показать / скрыть окно",
+        "hint": "как клик по иконке в системном трее"
+      },
+      "switchMode": {
+        "label": "переключить режим",
+        "hint": "proxy ↔ tun. срабатывает только когда vpn остановлен"
+      },
+      "pressCombo": "нажми комбинацию…",
+      "notSet": "не задано",
+      "clear": "очистить"
+    },
+    "trustedWifi": {
+      "title": "доверенные wi-fi",
+      "intro": "в доверенной сети vpn автоматически отключается. при возврате в обычную — может включиться обратно (если включена опция ниже). работает только с wi-fi (по ssid из netsh), ethernet/мобильный интернет считаются обычной сетью.",
+      "currentNetwork": "текущая сеть:",
+      "addThis": "+ добавить",
+      "inList": "в списке",
+      "current": "текущая",
+      "manualPlaceholder": "ввести имя сети вручную",
+      "action": {
+        "label": "при подключении к доверенной",
+        "hint": "что делать когда мы попали в одну из сетей выше",
+        "ignore": "ничего",
+        "disconnect": "отключить vpn"
+      },
+      "autoLeave": {
+        "label": "авто-включение при выходе",
+        "hint": "когда уходим из доверенной сети — переподключиться, если vpn отключали именно мы по этому правилу"
+      }
+    },
+    "backup": {
+      "title": "backup настроек",
+      "intro": "выгружает все настройки + URL подписки в JSON-файл (HWID и прочие машинно-зависимые данные не попадают). при импорте сначала покажется превью изменений.",
+      "export": "выгрузить в файл",
+      "import": "загрузить из файла"
+    },
+    "logs": {
+      "title": "логи vpn-движка",
+      "show": "показать логи",
+      "empty": "(лог пустой)"
+    },
+    "urlSchemes": {
+      "title": "url-схемы",
+      "intro": "приложение реагирует на ссылки с префиксом nemefisto://. бот может слать такие ссылки чтобы автоматически добавить подписку или переключить туннель.",
+      "add": "добавить подписку (URL должен быть encoded)",
+      "connect": "подключить выбранный сервер",
+      "disconnect": "остановить туннель",
+      "toggle": "переключить состояние",
+      "export": "выгрузить настройки в Documents",
+      "importFromUrl": "скачать и предпросмотреть backup"
+    },
+    "updates": {
+      "title": "обновления",
+      "auto": {
+        "label": "авто-проверка",
+        "hint": "раз в 6 часов спрашивает GitHub. найдено — модалка предложит обновить"
+      },
+      "checking": "проверяю…",
+      "checkNow": "проверить сейчас"
+    },
+    "about": {
+      "title": "о программе",
+      "version": "версия",
+      "dashboard": "личный кабинет",
+      "link": "ссылка",
+      "support": "поддержка",
+      "privacy": "приватность",
+      "license": "лицензия",
+      "privacyNote": "nemefisto не собирает телеметрию, не отправляет crash-репорты «домой» и не имеет remote-control механизмов. все логи — локально на этом компьютере. подробнее в PRIVACY.md."
+    },
+    "reset": {
+      "title": "сброс",
+      "resetSettings": "сбросить настройки",
+      "deleteAll": "удалить всё",
+      "confirmSettings": "настройки вернутся к дефолтным (тема, anti-DPI, движок, правила приложений). подписка и hwid останутся. продолжить?",
+      "confirmSettingsBtn": "да, сбросить",
+      "confirmAll": "это удалит абсолютно всё: подписку, hwid-override, все настройки, dismissed-объявления. отключит туннель и перезагрузит приложение",
+      "confirmAllBtn": "да, удалить всё"
+    },
+    "language": {
+      "title": "язык",
+      "label": "язык интерфейса",
+      "hint": "auto — определяется по системному языку",
+      "auto": "авто (системный)"
+    }
+  },
+  "modal": {
+    "crashRecovery": {
+      "title": "обнаружены остатки прошлой сессии",
+      "intro": "предыдущий запуск не завершился чисто (краш или принудительная остановка). нашли:",
+      "explainBase": "«починить всё» — снимет любые наши wfp-фильтры, удалит orphan tun-адаптеры и принудительно очистит системный прокси.",
+      "explainRestoreProxy": "«восстановить прокси» — откатит реестр на оригинальные значения которые были до подключения.",
+      "leaveAsIs": "оставить как есть",
+      "restoreProxy": "восстановить прокси",
+      "fixAll": "починить всё",
+      "findings": {
+        "proxy": "системный прокси указывает на нас",
+        "backup": "сохранён backup оригинальных настроек прокси",
+        "tun": "tun-адаптер `nemefisto-*` в системе",
+        "wfp": "wfp-фильтры kill switch остались от прошлой сессии"
+      }
+    },
+    "backup": {
+      "title": "импорт настроек",
+      "createdAtPrefix": "backup создан ",
+      "createdAtMiddle": ", версия приложения {{version}}.",
+      "timeNotSet": "(время не указано)",
+      "noChanges": "ничего не изменится — все импортируемые значения уже совпадают с текущими.",
+      "changesPrefixOne": "изменится <1>{{count}}</1> настройка:",
+      "changesPrefixFew": "изменится <1>{{count}}</1> настройки:",
+      "changesPrefixMany": "изменится <1>{{count}}</1> настроек:",
+      "appliedTitle": "настройки применены",
+      "appliedMessage_one": "{{count}} изменение",
+      "appliedMessage_few": "{{count}} изменения",
+      "appliedMessage_many": "{{count}} изменений",
+      "appliedMessage_other": "{{count}} изменений",
+      "subscriptionUpdatedSuffix": "\nURL подписки обновлён — нажмите ↻ чтобы перезагрузить серверы",
+      "applyFailedTitle": "не удалось применить"
+    },
+    "update": {
+      "availableTitle": "доступна версия {{version}}",
+      "currentVersion": "текущая версия:",
+      "downloading": "скачиваю обновление… {{percent}}%",
+      "later": "позже",
+      "installAndRestart": "обновить и перезапустить",
+      "updateFailedTitle": "обновление не удалось"
+    },
+    "serverPreview": {
+      "title": "конфиг сервера",
+      "closeAria": "закрыть",
+      "tabGenerated": "sing-box (generated)",
+      "tabRaw": "raw (из подписки)",
+      "errorPrefix": "ошибка: {{message}}",
+      "loading": "загрузка…",
+      "copy": "скопировать",
+      "copied": "✓ скопировано"
+    }
+  },
+  "onboarding": {
+    "skip": "пропустить",
+    "back": "назад",
+    "next": "далее",
+    "done": "готово",
+    "step1": {
+      "title": "добро пожаловать в nemefisto",
+      "body": "VPN-клиент на двух ядрах (xray + mihomo) с защитой от DPI, утечек и локального детекта. весь код открытый, никакой телеметрии.",
+      "footnote": "краткий тур из 3 шагов — займёт минуту."
+    },
+    "step2": {
+      "title": "1 · добавь подписку",
+      "bodyBefore": "получи URL подписки у своего VPN-провайдера и вставь в поле на главном экране. формат: ",
+      "footnote": "поддерживаются Marzban, 3x-ui, sing-box, base64-списки, Mihomo YAML — всё что отдают современные панели."
+    },
+    "step3": {
+      "title": "2 · выбери сервер и подключайся",
+      "body": "приложение скачает список серверов и сразу замерит до них пинги. тапни выпадающий список под кнопкой питания и выбери любой — рядом с именем будет latency.",
+      "footnote": "большая круглая кнопка — connect / disconnect. подключение обычно занимает 1-2 секунды."
+    },
+    "step4": {
+      "title": "3 · готово",
+      "body": "настройки в правом верхнем углу: kill switch, anti-DPI, темы оформления, маршрутизация по странам, доверенные wi-fi сети.",
+      "footnoteBefore": "горячие клавиши: ",
+      "footnoteToggleVpn": " — toggle VPN, ",
+      "footnoteShowHide": " — показать/скрыть окно."
+    }
+  },
+  "routingProfiles": {
+    "title": "профили маршрутизации",
+    "intro": "импорт правил split-routing. формат — Marzban-style JSON (DirectSites/DirectIp/ProxySites/BlockSites + Geoipurl/Geositeurl). один профиль активен — его правила применяются к Xray и Mihomo при connect. autorouting обновляется по интервалу из URL-источника.",
+    "emptyHint": "пусто. добавьте профиль ниже или импортируйте по deep-link",
+    "noName": "без имени",
+    "kindAuto": "auto",
+    "kindStatic": "static",
+    "ruleCount_one": "{{count}} правило",
+    "ruleCount_few": "{{count}} правила",
+    "ruleCount_many": "{{count}} правил",
+    "ruleCount_other": "{{count}} правил",
+    "updateEvery": " · обновление каждые {{hours}}ч · {{when}}",
+    "refreshNow": "обновить сейчас",
+    "deleteTitle": "удалить",
+    "confirmRemove": "удалить профиль?",
+    "deactivate": {
+      "label": "отключить профиль",
+      "hint": "деактивировать активный (правила не применяются при connect)",
+      "button": "отключить"
+    },
+    "addTitle": "добавить профиль",
+    "addPlaceholder": "URL (autorouting) или base64/JSON (статический)\n\nпример URL: https://example.com/routing.json\nпример base64: eyJOYW1lIjoiVGVzdCJ9",
+    "intervalLabel": "интервал автообновления:",
+    "intervalUrlOnly": "(только для URL)",
+    "intervalOptions": {
+      "12h": "12 часов",
+      "24h": "24 часа",
+      "3d": "3 дня",
+      "7d": "7 дней",
+      "never": "не обновлять"
+    },
+    "geofiles": {
+      "title": "geofiles (geoip/geosite .dat)",
+      "intro": "v2ray-rules-dat файлы (Loyalsoldier) кешируются локально. URL берутся из активного профиля (Geoipurl / Geositeurl). При обновлении сначала качается .sha256 — если хэш не изменился, .dat пропускается (экономия 5-15 MB каждый раз).",
+      "pathLabel": "путь:",
+      "fileSize": "{{size}}, sha256: {{hash}}",
+      "fileMissing": "не загружен",
+      "refreshLabel": "обновить geofiles",
+      "refreshHint": "скачать свежие .dat если sha256 изменился. URL берутся из активного профиля",
+      "refreshButton": "обновить"
+    },
+    "relativeTime": {
+      "neverUpdated": "ещё не обновлялся",
+      "justNow": "только что",
+      "minutesAgo": "{{count}} мин назад",
+      "hoursAgo": "{{count}} ч назад",
+      "daysAgo": "{{count}} дн назад"
+    },
+    "toast": {
+      "addedTitle": "routing-профиль",
+      "addedMessage": "добавлен",
+      "addFailedTitle": "не получилось добавить",
+      "activateFailedTitle": "не удалось активировать",
+      "refreshedTitle": "профиль",
+      "refreshedMessage": "обновлён",
+      "refreshFailedTitle": "refresh failed",
+      "removeFailedTitle": "не удалось удалить",
+      "geofilesPartialTitle": "geofiles частично",
+      "geofilesTitle": "geofiles",
+      "geofilesUpdated": "обновлено: {{items}}",
+      "geofilesUnchanged": "не изменилось: {{items}}",
+      "geofilesNoUrls": "нет geofile URLs в активном профиле",
+      "geofilesFailedTitle": "geofiles refresh failed"
+    }
+  },
+  "mihomoGroups": {
+    "typeLabels": {
+      "Selector": "выбор",
+      "URLTest": "url-тест",
+      "Fallback": "fallback",
+      "LoadBalance": "load-balance",
+      "Relay": "relay"
+    },
+    "active": "активна",
+    "selected": "выбрана",
+    "auto": "авто",
+    "nodeCount": "{{count}} нод",
+    "test": "тест",
+    "testTitle": "прогнать тест задержки по всем нодам группы",
+    "delayUnit": "{{value}} мс",
+    "cardTitleLiveSelector": "выбрать эту ноду",
+    "cardTitlePreferredSelector": "запомнить как предпочитаемую — применится при подключении",
+    "cardTitleAuto": "управляется автоматически",
+    "toast": {
+      "autoSelectTitle": "автоматический выбор",
+      "autoSelectMessage": "группа {{type}} управляется сама",
+      "selectedTitle": "выбрано",
+      "selectedPending": "{{group}} → {{name}}. применится при подключении",
+      "switchFailedTitle": "не удалось переключить",
+      "testFailedTitle": "тест не удался"
+    }
+  },
+  "proxiesPanel": {
+    "title": "прокси-группы (mihomo)",
+    "titleBeforeConnect": " · до подключения",
+    "loading": "загрузка…",
+    "emptyState": "в текущем профиле нет групп. подключитесь к mihomo-профилю с подписки чтобы увидеть proxy-groups.",
+    "staticHint": "кликни ноду → применится при подключении. латентность и «тест» — после старта VPN.",
+    "active": "активна",
+    "selected": "выбрана",
+    "nodeCount": " · {{count}} нод",
+    "test": "тест",
+    "delayUnit": "{{value}} мс",
+    "delayMs": "{{value}} мс",
+    "timeout": "timeout",
+    "nodeTitleLiveSelector": "выбрать эту ноду",
+    "nodeTitlePreferredSelector": "запомнить как предпочитаемую — применится при подключении",
+    "nodeTitleAuto": "управляется автоматически",
+    "refresh": "обновить",
+    "close": "закрыть",
+    "typeLabels": {
+      "Selector": "выбор",
+      "URLTest": "url-тест",
+      "Fallback": "fallback",
+      "LoadBalance": "load-balance",
+      "Relay": "relay"
+    },
+    "toast": {
+      "selectedTitle": "выбрано",
+      "selectedPending": "{{group}} → {{name}}. применится при подключении",
+      "switchedTitle": "переключено",
+      "switchedMessage": "{{group}} → {{name}}",
+      "switchFailedTitle": "не удалось переключить",
+      "testFailedTitle": "тест не удался"
+    }
+  }
+}

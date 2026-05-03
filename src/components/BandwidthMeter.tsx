@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { useVpnStore } from "../stores/vpnStore";
 
@@ -19,6 +20,7 @@ import { useVpnStore } from "../stores/vpnStore";
  * «почему 0?» сразу видеть какой интерфейс мониторится.
  */
 export function BandwidthMeter() {
+  const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const [tick, setTick] = useState<{
     up: number;
@@ -50,7 +52,11 @@ export function BandwidthMeter() {
   return (
     <div
       className="bandwidth-meter"
-      title={tick.iface ? `интерфейс: ${tick.iface}` : "интерфейс не определён"}
+      title={
+        tick.iface
+          ? t("bandwidth.titleIface", { iface: tick.iface })
+          : t("bandwidth.titleNoIface")
+      }
     >
       <span className="bw-arrow">↑</span>
       <span className="bw-value">{formatRate(tick.up)}</span>

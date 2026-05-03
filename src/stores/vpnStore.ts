@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "../i18n";
 import { useSettingsStore } from "./settingsStore";
 import { useSubscriptionStore } from "./subscriptionStore";
 import { showToast } from "./toastStore";
@@ -147,8 +148,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         void (async () => {
           showToast({
             kind: "info",
-            title: "переключение",
-            message: "переключаемся на новый сервер…",
+            title: i18n.t("vpnStore.switching.title"),
+            message: i18n.t("vpnStore.switching.message"),
             durationMs: 3000,
           });
           await get().disconnect();
@@ -186,8 +187,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         const list = conflicts.join(", ");
         showToast({
           kind: "warning",
-          title: "конфликт VPN",
-          message: `Активный VPN на интерфейсе: ${list}.\nОтключите его перед подключением.`,
+          title: i18n.t("vpnStore.vpnConflict.title"),
+          message: i18n.t("vpnStore.vpnConflict.message", { list }),
           durationMs: 8000,
         });
         return;

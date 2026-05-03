@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 
 /**
  * Превью спарсенного и сгенерированного конфига сервера.
@@ -28,6 +29,7 @@ export function ServerPreviewModal({
   serverIndex: number;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [preview, setPreview] = useState<ServerPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("generated");
@@ -96,13 +98,13 @@ export function ServerPreviewModal({
                 </div>
               </>
             ) : (
-              <div className="preview-modal-name">конфиг сервера</div>
+              <div className="preview-modal-name">{t("modal.serverPreview.title")}</div>
             )}
           </div>
           <button
             className="preview-modal-close"
             onClick={onClose}
-            aria-label="закрыть"
+            aria-label={t("modal.serverPreview.closeAria")}
           >
             ×
           </button>
@@ -114,22 +116,26 @@ export function ServerPreviewModal({
               className={`preview-modal-tab${tab === "generated" ? " is-active" : ""}`}
               onClick={() => setTab("generated")}
             >
-              sing-box (generated)
+              {t("modal.serverPreview.tabGenerated")}
             </button>
             <button
               className={`preview-modal-tab${tab === "raw" ? " is-active" : ""}`}
               onClick={() => setTab("raw")}
             >
-              raw (из подписки)
+              {t("modal.serverPreview.tabRaw")}
             </button>
           </div>
         )}
 
         <div className="preview-modal-body">
           {error ? (
-            <div className="preview-modal-error">ошибка: {error}</div>
+            <div className="preview-modal-error">
+              {t("modal.serverPreview.errorPrefix", { message: error })}
+            </div>
           ) : !preview ? (
-            <div className="preview-modal-loading">загрузка…</div>
+            <div className="preview-modal-loading">
+              {t("modal.serverPreview.loading")}
+            </div>
           ) : (
             <pre className="preview-modal-pre">
               <code>{content}</code>
@@ -140,7 +146,9 @@ export function ServerPreviewModal({
         {preview && content && (
           <div className="preview-modal-footer">
             <button className="btn-secondary" onClick={copy}>
-              {copied ? "✓ скопировано" : "скопировать"}
+              {copied
+                ? t("modal.serverPreview.copied")
+                : t("modal.serverPreview.copy")}
             </button>
           </div>
         )}

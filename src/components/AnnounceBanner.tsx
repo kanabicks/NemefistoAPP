@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 
@@ -47,6 +48,7 @@ function saveDismissed(set: string[]) {
 }
 
 export function AnnounceBanner() {
+  const { t } = useTranslation();
   const meta = useSubscriptionStore((s) => s.meta);
   const [dismissed, setDismissed] = useState<string[]>(() => loadDismissed());
 
@@ -88,7 +90,7 @@ export function AnnounceBanner() {
         className="announce-banner-body"
         onClick={onClick}
         disabled={!url}
-        aria-label={url ? "открыть ссылку" : undefined}
+        aria-label={url ? t("announce.openLink") : undefined}
       >
         <span className="announce-banner-icon" aria-hidden="true">
           •
@@ -100,8 +102,8 @@ export function AnnounceBanner() {
         type="button"
         className="announce-banner-close"
         onClick={onClose}
-        aria-label="закрыть"
-        title="закрыть"
+        aria-label={t("common.close")}
+        title={t("common.close")}
       >
         ×
       </button>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -12,17 +13,16 @@ import { ServerPreviewModal } from "./ServerPreviewModal";
  * TUIC/AnyTLS/Mieru → "M" (mihomo only), готовый Xray JSON → "X" (xray only).
  */
 function EngineBadge({ compat }: { compat?: string[] }) {
+  const { t } = useTranslation();
   if (!compat || compat.length === 0 || compat.length > 1) return null;
   const e = compat[0];
-  // Legacy "xray" из старых кешей localStorage маппится в "sing-box" —
-  // sing-box покрывает все xray-совместимые серверы (после миграции 0.1.2).
   const normalized = e === "xray" ? "sing-box" : e;
   if (normalized !== "sing-box" && normalized !== "mihomo") return null;
   const label = normalized === "mihomo" ? "M" : "S";
   const title =
     normalized === "mihomo"
-      ? "поддерживается только Mihomo"
-      : "только sing-box (Mihomo-несовместимый формат)";
+      ? t("serverSelector.engineBadgeMihomo")
+      : t("serverSelector.engineBadgeSingbox");
   return (
     <span className="engine-badge" title={title} data-engine={normalized}>
       {label}
@@ -38,6 +38,7 @@ function EngineBadge({ compat }: { compat?: string[] }) {
  * в середине сессии (с обрывом текущего соединения).
  */
 export function ServerSelector() {
+  const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const selectedIndex = useVpnStore((s) => s.selectedIndex);
   const selectServer = useVpnStore((s) => s.selectServer);
@@ -164,7 +165,7 @@ export function ServerSelector() {
           </>
         ) : (
           <>
-            <span className="server-pill-empty">выбери сервер</span>
+            <span className="server-pill-empty">{t("serverSelector.pickServer")}</span>
             <span className="server-pill-arrow">▸</span>
           </>
         )}
@@ -196,8 +197,8 @@ export function ServerSelector() {
                   onClick={() => pingAll()}
                   disabled={pingsLoading}
                   className={`ping-refresh${pingsLoading ? " is-loading" : ""}`}
-                  title="обновить пинги"
-                  aria-label="обновить пинги"
+                  title={t("serverSelector.refreshPings")}
+                  aria-label={t("serverSelector.refreshPings")}
                 >
                   ↻
                 </button>
@@ -210,7 +211,7 @@ export function ServerSelector() {
                   <input
                     type="text"
                     className="server-filter-search"
-                    placeholder="поиск по имени"
+                    placeholder={t("serverSelector.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -263,8 +264,8 @@ export function ServerSelector() {
                       <button
                         type="button"
                         className="server-row-chevron"
-                        title="посмотреть конфиг"
-                        aria-label="посмотреть конфиг"
+                        title={t("serverSelector.viewConfig")}
+                        aria-label={t("serverSelector.viewConfig")}
                         onClick={(e) => {
                           // Останавливаем родительский onClick (он бы выбрал
                           // сервер) — открываем превью без смены selection.

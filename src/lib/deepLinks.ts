@@ -1,6 +1,7 @@
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "../i18n";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useVpnStore } from "../stores/vpnStore";
 import { showToast } from "../stores/toastStore";
@@ -151,7 +152,7 @@ export function handleDeepLink(rawUrl: string) {
         .then((path) => {
           showToast({
             kind: "success",
-            title: "настройки выгружены",
+            title: i18n.t("deepLink.exported.title"),
             message: path,
             durationMs: 8000,
           });
@@ -159,7 +160,7 @@ export function handleDeepLink(rawUrl: string) {
         .catch((e) => {
           showToast({
             kind: "error",
-            title: "не удалось выгрузить",
+            title: i18n.t("deepLink.exported.failedTitle"),
             message: String(e),
           });
         });
@@ -175,8 +176,8 @@ export function handleDeepLink(rawUrl: string) {
       if (!/^https?:\/\//i.test(url)) {
         showToast({
           kind: "error",
-          title: "import-from-url",
-          message: "ожидался http(s):// URL",
+          title: i18n.t("deepLink.importFromUrl.title"),
+          message: i18n.t("deepLink.importFromUrl.expectedHttpUrl"),
         });
         return;
       }
@@ -188,7 +189,7 @@ export function handleDeepLink(rawUrl: string) {
         .catch((e) => {
           showToast({
             kind: "error",
-            title: "import-from-url",
+            title: i18n.t("deepLink.importFromUrl.title"),
             message: String(e),
           });
         });
@@ -214,8 +215,8 @@ export function handleDeepLink(rawUrl: string) {
         } catch {
           showToast({
             kind: "error",
-            title: "import-settings",
-            message: "не base64 и не JSON",
+            title: i18n.t("deepLink.importSettings.title"),
+            message: i18n.t("deepLink.importSettings.notBase64OrJson"),
           });
           return;
         }
@@ -226,7 +227,7 @@ export function handleDeepLink(rawUrl: string) {
       } catch (e) {
         showToast({
           kind: "error",
-          title: "import-settings",
+          title: i18n.t("deepLink.importSettings.title"),
           message: String(e),
         });
       }
@@ -283,8 +284,8 @@ async function handleRoutingDeepLink(
   if (!raw) {
     showToast({
       kind: "warning",
-      title: "routing deep-link",
-      message: "пустой payload",
+      title: i18n.t("deepLink.routing.title"),
+      message: i18n.t("deepLink.routing.emptyPayload"),
     });
     return;
   }
@@ -296,8 +297,10 @@ async function handleRoutingDeepLink(
       if (!/^https?:\/\//i.test(raw)) {
         showToast({
           kind: "error",
-          title: "autorouting",
-          message: "ожидался URL, получено:\n" + raw.slice(0, 80),
+          title: i18n.t("deepLink.routing.autoroutingTitle"),
+          message: i18n.t("deepLink.routing.expectedUrl", {
+            raw: raw.slice(0, 80),
+          }),
         });
         return;
       }
@@ -328,16 +331,16 @@ async function handleRoutingDeepLink(
     }
     showToast({
       kind: "success",
-      title: "routing-профиль",
+      title: i18n.t("deepLink.routing.profileTitle"),
       message:
         verb === "onadd"
-          ? "добавлен и активирован"
-          : "добавлен (активируйте в Settings)",
+          ? i18n.t("deepLink.routing.activated")
+          : i18n.t("deepLink.routing.addedNotActive"),
     });
   } catch (e) {
     showToast({
       kind: "error",
-      title: "routing deep-link",
+      title: i18n.t("deepLink.routing.title"),
       message: String(e),
     });
   }

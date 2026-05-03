@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "../i18n";
 import { useSettingsStore, type Settings, type AppRule } from "../stores/settingsStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { APP_VERSION } from "./constants";
@@ -120,14 +121,16 @@ export function parseBackup(raw: string): BackupSchema {
   try {
     obj = JSON.parse(raw);
   } catch (e) {
-    throw new Error("не удалось распарсить JSON: " + String(e));
+    throw new Error(i18n.t("backup.parseError", { error: String(e) }));
   }
   if (!obj || typeof obj !== "object") {
-    throw new Error("ожидался JSON-объект");
+    throw new Error(i18n.t("backup.expectedJson"));
   }
   const o = obj as Record<string, unknown>;
   if (o.schema_version !== 1) {
-    throw new Error(`неподдерживаемый schema_version: ${o.schema_version}`);
+    throw new Error(
+      i18n.t("backup.unsupportedSchema", { version: String(o.schema_version) })
+    );
   }
   const settings = o.settings;
   const sub = typeof o.subscription_url === "string" ? o.subscription_url : "";
@@ -196,9 +199,13 @@ export function diffBackup(backup: BackupSchema): BackupDiffEntry[] {
   const out: BackupDiffEntry[] = [];
 
   const fmt = (v: unknown): string => {
-    if (v === null || v === undefined) return "—";
-    if (typeof v === "boolean") return v ? "вкл" : "выкл";
-    if (Array.isArray(v)) return v.length === 0 ? "пусто" : `${v.length} шт.`;
+    if (v === null || v === undefined) return i18n.t("backup.values.dash");
+    if (typeof v === "boolean")
+      return v ? i18n.t("backup.values.on") : i18n.t("backup.values.off");
+    if (Array.isArray(v))
+      return v.length === 0
+        ? i18n.t("backup.values.empty")
+        : i18n.t("backup.values.itemsCount", { count: v.length });
     return String(v);
   };
 
@@ -217,8 +224,10 @@ export function diffBackup(backup: BackupSchema): BackupDiffEntry[] {
     backup.subscription_url.trim() !== sub.url.trim()
   ) {
     out.push({
-      key: "URL подписки",
-      current: sub.url ? sub.url.slice(0, 60) + (sub.url.length > 60 ? "…" : "") : "—",
+      key: i18n.t("backup.fieldLabels.subscriptionUrl"),
+      current: sub.url
+        ? sub.url.slice(0, 60) + (sub.url.length > 60 ? "…" : "")
+        : i18n.t("backup.values.dash"),
       incoming:
         backup.subscription_url.slice(0, 60) +
         (backup.subscription_url.length > 60 ? "…" : ""),
@@ -228,9 +237,11 @@ export function diffBackup(backup: BackupSchema): BackupDiffEntry[] {
   // appRules сравниваем отдельно — только количество / наличие.
   if (JSON.stringify(s.appRules) !== JSON.stringify(backup.app_rules)) {
     out.push({
-      key: "правила приложений",
-      current: `${s.appRules.length} шт.`,
-      incoming: `${backup.app_rules.length} шт.`,
+      key: i18n.t("backup.fieldLabels.appRules"),
+      current: i18n.t("backup.values.itemsCount", { count: s.appRules.length }),
+      incoming: i18n.t("backup.values.itemsCount", {
+        count: backup.app_rules.length,
+      }),
     });
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -52,14 +53,6 @@ const YAML_TO_API_GROUP_TYPE: Record<string, string> = {
   relay: "Relay",
 };
 
-const TYPE_LABELS: Record<string, string> = {
-  Selector: "выбор",
-  URLTest: "url-тест",
-  Fallback: "fallback",
-  LoadBalance: "load-balance",
-  Relay: "relay",
-};
-
 function lastDelay(p: ProxyInfo | undefined): number | null {
   if (!p?.history?.length) return null;
   const v = p.history[p.history.length - 1].delay;
@@ -74,10 +67,6 @@ function delayClass(d: number | null): string {
   if (d < 500) return "delay-ok";
   if (d < 1000) return "delay-slow";
   return "delay-bad";
-}
-
-function delayLabel(d: number | null): string {
-  return d == null ? "—" : `${d} мс`;
 }
 
 function buildStaticSnapshot(
@@ -110,6 +99,7 @@ function buildStaticSnapshot(
 }
 
 export function MihomoGroupsInline() {
+  const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const selectedIndex = useVpnStore((s) => s.selectedIndex);
   const servers = useSubscriptionStore((s) => s.servers);
@@ -117,6 +107,16 @@ export function MihomoGroupsInline() {
   const setSetting = useSettingsStore((s) => s.set);
 
   const liveMode = status === "running";
+
+  const typeLabel = (apiType: string): string => {
+    const known = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"];
+    if (known.includes(apiType))
+      return t(`mihomoGroups.typeLabels.${apiType}`);
+    return apiType.toLowerCase();
+  };
+
+  const delayLabel = (d: number | null): string =>
+    d == null ? "—" : t("mihomoGroups.delayUnit", { value: d });
 
   const [snap, setSnap] = useState<ProxiesSnapshot | null>(null);
   const [busyTesting, setBusyTesting] = useState<string | null>(null);
@@ -205,8 +205,10 @@ export function MihomoGroupsInline() {
       // движком. Пользовательский pin не имеет смысла.
       showToast({
         kind: "info",
-        title: "автоматический выбор",
-        message: `группа ${TYPE_LABELS[type] ?? type} управляется сама`,
+        title: t("mihomoGroups.toast.autoSelectTitle"),
+        message: t("mihomoGroups.toast.autoSelectMessage", {
+          type: typeLabel(type),
+        }),
         durationMs: 3000,
       });
       return;
@@ -215,8 +217,8 @@ export function MihomoGroupsInline() {
     if (!liveMode) {
       showToast({
         kind: "success",
-        title: "выбрано",
-        message: `${group} → ${name}. применится при подключении`,
+        title: t("mihomoGroups.toast.selectedTitle"),
+        message: t("mihomoGroups.toast.selectedPending", { group, name }),
         durationMs: 3000,
       });
       return;
@@ -227,7 +229,7 @@ export function MihomoGroupsInline() {
     } catch (e) {
       showToast({
         kind: "error",
-        title: "не удалось переключить",
+        title: t("mihomoGroups.toast.switchFailedTitle"),
         message: String(e),
       });
     }
@@ -242,7 +244,7 @@ export function MihomoGroupsInline() {
     } catch (e) {
       showToast({
         kind: "error",
-        title: "тест не удался",
+        title: t("mihomoGroups.toast.testFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -286,23 +288,28 @@ export function MihomoGroupsInline() {
               <div className="mihomo-group-title-block">
                 <div className="mihomo-group-title">{g.name}</div>
                 <div className="mihomo-group-sub">
-                  <span className="mihomo-group-type">
-                    {TYPE_LABELS[g.type] ?? g.type.toLowerCase()}
-                  </span>
+                  <span className="mihomo-group-type">{typeLabel(g.type)}</span>
                   {displayActive && (
                     <>
                       <span className="dot-sep">·</span>
                       <span className="mihomo-group-active">
-                        {liveMode ? "активна" : "выбрана"}: {displayActive}
+                        {liveMode
+                          ? t("mihomoGroups.active")
+                          : t("mihomoGroups.selected")}
+                        : {displayActive}
                       </span>
                     </>
                   )}
                   <span className="dot-sep">·</span>
-                  <span>{memberInfos.length} нод</span>
+                  <span>
+                    {t("mihomoGroups.nodeCount", { count: memberInfos.length })}
+                  </span>
                   {!isSelector && (
                     <>
                       <span className="dot-sep">·</span>
-                      <span style={{ opacity: 0.7 }}>авто</span>
+                      <span style={{ opacity: 0.7 }}>
+                        {t("mihomoGroups.auto")}
+                      </span>
                     </>
                   )}
                 </div>
@@ -316,9 +323,9 @@ export function MihomoGroupsInline() {
                     void onTestGroup(g.name);
                   }}
                   disabled={busyTesting === g.name}
-                  title="прогнать тест задержки по всем нодам группы"
+                  title={t("mihomoGroups.testTitle")}
                 >
-                  {busyTesting === g.name ? "…" : "тест"}
+                  {busyTesting === g.name ? "…" : t("mihomoGroups.test")}
                 </button>
               )}
               <span className="mihomo-group-arrow">
@@ -344,9 +351,9 @@ export function MihomoGroupsInline() {
                       title={
                         isSelector
                           ? liveMode
-                            ? "выбрать эту ноду"
-                            : "запомнить как предпочитаемую — применится при подключении"
-                          : "управляется автоматически"
+                            ? t("mihomoGroups.cardTitleLiveSelector")
+                            : t("mihomoGroups.cardTitlePreferredSelector")
+                          : t("mihomoGroups.cardTitleAuto")
                       }
                     >
                       <div className="mihomo-card-name" title={m.name}>

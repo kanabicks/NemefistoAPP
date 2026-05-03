@@ -297,6 +297,12 @@ export type Settings = {
    *  Когда выйдет следующая — снова показываем. Сбрасывается через
    *  reset(). */
   dismissedUpdateVersions: string[];
+
+  /** 14.J: язык интерфейса. `auto` — детект из `navigator.language`
+   *  (если начинается на `ru` → русский, иначе английский). `ru` / `en` —
+   *  явный выбор пользователя. Изменение применяется сразу через
+   *  `i18n.changeLanguage()`. */
+  language: "auto" | "ru" | "en";
 };
 
 /**
@@ -400,6 +406,7 @@ const DEFAULTS: Settings = {
   preferredMihomoNodes: {},
   autoCheckUpdates: true,
   dismissedUpdateVersions: [],
+  language: "auto",
 };
 
 const KEY = "nemefisto.settings.v1";

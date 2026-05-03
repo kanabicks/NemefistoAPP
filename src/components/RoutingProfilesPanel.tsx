@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { showToast } from "../stores/toastStore";
 
 /**
@@ -65,14 +66,25 @@ type GeofilesUpdateReport = {
   errors: string[];
 };
 
-function relativeTime(unixSec: number): string {
-  if (unixSec === 0) return "ещё не обновлялся";
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - unixSec;
-  if (diff < 60) return "только что";
-  if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`;
-  return `${Math.floor(diff / 86400)} дн назад`;
+function useRelativeTime(): (unixSec: number) => string {
+  const { t } = useTranslation();
+  return (unixSec: number) => {
+    if (unixSec === 0) return t("routingProfiles.relativeTime.neverUpdated");
+    const now = Math.floor(Date.now() / 1000);
+    const diff = now - unixSec;
+    if (diff < 60) return t("routingProfiles.relativeTime.justNow");
+    if (diff < 3600)
+      return t("routingProfiles.relativeTime.minutesAgo", {
+        count: Math.floor(diff / 60),
+      });
+    if (diff < 86400)
+      return t("routingProfiles.relativeTime.hoursAgo", {
+        count: Math.floor(diff / 3600),
+      });
+    return t("routingProfiles.relativeTime.daysAgo", {
+      count: Math.floor(diff / 86400),
+    });
+  };
 }
 
 function ruleCount(p: RoutingProfile): number {
@@ -94,6 +106,8 @@ function fmtBytes(n: number): string {
 }
 
 export function RoutingProfilesPanel() {
+  const { t } = useTranslation();
+  const relativeTime = useRelativeTime();
   const [snapshot, setSnapshot] = useState<Snapshot>({
     entries: [],
     active_id: null,
@@ -140,13 +154,13 @@ export function RoutingProfilesPanel() {
       await reload();
       showToast({
         kind: "success",
-        title: "routing-профиль",
-        message: "добавлен",
+        title: t("routingProfiles.toast.addedTitle"),
+        message: t("routingProfiles.toast.addedMessage"),
       });
     } catch (e) {
       showToast({
         kind: "error",
-        title: "не получилось добавить",
+        title: t("routingProfiles.toast.addFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -162,7 +176,7 @@ export function RoutingProfilesPanel() {
     } catch (e) {
       showToast({
         kind: "error",
-        title: "не удалось активировать",
+        title: t("routingProfiles.toast.activateFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -177,13 +191,13 @@ export function RoutingProfilesPanel() {
       await reload();
       showToast({
         kind: "success",
-        title: "профиль",
-        message: "обновлён",
+        title: t("routingProfiles.toast.refreshedTitle"),
+        message: t("routingProfiles.toast.refreshedMessage"),
       });
     } catch (e) {
       showToast({
         kind: "error",
-        title: "refresh failed",
+        title: t("routingProfiles.toast.refreshFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -192,7 +206,7 @@ export function RoutingProfilesPanel() {
   };
 
   const onRemove = async (id: string) => {
-    if (!confirm("удалить профиль?")) return;
+    if (!confirm(t("routingProfiles.confirmRemove"))) return;
     setBusy(true);
     try {
       await invoke("routing_remove", { id });
@@ -200,7 +214,7 @@ export function RoutingProfilesPanel() {
     } catch (e) {
       showToast({
         kind: "error",
-        title: "не удалось удалить",
+        title: t("routingProfiles.toast.removeFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -216,32 +230,42 @@ export function RoutingProfilesPanel() {
       const updated = [
         r.geoip_updated && "geoip",
         r.geosite_updated && "geosite",
-      ].filter(Boolean);
+      ].filter(Boolean) as string[];
       const skipped = [
         r.geoip_skipped_unchanged && "geoip",
         r.geosite_skipped_unchanged && "geosite",
-      ].filter(Boolean);
+      ].filter(Boolean) as string[];
       if (r.errors.length > 0) {
         showToast({
           kind: "warning",
-          title: "geofiles частично",
+          title: t("routingProfiles.toast.geofilesPartialTitle"),
           message: r.errors.join("; "),
         });
       } else {
         const lines: string[] = [];
-        if (updated.length > 0) lines.push(`обновлено: ${updated.join(", ")}`);
+        if (updated.length > 0)
+          lines.push(
+            t("routingProfiles.toast.geofilesUpdated", {
+              items: updated.join(", "),
+            })
+          );
         if (skipped.length > 0)
-          lines.push(`не изменилось: ${skipped.join(", ")}`);
+          lines.push(
+            t("routingProfiles.toast.geofilesUnchanged", {
+              items: skipped.join(", "),
+            })
+          );
         showToast({
           kind: "success",
-          title: "geofiles",
-          message: lines.join("\n") || "нет geofile URLs в активном профиле",
+          title: t("routingProfiles.toast.geofilesTitle"),
+          message:
+            lines.join("\n") || t("routingProfiles.toast.geofilesNoUrls"),
         });
       }
     } catch (e) {
       showToast({
         kind: "error",
-        title: "geofiles refresh failed",
+        title: t("routingProfiles.toast.geofilesFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -252,7 +276,9 @@ export function RoutingProfilesPanel() {
   return (
     <>
       <section className="settings-section">
-        <div className="settings-section-title">профили маршрутизации</div>
+        <div className="settings-section-title">
+          {t("routingProfiles.title")}
+        </div>
         <p
           className="hint"
           style={{
@@ -264,15 +290,12 @@ export function RoutingProfilesPanel() {
             marginBottom: 8,
           }}
         >
-          импорт правил split-routing. формат — Marzban-style JSON
-          (DirectSites/DirectIp/ProxySites/BlockSites + Geoipurl/Geositeurl).
-          один профиль активен — его правила применяются к Xray и Mihomo
-          при connect. autorouting обновляется по интервалу из URL-источника.
+          {t("routingProfiles.intro")}
         </p>
 
         {snapshot.entries.length === 0 && (
           <div className="settings-row-hint" style={{ marginBottom: 12 }}>
-            пусто. добавьте профиль ниже или импортируйте по deep-link
+            {t("routingProfiles.emptyHint")}
             <br />
             <code>nemefisto://routing/onadd/{"{base64-or-url}"}</code>
           </div>
@@ -307,7 +330,7 @@ export function RoutingProfilesPanel() {
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="settings-row-label">
-                    {e.profile.Name || "без имени"}{" "}
+                    {e.profile.Name || t("routingProfiles.noName")}{" "}
                     <span
                       style={{
                         color: isAuto ? "rgb(120, 220, 200)" : "var(--fg-dim)",
@@ -315,18 +338,21 @@ export function RoutingProfilesPanel() {
                         marginLeft: 6,
                       }}
                     >
-                      {isAuto ? "auto" : "static"}
+                      {isAuto
+                        ? t("routingProfiles.kindAuto")
+                        : t("routingProfiles.kindStatic")}
                     </span>
                   </div>
                   <div className="settings-row-hint">
-                    {ruleCount(e.profile)} правил
-                    {isAuto && (
-                      <>
-                        {" · обновление каждые "}
-                        {(e.source as { interval_hours: number }).interval_hours}
-                        ч · {relativeTime(e.last_fetched_at)}
-                      </>
-                    )}
+                    {t("routingProfiles.ruleCount", {
+                      count: ruleCount(e.profile),
+                    })}
+                    {isAuto &&
+                      t("routingProfiles.updateEvery", {
+                        hours: (e.source as { interval_hours: number })
+                          .interval_hours,
+                        when: relativeTime(e.last_fetched_at),
+                      })}
                   </div>
                 </div>
                 {isAuto && (
@@ -335,7 +361,7 @@ export function RoutingProfilesPanel() {
                     className="btn-ghost"
                     onClick={() => onRefresh(e.id)}
                     disabled={busy}
-                    title="обновить сейчас"
+                    title={t("routingProfiles.refreshNow")}
                   >
                     ↻
                   </button>
@@ -345,7 +371,7 @@ export function RoutingProfilesPanel() {
                   className="btn-ghost"
                   onClick={() => onRemove(e.id)}
                   disabled={busy}
-                  title="удалить"
+                  title={t("routingProfiles.deleteTitle")}
                 >
                   ✕
                 </button>
@@ -357,9 +383,11 @@ export function RoutingProfilesPanel() {
         {snapshot.active_id && (
           <div className="settings-row">
             <div>
-              <div className="settings-row-label">отключить профиль</div>
+              <div className="settings-row-label">
+                {t("routingProfiles.deactivate.label")}
+              </div>
               <div className="settings-row-hint">
-                деактивировать активный (правила не применяются при connect)
+                {t("routingProfiles.deactivate.hint")}
               </div>
             </div>
             <button
@@ -368,18 +396,20 @@ export function RoutingProfilesPanel() {
               onClick={() => onSetActive(null)}
               disabled={busy}
             >
-              отключить
+              {t("routingProfiles.deactivate.button")}
             </button>
           </div>
         )}
       </section>
 
       <section className="settings-section">
-        <div className="settings-section-title">добавить профиль</div>
+        <div className="settings-section-title">
+          {t("routingProfiles.addTitle")}
+        </div>
         <textarea
           className="textinput"
           rows={4}
-          placeholder={`URL (autorouting) или base64/JSON (статический)\n\nпример URL: https://example.com/routing.json\nпример base64: eyJOYW1lIjoiVGVzdCJ9`}
+          placeholder={t("routingProfiles.addPlaceholder")}
           value={addPayload}
           onChange={(e) => setAddPayload(e.target.value)}
           style={{
@@ -412,7 +442,7 @@ export function RoutingProfilesPanel() {
               color: "var(--fg-dim)",
             }}
           >
-            интервал автообновления:
+            {t("routingProfiles.intervalLabel")}
             <select
               value={addInterval}
               onChange={(e) => setAddInterval(Number(e.target.value))}
@@ -425,14 +455,14 @@ export function RoutingProfilesPanel() {
                 fontSize: 12,
               }}
             >
-              <option value={12}>12 часов</option>
-              <option value={24}>24 часа</option>
-              <option value={72}>3 дня</option>
-              <option value={168}>7 дней</option>
-              <option value={8760}>не обновлять</option>
+              <option value={12}>{t("routingProfiles.intervalOptions.12h")}</option>
+              <option value={24}>{t("routingProfiles.intervalOptions.24h")}</option>
+              <option value={72}>{t("routingProfiles.intervalOptions.3d")}</option>
+              <option value={168}>{t("routingProfiles.intervalOptions.7d")}</option>
+              <option value={8760}>{t("routingProfiles.intervalOptions.never")}</option>
             </select>
             <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>
-              (только для URL)
+              {t("routingProfiles.intervalUrlOnly")}
             </span>
           </label>
           <button
@@ -441,13 +471,15 @@ export function RoutingProfilesPanel() {
             onClick={onAdd}
             disabled={busy || !addPayload.trim()}
           >
-            добавить
+            {t("common.add")}
           </button>
         </div>
       </section>
 
       <section className="settings-section">
-        <div className="settings-section-title">geofiles (geoip/geosite .dat)</div>
+        <div className="settings-section-title">
+          {t("routingProfiles.geofiles.title")}
+        </div>
         <p
           className="hint"
           style={{
@@ -459,15 +491,13 @@ export function RoutingProfilesPanel() {
             marginBottom: 8,
           }}
         >
-          v2ray-rules-dat файлы (Loyalsoldier) кешируются локально. URL
-          берутся из активного профиля (Geoipurl / Geositeurl). При
-          обновлении сначала качается .sha256 — если хэш не изменился,
-          .dat пропускается (экономия 5-15 MB каждый раз).
+          {t("routingProfiles.geofiles.intro")}
         </p>
         {geofiles && (
           <>
             <div className="settings-row-hint" style={{ marginBottom: 8 }}>
-              путь: <code>{geofiles.directory}</code>
+              {t("routingProfiles.geofiles.pathLabel")}{" "}
+              <code>{geofiles.directory}</code>
             </div>
             {([geofiles.geoip, geofiles.geosite] as const).map((f) => (
               <div className="settings-row" key={f.filename}>
@@ -475,10 +505,11 @@ export function RoutingProfilesPanel() {
                   <div className="settings-row-label">{f.filename}</div>
                   <div className="settings-row-hint">
                     {f.present
-                      ? `${fmtBytes(f.size_bytes)}, sha256: ${
-                          f.sha256 ? f.sha256.slice(0, 16) + "…" : "—"
-                        }`
-                      : "не загружен"}
+                      ? t("routingProfiles.geofiles.fileSize", {
+                          size: fmtBytes(f.size_bytes),
+                          hash: f.sha256 ? f.sha256.slice(0, 16) + "…" : "—",
+                        })
+                      : t("routingProfiles.geofiles.fileMissing")}
                   </div>
                 </div>
               </div>
@@ -487,10 +518,11 @@ export function RoutingProfilesPanel() {
         )}
         <div className="settings-row">
           <div>
-            <div className="settings-row-label">обновить geofiles</div>
+            <div className="settings-row-label">
+              {t("routingProfiles.geofiles.refreshLabel")}
+            </div>
             <div className="settings-row-hint">
-              скачать свежие .dat если sha256 изменился. URL берутся из
-              активного профиля
+              {t("routingProfiles.geofiles.refreshHint")}
             </div>
           </div>
           <button
@@ -499,7 +531,7 @@ export function RoutingProfilesPanel() {
             onClick={onGeofilesRefresh}
             disabled={busy || !snapshot.active_id}
           >
-            обновить
+            {t("routingProfiles.geofiles.refreshButton")}
           </button>
         </div>
       </section>

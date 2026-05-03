@@ -3,6 +3,9 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { FloatingApp } from "./FloatingApp";
+// 14.J: i18n-инициализация ДО render'а — иначе первый кадр компонентов
+// рендерится без переводов и потом «мерцает» когда i18n догоняет.
+import "./i18n";
 
 // Локальные шрифты — bundle-ятся через Vite, никаких внешних запросов
 // (Tauri-окно может быть оффлайн).

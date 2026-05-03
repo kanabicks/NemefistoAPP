@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { showToast } from "../stores/toastStore";
 import { useVpnStore } from "../stores/vpnStore";
 import { useSubscriptionStore } from "../stores/subscriptionStore";
@@ -55,13 +56,13 @@ const YAML_TO_API_GROUP_TYPE: Record<string, string> = {
   relay: "Relay",
 };
 
-/** Тип группы → emoji-бейдж + русская подпись. */
-const TYPE_LABELS: Record<string, { emoji: string; label: string }> = {
-  Selector: { emoji: "📋", label: "выбор" },
-  URLTest: { emoji: "🎯", label: "url-тест" },
-  Fallback: { emoji: "🔀", label: "fallback" },
-  LoadBalance: { emoji: "⚖️", label: "load-balance" },
-  Relay: { emoji: "🔗", label: "relay" },
+/** Тип группы → emoji-бейдж. Подпись берётся через i18n в компоненте. */
+const TYPE_EMOJI: Record<string, string> = {
+  Selector: "📋",
+  URLTest: "🎯",
+  Fallback: "🔀",
+  LoadBalance: "⚖️",
+  Relay: "🔗",
 };
 
 function lastDelay(p: ProxyInfo): number | null {
@@ -76,10 +77,6 @@ function delayClass(d: number | null): string {
   if (d < 500) return "delay-ok";
   if (d < 1000) return "delay-slow";
   return "delay-bad";
-}
-
-function delayLabel(d: number | null): string {
-  return d == null ? "—" : `${d} мс`;
 }
 
 /** Собрать ProxiesSnapshot из raw.groups/raw.proxies подписки. Используется
@@ -116,6 +113,7 @@ function buildStaticSnapshot(
 }
 
 export function ProxiesPanel({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const selectedIndex = useVpnStore((s) => s.selectedIndex);
   const servers = useSubscriptionStore((s) => s.servers);
@@ -124,6 +122,22 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
 
   const isRunning = status === "running";
   const liveMode = isRunning;
+
+  const typeInfo = (
+    apiType: string
+  ): { emoji: string; label: string } => {
+    const known = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"];
+    if (known.includes(apiType)) {
+      return {
+        emoji: TYPE_EMOJI[apiType] ?? "📦",
+        label: t(`proxiesPanel.typeLabels.${apiType}`),
+      };
+    }
+    return { emoji: "📦", label: apiType.toLowerCase() };
+  };
+
+  const delayLabel = (d: number | null): string =>
+    d == null ? "—" : t("proxiesPanel.delayUnit", { value: d });
 
   /** Запомнить выбор пользователя на будущее: ключ — имя группы,
    *  значение — имя ноды. Используется в vpnStore.connect после старта
@@ -211,8 +225,8 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
     if (!liveMode) {
       showToast({
         kind: "success",
-        title: "выбрано",
-        message: `${group} → ${name}. применится при подключении`,
+        title: t("proxiesPanel.toast.selectedTitle"),
+        message: t("proxiesPanel.toast.selectedPending", { group, name }),
         durationMs: 3500,
       });
       return;
@@ -221,14 +235,14 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
       await invoke("mihomo_select_proxy", { group, name });
       showToast({
         kind: "success",
-        title: "переключено",
-        message: `${group} → ${name}`,
+        title: t("proxiesPanel.toast.switchedTitle"),
+        message: t("proxiesPanel.toast.switchedMessage", { group, name }),
       });
       void refresh();
     } catch (e) {
       showToast({
         kind: "error",
-        title: "не удалось переключить",
+        title: t("proxiesPanel.toast.switchFailedTitle"),
         message: String(e),
       });
     }
@@ -242,13 +256,16 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
       showToast({
         kind: ms == null ? "warning" : "success",
         title: name,
-        message: ms == null ? "timeout" : `${ms} мс`,
+        message:
+          ms == null
+            ? t("proxiesPanel.timeout")
+            : t("proxiesPanel.delayMs", { value: ms }),
       });
       void refresh();
     } catch (e) {
       showToast({
         kind: "error",
-        title: "тест не удался",
+        title: t("proxiesPanel.toast.testFailedTitle"),
         message: String(e),
       });
     } finally {
@@ -263,16 +280,18 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
         style={{ maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column" }}
       >
         <div className="recovery-title">
-          прокси-группы (mihomo){liveMode ? "" : " · до подключения"}
+          {t("proxiesPanel.title")}
+          {liveMode ? "" : t("proxiesPanel.titleBeforeConnect")}
         </div>
 
-        {loading && <div className="recovery-text">загрузка…</div>}
+        {loading && (
+          <div className="recovery-text">{t("proxiesPanel.loading")}</div>
+        )}
         {error && <pre className="recovery-error">{error}</pre>}
 
         {!loading && !error && groups.length === 0 && (
           <div className="recovery-text">
-            в текущем профиле нет групп. подключитесь к mihomo-профилю с
-            подписки чтобы увидеть proxy-groups.
+            {t("proxiesPanel.emptyState")}
           </div>
         )}
 
@@ -281,8 +300,7 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
             className="recovery-text"
             style={{ fontSize: 11, color: "var(--fg-dim)" }}
           >
-            кликни ноду → применится при подключении. латентность и
-            «тест» — после старта VPN.
+            {t("proxiesPanel.staticHint")}
           </div>
         )}
 
@@ -297,10 +315,7 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
           }}
         >
           {groups.map((g) => {
-            const info = TYPE_LABELS[g.type] ?? {
-              emoji: "📦",
-              label: g.type.toLowerCase(),
-            };
+            const info = typeInfo(g.type);
             const isExpanded = expanded.has(g.name);
             const memberInfos = g.all
               .map((n) => snap!.proxies[n])
@@ -350,9 +365,15 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                         const active = liveMode
                           ? activeName
                           : preferredNodes[g.name] ?? activeName;
-                        return active ? ` · ${liveMode ? "активна" : "выбрана"}: ${active}` : "";
+                        if (!active) return "";
+                        const status = liveMode
+                          ? t("proxiesPanel.active")
+                          : t("proxiesPanel.selected");
+                        return ` · ${status}: ${active}`;
                       })()}
-                      {` · ${memberInfos.length} нод`}
+                      {t("proxiesPanel.nodeCount", {
+                        count: memberInfos.length,
+                      })}
                     </div>
                   </div>
                   {liveMode && (
@@ -366,7 +387,7 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                       }}
                       disabled={busyTesting === g.name}
                     >
-                      {busyTesting === g.name ? "…" : "тест"}
+                      {busyTesting === g.name ? "…" : t("proxiesPanel.test")}
                     </button>
                   )}
                   <span style={{ color: "var(--fg-dim)" }}>
@@ -420,9 +441,9 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                           title={
                             canSelect
                               ? liveMode
-                                ? "выбрать эту ноду"
-                                : "запомнить как предпочитаемую — применится при подключении"
-                              : "управляется автоматически"
+                                ? t("proxiesPanel.nodeTitleLiveSelector")
+                                : t("proxiesPanel.nodeTitlePreferredSelector")
+                              : t("proxiesPanel.nodeTitleAuto")
                           }
                         >
                           <span
@@ -473,7 +494,7 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
                               }}
                               disabled={busyTesting === m.name}
                             >
-                              {busyTesting === m.name ? "…" : "тест"}
+                              {busyTesting === m.name ? "…" : t("proxiesPanel.test")}
                             </button>
                           )}
                         </li>
@@ -489,11 +510,11 @@ export function ProxiesPanel({ onClose }: { onClose: () => void }) {
         <div className="recovery-actions">
           {liveMode && (
             <button type="button" className="btn-ghost" onClick={() => void refresh()}>
-              обновить
+              {t("proxiesPanel.refresh")}
             </button>
           )}
           <button type="button" className="btn-primary" onClick={onClose}>
-            закрыть
+            {t("proxiesPanel.close")}
           </button>
         </div>
       </div>

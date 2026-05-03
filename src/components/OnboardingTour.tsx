@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 /**
  * 14.G — first-run onboarding (модалка-туториал из 4 шагов).
@@ -19,77 +20,7 @@ import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "nemefisto.onboarding.completed.v1";
 
-type Step = {
-  title: string;
-  body: React.ReactNode;
-};
-
-const STEPS: Step[] = [
-  {
-    title: "добро пожаловать в nemefisto",
-    body: (
-      <>
-        <p style={{ marginBottom: 8 }}>
-          VPN-клиент на двух ядрах (xray + mihomo) с защитой от DPI,
-          утечек и локального детекта. весь код открытый, никакой
-          телеметрии.
-        </p>
-        <p style={{ color: "var(--fg-dim)" }}>
-          краткий тур из 3 шагов — займёт минуту.
-        </p>
-      </>
-    ),
-  },
-  {
-    title: "1 · добавь подписку",
-    body: (
-      <>
-        <p style={{ marginBottom: 8 }}>
-          получи URL подписки у своего VPN-провайдера и вставь в поле
-          на главном экране. формат:{" "}
-          <span className="bracket">https://sub.example.com/...</span>
-        </p>
-        <p style={{ color: "var(--fg-dim)" }}>
-          поддерживаются Marzban, 3x-ui, sing-box, base64-списки,
-          Mihomo YAML — всё что отдают современные панели.
-        </p>
-      </>
-    ),
-  },
-  {
-    title: "2 · выбери сервер и подключайся",
-    body: (
-      <>
-        <p style={{ marginBottom: 8 }}>
-          приложение скачает список серверов и сразу замерит до них
-          пинги. тапни выпадающий список под кнопкой питания и выбери
-          любой — рядом с именем будет latency.
-        </p>
-        <p style={{ color: "var(--fg-dim)" }}>
-          большая круглая кнопка — connect / disconnect. подключение
-          обычно занимает 1-2 секунды.
-        </p>
-      </>
-    ),
-  },
-  {
-    title: "3 · готово",
-    body: (
-      <>
-        <p style={{ marginBottom: 8 }}>
-          настройки в правом верхнем углу: kill switch, anti-DPI,
-          темы оформления, маршрутизация по странам, доверенные wi-fi
-          сети.
-        </p>
-        <p style={{ color: "var(--fg-dim)" }}>
-          горячие клавиши: <span className="bracket">Ctrl+Shift+V</span>{" "}
-          — toggle VPN, <span className="bracket">Ctrl+Shift+M</span>{" "}
-          — показать/скрыть окно.
-        </p>
-      </>
-    ),
-  },
-];
+const STEP_KEYS = ["step1", "step2", "step3", "step4"] as const;
 
 /** Прочитать флаг «онбординг уже пройден». Используется родителем
  *  чтобы решать показывать ли модалку. */
@@ -110,9 +41,59 @@ function markCompleted() {
   }
 }
 
+function StepBody({ step }: { step: (typeof STEP_KEYS)[number] }) {
+  const { t } = useTranslation();
+  switch (step) {
+    case "step1":
+      return (
+        <>
+          <p style={{ marginBottom: 8 }}>{t("onboarding.step1.body")}</p>
+          <p style={{ color: "var(--fg-dim)" }}>
+            {t("onboarding.step1.footnote")}
+          </p>
+        </>
+      );
+    case "step2":
+      return (
+        <>
+          <p style={{ marginBottom: 8 }}>
+            {t("onboarding.step2.bodyBefore")}
+            <span className="bracket">https://sub.example.com/...</span>
+          </p>
+          <p style={{ color: "var(--fg-dim)" }}>
+            {t("onboarding.step2.footnote")}
+          </p>
+        </>
+      );
+    case "step3":
+      return (
+        <>
+          <p style={{ marginBottom: 8 }}>{t("onboarding.step3.body")}</p>
+          <p style={{ color: "var(--fg-dim)" }}>
+            {t("onboarding.step3.footnote")}
+          </p>
+        </>
+      );
+    case "step4":
+      return (
+        <>
+          <p style={{ marginBottom: 8 }}>{t("onboarding.step4.body")}</p>
+          <p style={{ color: "var(--fg-dim)" }}>
+            {t("onboarding.step4.footnoteBefore")}
+            <span className="bracket">Ctrl+Shift+V</span>
+            {t("onboarding.step4.footnoteToggleVpn")}
+            <span className="bracket">Ctrl+Shift+M</span>
+            {t("onboarding.step4.footnoteShowHide")}
+          </p>
+        </>
+      );
+  }
+}
+
 export function OnboardingTour({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const [step, setStep] = useState(0);
-  const total = STEPS.length;
+  const total = STEP_KEYS.length;
 
   // Esc — пропустить тур.
   useEffect(() => {
@@ -140,14 +121,15 @@ export function OnboardingTour({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const cur = STEPS[step];
+  const stepKey = STEP_KEYS[step];
+  const title = t(`onboarding.${stepKey}.title`);
 
   return (
     <div className="recovery-overlay" role="dialog" aria-modal="true">
       <div className="recovery-dialog" style={{ maxWidth: 380 }}>
-        <div className="recovery-title">{cur.title}</div>
+        <div className="recovery-title">{title}</div>
         <div className="recovery-text" style={{ minHeight: 110 }}>
-          {cur.body}
+          <StepBody step={stepKey} />
         </div>
 
         {/* Прогресс точками */}
@@ -159,7 +141,7 @@ export function OnboardingTour({ onClose }: { onClose: () => void }) {
             margin: "12px 0",
           }}
         >
-          {STEPS.map((_, i) => (
+          {STEP_KEYS.map((_, i) => (
             <span
               key={i}
               aria-hidden
@@ -187,7 +169,7 @@ export function OnboardingTour({ onClose }: { onClose: () => void }) {
             disabled={isLast}
             style={{ visibility: isLast ? "hidden" : "visible" }}
           >
-            пропустить
+            {t("onboarding.skip")}
           </button>
           {step > 0 && (
             <button
@@ -195,11 +177,11 @@ export function OnboardingTour({ onClose }: { onClose: () => void }) {
               className="btn-ghost"
               onClick={() => setStep((s) => s - 1)}
             >
-              назад
+              {t("onboarding.back")}
             </button>
           )}
           <button type="button" className="btn-primary" onClick={onNext}>
-            {isLast ? "готово" : "далее"}
+            {isLast ? t("onboarding.done") : t("onboarding.next")}
           </button>
         </div>
       </div>

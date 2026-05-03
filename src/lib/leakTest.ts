@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "../i18n";
 import { showToast } from "../stores/toastStore";
 
 /** Бэк-тип из `vpn::leak_test::LeakTestResult` (serde без rename). */
@@ -50,8 +51,8 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
   } catch (e) {
     showToast({
       kind: "error",
-      title: "проверка утечек",
-      message: `не удалось проверить: ${String(e)}`,
+      title: i18n.t("leakTest.title"),
+      message: i18n.t("leakTest.failed", { error: String(e) }),
     });
     return;
   }
@@ -59,9 +60,8 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
   if (!result.ip) {
     showToast({
       kind: "error",
-      title: "проверка утечек",
-      message:
-        "не удалось получить публичный ip — оба сервиса (cloudflare, ipwho.is) недоступны",
+      title: i18n.t("leakTest.title"),
+      message: i18n.t("leakTest.noIp"),
     });
     return;
   }
@@ -73,7 +73,7 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
 
   showToast({
     kind: "success",
-    title: "твой ip сейчас",
+    title: i18n.t("leakTest.yourIp"),
     message: `${ipLine}\n${placeLine}`,
     durationMs: 8000,
   });
@@ -86,8 +86,10 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
   ) {
     showToast({
       kind: "warning",
-      title: "dns leak",
-      message: `резолвер (${result.dns_resolver}) совпадает с публичным ip — днс не идёт через vpn`,
+      title: i18n.t("leakTest.dnsLeakTitle"),
+      message: i18n.t("leakTest.dnsLeakMessage", {
+        resolver: result.dns_resolver,
+      }),
       durationMs: 12000,
     });
   }
@@ -99,8 +101,10 @@ export async function runLeakTest(socksPort: number | null): Promise<void> {
   if (result.ipv6_leak) {
     showToast({
       kind: "warning",
-      title: "ipv6 leak",
-      message: `v6-адрес (${result.ipv6_leak}) виден напрямую — туннель v6 не покрывает.\nвключите kill switch или отключите ipv6 в свойствах адаптера`,
+      title: i18n.t("leakTest.ipv6LeakTitle"),
+      message: i18n.t("leakTest.ipv6LeakMessage", {
+        addr: result.ipv6_leak,
+      }),
       durationMs: 14000,
     });
   }

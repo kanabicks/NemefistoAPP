@@ -1,0 +1,806 @@
+{
+  "common": {
+    "ok": "ok",
+    "cancel": "cancel",
+    "apply": "apply",
+    "save": "save",
+    "close": "close",
+    "back": "back",
+    "delete": "delete",
+    "remove": "remove",
+    "add": "add",
+    "loading": "loading…",
+    "yes": "yes",
+    "no": "no",
+    "later": "later",
+    "now": "now",
+    "copy": "copy",
+    "copied": "copied",
+    "search": "search",
+    "filter": "filter",
+    "all": "all",
+    "none": "none",
+    "auto": "auto",
+    "off": "off",
+    "on": "on",
+    "rename": "rename",
+    "refresh": "refresh",
+    "open": "open",
+    "select": "select",
+    "warning": "warning",
+    "error": "error",
+    "success": "done",
+    "version": "version",
+    "language": "language"
+  },
+  "header": {
+    "dashboard": "dashboard",
+    "settings": "settings"
+  },
+  "footer": {
+    "left": "NO-LOGS · XRAY · VLESS · REALITY"
+  },
+  "welcome": {
+    "tag": "connect in a minute",
+    "title": "add a subscription",
+    "desc": {
+      "before": "paste your subscription URL (looks like",
+      "after": "), the app will fetch the server list and ping each one."
+    },
+    "load": "load"
+  },
+  "power": {
+    "connect": "connect",
+    "disconnect": "disconnect",
+    "modeLabel": "mode — {{mode}}",
+    "lanCredsLabel": "LAN login/password",
+    "lanCredsCopyTitle": "copy user:pass"
+  },
+  "status": {
+    "pill": {
+      "stopped": "STANDBY",
+      "starting": "CONNECTING",
+      "running": "TUNNEL UP",
+      "stopping": "DISCONNECTING",
+      "error": "ERROR"
+    },
+    "label": {
+      "stopped": "not connected",
+      "starting": "connecting…",
+      "running": "protected",
+      "stopping": "disconnecting…",
+      "error": "error"
+    }
+  },
+  "mode": {
+    "proxy": "system proxy",
+    "tun": "tun (all traffic)"
+  },
+  "modeSegment": {
+    "proxy": "system proxy",
+    "tun": "tun"
+  },
+  "toaster": {
+    "dismissTitle": "click to dismiss"
+  },
+  "leakTest": {
+    "title": "leak test",
+    "failed": "check failed: {{error}}",
+    "noIp": "couldn't get public ip — both services (cloudflare, ipwho.is) unreachable",
+    "yourIp": "your ip now",
+    "dnsLeakTitle": "dns leak",
+    "dnsLeakMessage": "resolver ({{resolver}}) matches public ip — dns doesn't go through vpn",
+    "ipv6LeakTitle": "ipv6 leak",
+    "ipv6LeakMessage": "v6-address ({{addr}}) visible directly — tunnel doesn't cover v6.\nenable kill switch or disable ipv6 on the adapter"
+  },
+  "floating": {
+    "vpnOn": "vpn on — click to disconnect",
+    "vpnOff": "vpn off — click to connect",
+    "pickServer": "pick a server in the main window",
+    "noServer": "no server"
+  },
+  "bandwidth": {
+    "titleIface": "interface: {{iface}}",
+    "titleNoIface": "interface not detected"
+  },
+  "announce": {
+    "openLink": "open link"
+  },
+  "subMeta": {
+    "units": {
+      "B": "B",
+      "KB": "KB",
+      "MB": "MB",
+      "GB": "GB",
+      "TB": "TB"
+    },
+    "premium": "premium",
+    "premiumTitle": "upgrade to premium",
+    "trafficUsedOf": "{{used}} of {{total}} used",
+    "trafficUsedUnlim": "{{used}} used · unlimited",
+    "unlimited": "unlimited",
+    "until": "until {{date}}",
+    "expiresToday": "expires today",
+    "expiredAgo_one": "expired {{count}} day ago",
+    "expiredAgo_other": "expired {{count}} days ago",
+    "barAria": "{{percent}}% used",
+    "updated": "updated {{when}}",
+    "neverUpdated": "never updated",
+    "refreshTitle": "refresh subscription",
+    "justNow": "just now",
+    "longAgo": "a while ago",
+    "minutesAgo_one": "{{count}} min ago",
+    "minutesAgo_other": "{{count}} min ago",
+    "hoursAgo_one": "{{count}}h ago",
+    "hoursAgo_other": "{{count}}h ago",
+    "daysAgo_one": "{{count}}d ago",
+    "daysAgo_other": "{{count}}d ago"
+  },
+  "serverSelector": {
+    "pickServer": "select a server",
+    "refreshPings": "refresh pings",
+    "searchPlaceholder": "search by name",
+    "viewConfig": "view config",
+    "engineBadgeMihomo": "Mihomo only",
+    "engineBadgeSingbox": "sing-box only (Mihomo-incompatible format)"
+  },
+  "toast": {
+    "crashDetected": {
+      "title": "previous crash detected",
+      "message": "{{count}} crash-dump(s) found this week. Settings → system → diagnostics lets you bundle a zip for support"
+    },
+    "recover": {
+      "successTitle": "network recovered",
+      "partialTitle": "partially recovered",
+      "cleaned": "cleaned: {{items}}",
+      "nothingToClean": "nothing to clean up",
+      "okPrefix": "ok: {{items}}",
+      "errorsPrefix": "errors: {{errors}}",
+      "parts": {
+        "wfp": "wfp filters",
+        "tunRoutes": "tun + routes",
+        "proxy": "system proxy"
+      }
+    },
+    "diagnostics": {
+      "savedTitle": "diagnostics saved",
+      "savedMessage": "file: {{path}}\nopen the folder?",
+      "failedTitle": "failed to save"
+    },
+    "backup": {
+      "exportedTitle": "exported",
+      "exportFailed": "export failed",
+      "readFailed": "failed to read backup"
+    },
+    "update": {
+      "checkTitle": "checking for updates",
+      "upToDate": "you are on the latest version",
+      "checkFailed": "check failed"
+    }
+  },
+  "backup": {
+    "parseError": "could not parse JSON: {{error}}",
+    "expectedJson": "expected a JSON object",
+    "unsupportedSchema": "unsupported schema_version: {{version}}",
+    "fieldLabels": {
+      "subscriptionUrl": "subscription URL",
+      "appRules": "app rules"
+    },
+    "values": {
+      "on": "on",
+      "off": "off",
+      "empty": "empty",
+      "dash": "—",
+      "itemsCount_one": "{{count}} item",
+      "itemsCount_other": "{{count}} items"
+    }
+  },
+  "deepLink": {
+    "exported": {
+      "title": "settings exported",
+      "failedTitle": "export failed"
+    },
+    "importFromUrl": {
+      "title": "import-from-url",
+      "expectedHttpUrl": "expected an http(s):// URL"
+    },
+    "importSettings": {
+      "title": "import-settings",
+      "notBase64OrJson": "not base64 and not JSON"
+    },
+    "routing": {
+      "title": "routing deep-link",
+      "autoroutingTitle": "autorouting",
+      "emptyPayload": "empty payload",
+      "expectedUrl": "expected a URL, got:\n{{raw}}",
+      "profileTitle": "routing profile",
+      "activated": "added and activated",
+      "addedNotActive": "added (activate it in Settings)"
+    }
+  },
+  "vpnStore": {
+    "switching": {
+      "title": "switching",
+      "message": "switching to the new server…"
+    },
+    "vpnConflict": {
+      "title": "VPN conflict",
+      "message": "active VPN on interface: {{list}}.\nDisconnect it before connecting."
+    }
+  },
+  "settings": {
+    "title": "settings",
+    "fromSubscription": "from subscription",
+    "categories": {
+      "subscription": {
+        "title": "Subscription",
+        "desc": "URL, refresh, user agent, HWID"
+      },
+      "connection": {
+        "title": "Connection",
+        "desc": "startup behavior, server sorting"
+      },
+      "engine": {
+        "title": "Engine",
+        "desc": "sing-box / Mihomo, app rules"
+      },
+      "tunnel": {
+        "title": "Tunnel",
+        "desc": "LAN, TUN name masking"
+      },
+      "security": {
+        "title": "Anti-DPI & protection",
+        "desc": "fragmentation, kill switch, leak protection"
+      },
+      "routing": {
+        "title": "Routing",
+        "desc": "geosite/geoip profiles, auto-groups"
+      },
+      "appearance": {
+        "title": "Appearance",
+        "desc": "preset, theme, background, floating window"
+      },
+      "system": {
+        "title": "System & about",
+        "desc": "autostart, updates, history, logs, reset"
+      }
+    },
+    "comingSoon": {
+      "badge": "soon",
+      "mergeSubs": {
+        "title": "merge multiple subscriptions",
+        "desc": "add 2-5 subscriptions in parallel, all servers in one list tagged by source"
+      },
+      "autoFailover": {
+        "title": "auto-failover",
+        "desc": "if the active server pings >3000ms, auto-switch to the next one in the list"
+      },
+      "windowsHello": {
+        "title": "windows hello on launch",
+        "desc": "require auth (face/pin/fingerprint) when the app starts. handy on shared machines"
+      },
+      "wfpPerApp": {
+        "title": "WFP per-app routing",
+        "desc": "per-process rules for both engines via the Windows Filtering Platform kernel driver. an alternative to Mihomo PROCESS-NAME"
+      },
+      "autoUpdate": {
+        "title": "app auto-update",
+        "desc": "client checks for new versions, downloads the signed installer and updates itself — no need to visit a website"
+      },
+      "history": {
+        "title": "session history",
+        "desc": "local connect/disconnect log: time, server, mode, duration, disconnect reason"
+      },
+      "speedTest": {
+        "title": "speed test through VPN",
+        "desc": "measure throughput via cloudflare CDN. optional weekly auto-test on every server"
+      }
+    },
+    "subscription": {
+      "title": "subscription",
+      "dashboard": "dashboard →"
+    },
+    "autoRefresh": {
+      "title": "auto-refresh",
+      "label": "refresh subscription",
+      "hint": "in the background at the chosen interval",
+      "intervalHours": "interval (hours)"
+    },
+    "dataSending": {
+      "title": "data sending",
+      "sendHwid": {
+        "label": "send HWID",
+        "hint": "sent in the x-hwid header · the server registers your device with the subscription"
+      },
+      "userAgent": {
+        "label": "user agent",
+        "autoBadge": "auto by engine",
+        "hint": "automatic: Happ/2.7.0 for sing-box (Marzban-style xray-json with built-in routing — we convert it to sing-box JSON), clash-verge for Mihomo (clash YAML directly). if you set it manually it stays as-is for both engines."
+      }
+    },
+    "hwid": {
+      "title": "device hwid",
+      "hint": "windows machineguid · sent automatically with every subscription request",
+      "override": "override hwid",
+      "overrideActive": "override active — the app sends «{{value}}…» instead of the system hwid",
+      "resetOverride": "reset",
+      "placeholder": "leave blank to use the system hwid"
+    },
+    "connection": {
+      "onStart": {
+        "title": "on startup"
+      },
+      "refreshOnOpen": {
+        "label": "refresh subscription",
+        "hint": "fetch the server list on every launch"
+      },
+      "pingOnOpen": {
+        "label": "ping servers",
+        "hint": "measure latency to every server"
+      },
+      "connectOnOpen": {
+        "label": "auto-connect",
+        "hint": "connect to the selected server on launch"
+      },
+      "sort": {
+        "title": "server sorting",
+        "none": "no sorting",
+        "ping": "by ping (fastest first)",
+        "name": "alphabetical"
+      }
+    },
+    "engine": {
+      "title": "vpn core",
+      "label": "engine",
+      "hint": "sing-box — modern engine with fast startup and built-in TUN. best for vless/vmess/trojan/ss/hy2/tuic/wireguard. mihomo — needed for anytls / mieru, XHTTP servers, and per-process routing (app rules)"
+    },
+    "appRules": {
+      "title": "app rules",
+      "singboxWarning": "sing-box is active — app rules only work with the mihomo engine (via its native PROCESS-NAME matcher). switch the engine in Settings → engine to enable rules.",
+      "tunWarning": "in TUN mode app rules only work when the subscription delivers a full mihomo-config (server type mihomo-profile) — there Mihomo owns the TUN adapter directly and sees real processes. for URI servers (vless/vmess/trojan/hy2/...) in TUN, rules are not applied — switch to proxy mode.",
+      "intro": "rules of the form «<exe> → action» are applied by Mihomo to processes by their executable file name. for example, send telegram through the VPN while routing steam direct. the exe name is taken from task manager (telegram.exe, steam.exe). proxy mode only",
+      "actionTitles": {
+        "proxy": "through VPN",
+        "direct": "direct, bypasses VPN",
+        "block": "blocked"
+      },
+      "deleteTitle": "delete rule",
+      "commentPlaceholder": "note (optional)"
+    },
+    "tunnel": {
+      "network": {
+        "title": "network"
+      },
+      "allowLan": {
+        "label": "allow LAN connections",
+        "hint": "inbound listens on 0.0.0.0 — other devices on the network can use this proxy (login/password are shown after connect)"
+      },
+      "tunMasking": {
+        "label": "TUN name masking",
+        "hint": "the adapter is named like a regular network interface (wlan99 / Local Area Connection / Ethernet). protects against spy apps that detect VPN by adapter name via GetAdaptersAddresses"
+      },
+      "tunOnlyStrict": {
+        "label": "TUN-only mode (strict)",
+        "hint": "hide the proxy/tun switch on the main screen and operate via the TUN adapter only. no local SOCKS5 socket on loopback — for paranoiacs who refuse to leave any VPN surface on 127.0.0.1"
+      }
+    },
+    "antiDpi": {
+      "title": "anti-dpi",
+      "mihomoWarning": "mihomo is active — fragmentation and noises are not applied (anti-DPI is implemented for sing-box only). doh-resolve still works via mihomo's dns.",
+      "singboxInfo": "in sing-box fragmentation works as a simple ON/OFF — fine-grained parameters (size/sleep/interval) are not accepted by sing-box. noises are not supported in upstream sing-box and are ignored. for fine-tuning use Mihomo (anti-DPI is not implemented there yet).",
+      "fragmentation": {
+        "label": "tcp fragmentation",
+        "hint": "splits the tls clienthello into chunks — bypasses most dpi",
+        "singboxOnly": " (sing-box only)",
+        "packetsLabel": "which packets",
+        "packetsAll": "all",
+        "lengthLabel": "length (bytes)",
+        "intervalLabel": "interval (ms)"
+      },
+      "noises": {
+        "label": "noise packets",
+        "hint": "fake udp packets to confuse dpi"
+      },
+      "dohResolve": {
+        "label": "doh server resolve",
+        "hint": "the vpn server address is resolved via doh, bypassing system dns (helps with dns blocks)",
+        "endpointLabel": "doh endpoint",
+        "bootstrapLabel": "bootstrap ip"
+      }
+    },
+    "killSwitch": {
+      "title": "kill switch",
+      "main": {
+        "label": "block traffic when vpn drops",
+        "hint": "leak protection at the windows kernel level (wfp). works even if the vpn engine crashes. triple orphan-filter protection: dynamic-session + heartbeat-watchdog (60s) + cleanup on helper-service start"
+      },
+      "strict": {
+        "label": "strict mode",
+        "hint": "even sing-box/mihomo itself is allowed to talk only to the vpn server. direct routes (e.g. geosite:ru → DIRECT from your config) are blocked. for those who want everything through vpn, no exceptions. ⚠️ ru sites in split-routing will stop opening. requires kill-switch enabled"
+      },
+      "dnsLeak": {
+        "label": "block direct dns queries",
+        "hint": "all :53/udp+tcp except vpn-dns is blocked. protects against dns leaks. ⚠️ in proxy mode this can break apps that use system dns outside the proxy (some games, messengers). better used in tun mode"
+      },
+      "recover": {
+        "label": "recover network",
+        "hint": "if the internet feels half-broken after a crash / disconnect — one button removes wfp filters, orphan tun adapters, half-default routes and the system proxy. safe to press any time vpn is not active",
+        "button": "recover"
+      }
+    },
+    "diagnostics": {
+      "label": "export diagnostics",
+      "hint": "saves a zip with sing-box/mihomo logs, app version, current state and the list of running vpn processes to the Documents folder. no telemetry — fully local, you decide who to send the file to if you need help",
+      "button": "export"
+    },
+    "leakTest": {
+      "title": "leak test",
+      "description": "runs two requests in parallel: cloudflare cdn-trace for public ip + country (with ipwho.is fallback for city) and cloudflare doh whoami.cloudflare for the dns resolver ip. if the resolver ip matches your public one, dns queries are visible as your own (leak).",
+      "auto": {
+        "label": "auto-check after connect",
+        "hint": "show a toast with the real ip ~1.5s after connect"
+      },
+      "run": {
+        "label": "check now",
+        "hint": "run the test manually — the result appears in the bottom-right corner",
+        "button": "run"
+      }
+    },
+    "routing": {
+      "intro": "routing profiles decide which domains/IPs go through the VPN, which go direct, and which are blocked. rules are applied to sing-box and Mihomo on connect. for xray-json / sing-box-json configs from the subscription (with their own routing) — they are NOT applied (subscription wins)",
+      "autoTemplate": {
+        "title": "auto-template",
+        "label": "«minimal RU rules» when no profile is selected",
+        "hint": "when no routing profile is active — a built-in template is applied: geosite:ru + geoip:ru + LAN → DIRECT, ads (geosite:category-ads-all) → BLOCK, everything else → PROXY. useful out of the box without importing external rules"
+      }
+    },
+    "appearance": {
+      "preset": {
+        "title": "preset",
+        "label": "ready-made style",
+        "hint": "a unique palette, background and button style at once",
+        "options": {
+          "none": "no preset"
+        }
+      },
+      "themeStyle": {
+        "title": "theme & style",
+        "presetHint": "controlled by the preset"
+      },
+      "theme": {
+        "label": "theme",
+        "hint": "app and crystal palette",
+        "options": {
+          "dark": "dark",
+          "light": "light"
+        }
+      },
+      "background": {
+        "label": "background",
+        "hint": "3d scene behind the interface",
+        "options": {
+          "crystal": "crystal",
+          "tunnel": "tunnel",
+          "globe": "globe",
+          "particles": "particles"
+        }
+      },
+      "buttonStyle": {
+        "label": "button style",
+        "hint": "look of the main connect button",
+        "options": {
+          "glass": "glass",
+          "flat": "flat",
+          "neon": "neon",
+          "metallic": "metallic"
+        }
+      },
+      "floating": {
+        "title": "floating window",
+        "label": "mini window on top of everything",
+        "hint": "vpn status and current ↑/↓ speed in a small window. click the dot — toggle, double-click the window — open the main one"
+      }
+    },
+    "system": {
+      "autostart": {
+        "title": "autostart",
+        "label": "launch with the system",
+        "hint": "the app starts automatically on windows login (via task scheduler, no UAC)"
+      }
+    },
+    "shortcuts": {
+      "title": "hotkeys",
+      "intro": "work globally, even when the nemefisto window is hidden. click a field, press the desired combo (at least one modifier: ctrl/alt/shift/win). esc — cancel, backspace — clear.",
+      "toggleVpn": {
+        "label": "toggle vpn on / off",
+        "hint": "same as pressing the main button — connect or disconnect"
+      },
+      "showHide": {
+        "label": "show / hide window",
+        "hint": "same as clicking the system tray icon"
+      },
+      "switchMode": {
+        "label": "switch mode",
+        "hint": "proxy ↔ tun. only takes effect when vpn is stopped"
+      },
+      "pressCombo": "press a combo…",
+      "notSet": "not set",
+      "clear": "clear"
+    },
+    "trustedWifi": {
+      "title": "trusted wi-fi",
+      "intro": "on a trusted network the vpn turns off automatically. when you go back to a regular one it can turn back on (if the option below is enabled). works for wi-fi only (by ssid from netsh); ethernet/mobile are treated as regular networks.",
+      "currentNetwork": "current network:",
+      "addThis": "+ add",
+      "inList": "in list",
+      "current": "current",
+      "manualPlaceholder": "enter network name manually",
+      "action": {
+        "label": "on connect to trusted",
+        "hint": "what to do once we join one of the networks above",
+        "ignore": "nothing",
+        "disconnect": "disconnect vpn"
+      },
+      "autoLeave": {
+        "label": "auto-enable on leave",
+        "hint": "when leaving a trusted network — reconnect, but only if vpn was disabled by this rule"
+      }
+    },
+    "backup": {
+      "title": "settings backup",
+      "intro": "exports all settings + subscription URL into a JSON file (HWID and other machine-specific data are excluded). on import a preview of changes is shown first.",
+      "export": "export to file",
+      "import": "import from file"
+    },
+    "logs": {
+      "title": "vpn engine logs",
+      "show": "show logs",
+      "empty": "(log is empty)"
+    },
+    "urlSchemes": {
+      "title": "url schemes",
+      "intro": "the app responds to links with the nemefisto:// prefix. a bot can send such links to add a subscription or toggle the tunnel automatically.",
+      "add": "add subscription (URL must be encoded)",
+      "connect": "connect the selected server",
+      "disconnect": "stop the tunnel",
+      "toggle": "toggle state",
+      "export": "export settings to Documents",
+      "importFromUrl": "download and preview backup"
+    },
+    "updates": {
+      "title": "updates",
+      "auto": {
+        "label": "auto-check",
+        "hint": "asks GitHub every 6 hours. on a hit, a modal offers to update"
+      },
+      "checking": "checking…",
+      "checkNow": "check now"
+    },
+    "about": {
+      "title": "about",
+      "version": "version",
+      "dashboard": "dashboard",
+      "link": "link",
+      "support": "support",
+      "privacy": "privacy",
+      "license": "license",
+      "privacyNote": "nemefisto does not collect telemetry, does not send crash reports «home» and has no remote-control mechanisms. all logs are local to this computer. see PRIVACY.md for details."
+    },
+    "reset": {
+      "title": "reset",
+      "resetSettings": "reset settings",
+      "deleteAll": "delete everything",
+      "confirmSettings": "settings will return to defaults (theme, anti-DPI, engine, app rules). the subscription and hwid are kept. continue?",
+      "confirmSettingsBtn": "yes, reset",
+      "confirmAll": "this deletes absolutely everything: subscription, hwid override, all settings, dismissed announcements. it will disconnect the tunnel and reload the app",
+      "confirmAllBtn": "yes, delete everything"
+    },
+    "language": {
+      "title": "language",
+      "label": "interface language",
+      "hint": "auto — picked from system language",
+      "auto": "auto (system)"
+    }
+  },
+  "modal": {
+    "crashRecovery": {
+      "title": "leftovers from a previous session detected",
+      "intro": "the previous run did not exit cleanly (crash or forced shutdown). we found:",
+      "explainBase": "«fix everything» — removes any of our wfp filters, deletes orphan tun adapters and force-clears the system proxy.",
+      "explainRestoreProxy": "«restore proxy» — reverts the registry to the original values from before the connection.",
+      "leaveAsIs": "leave as is",
+      "restoreProxy": "restore proxy",
+      "fixAll": "fix everything",
+      "findings": {
+        "proxy": "system proxy is pointing to us",
+        "backup": "a backup of the original proxy settings is saved",
+        "tun": "tun adapter `nemefisto-*` is in the system",
+        "wfp": "kill switch wfp filters survived from the previous session"
+      }
+    },
+    "backup": {
+      "title": "import settings",
+      "createdAtPrefix": "backup created ",
+      "createdAtMiddle": ", app version {{version}}.",
+      "timeNotSet": "(time not set)",
+      "noChanges": "nothing will change — every imported value already matches the current one.",
+      "changesPrefixOne": "<1>{{count}}</1> setting will change:",
+      "changesPrefixOther": "<1>{{count}}</1> settings will change:",
+      "appliedTitle": "settings applied",
+      "appliedMessage_one": "{{count}} change",
+      "appliedMessage_other": "{{count}} changes",
+      "subscriptionUpdatedSuffix": "\nsubscription URL updated — press ↻ to reload servers",
+      "applyFailedTitle": "failed to apply"
+    },
+    "update": {
+      "availableTitle": "version {{version}} is available",
+      "currentVersion": "current version:",
+      "downloading": "downloading update… {{percent}}%",
+      "later": "later",
+      "installAndRestart": "update and restart",
+      "updateFailedTitle": "update failed"
+    },
+    "serverPreview": {
+      "title": "server config",
+      "closeAria": "close",
+      "tabGenerated": "sing-box (generated)",
+      "tabRaw": "raw (from subscription)",
+      "errorPrefix": "error: {{message}}",
+      "loading": "loading…",
+      "copy": "copy",
+      "copied": "✓ copied"
+    }
+  },
+  "onboarding": {
+    "skip": "skip",
+    "back": "back",
+    "next": "next",
+    "done": "done",
+    "step1": {
+      "title": "welcome to nemefisto",
+      "body": "VPN client running on two cores (xray + mihomo) with protection against DPI, leaks and local detection. fully open source, no telemetry.",
+      "footnote": "a quick 3-step tour — takes about a minute."
+    },
+    "step2": {
+      "title": "1 · add a subscription",
+      "bodyBefore": "get a subscription URL from your VPN provider and paste it on the main screen. format: ",
+      "footnote": "Marzban, 3x-ui, sing-box, base64 lists, Mihomo YAML are supported — everything modern panels return."
+    },
+    "step3": {
+      "title": "2 · pick a server and connect",
+      "body": "the app will fetch the server list and ping each one. tap the dropdown below the power button and pick any — latency is shown next to the name.",
+      "footnote": "the big round button is connect / disconnect. connecting usually takes 1-2 seconds."
+    },
+    "step4": {
+      "title": "3 · all set",
+      "body": "settings are in the top-right corner: kill switch, anti-DPI, themes, country routing, trusted wi-fi networks.",
+      "footnoteBefore": "hotkeys: ",
+      "footnoteToggleVpn": " — toggle VPN, ",
+      "footnoteShowHide": " — show/hide window."
+    }
+  },
+  "routingProfiles": {
+    "title": "routing profiles",
+    "intro": "import split-routing rules. format — Marzban-style JSON (DirectSites/DirectIp/ProxySites/BlockSites + Geoipurl/Geositeurl). one profile is active — its rules are applied to Xray and Mihomo on connect. autorouting is refreshed on a schedule from a URL source.",
+    "emptyHint": "empty. add a profile below or import via deep-link",
+    "noName": "no name",
+    "kindAuto": "auto",
+    "kindStatic": "static",
+    "ruleCount_one": "{{count}} rule",
+    "ruleCount_other": "{{count}} rules",
+    "updateEvery": " · refreshes every {{hours}}h · {{when}}",
+    "refreshNow": "refresh now",
+    "deleteTitle": "delete",
+    "confirmRemove": "delete profile?",
+    "deactivate": {
+      "label": "disable profile",
+      "hint": "deactivate the active one (rules will not apply on connect)",
+      "button": "disable"
+    },
+    "addTitle": "add profile",
+    "addPlaceholder": "URL (autorouting) or base64/JSON (static)\n\nURL example: https://example.com/routing.json\nbase64 example: eyJOYW1lIjoiVGVzdCJ9",
+    "intervalLabel": "auto-refresh interval:",
+    "intervalUrlOnly": "(URL only)",
+    "intervalOptions": {
+      "12h": "12 hours",
+      "24h": "24 hours",
+      "3d": "3 days",
+      "7d": "7 days",
+      "never": "do not refresh"
+    },
+    "geofiles": {
+      "title": "geofiles (geoip/geosite .dat)",
+      "intro": "v2ray-rules-dat files (Loyalsoldier) are cached locally. URLs come from the active profile (Geoipurl / Geositeurl). on refresh the .sha256 is fetched first — if the hash is unchanged, the .dat is skipped (saves 5-15 MB each time).",
+      "pathLabel": "path:",
+      "fileSize": "{{size}}, sha256: {{hash}}",
+      "fileMissing": "not loaded",
+      "refreshLabel": "refresh geofiles",
+      "refreshHint": "download fresh .dat files if the sha256 changed. URLs come from the active profile",
+      "refreshButton": "refresh"
+    },
+    "relativeTime": {
+      "neverUpdated": "never updated",
+      "justNow": "just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}}h ago",
+      "daysAgo": "{{count}}d ago"
+    },
+    "toast": {
+      "addedTitle": "routing profile",
+      "addedMessage": "added",
+      "addFailedTitle": "could not add",
+      "activateFailedTitle": "failed to activate",
+      "refreshedTitle": "profile",
+      "refreshedMessage": "refreshed",
+      "refreshFailedTitle": "refresh failed",
+      "removeFailedTitle": "failed to remove",
+      "geofilesPartialTitle": "geofiles partial",
+      "geofilesTitle": "geofiles",
+      "geofilesUpdated": "updated: {{items}}",
+      "geofilesUnchanged": "unchanged: {{items}}",
+      "geofilesNoUrls": "no geofile URLs in the active profile",
+      "geofilesFailedTitle": "geofiles refresh failed"
+    }
+  },
+  "mihomoGroups": {
+    "typeLabels": {
+      "Selector": "selector",
+      "URLTest": "url-test",
+      "Fallback": "fallback",
+      "LoadBalance": "load-balance",
+      "Relay": "relay"
+    },
+    "active": "active",
+    "selected": "selected",
+    "auto": "auto",
+    "nodeCount": "{{count}} nodes",
+    "test": "test",
+    "testTitle": "run a delay test on every node in the group",
+    "delayUnit": "{{value}} ms",
+    "cardTitleLiveSelector": "select this node",
+    "cardTitlePreferredSelector": "save as preferred — will apply on connect",
+    "cardTitleAuto": "managed automatically",
+    "toast": {
+      "autoSelectTitle": "automatic selection",
+      "autoSelectMessage": "{{type}} group is self-managed",
+      "selectedTitle": "selected",
+      "selectedPending": "{{group}} → {{name}}. will apply on connect",
+      "switchFailedTitle": "failed to switch",
+      "testFailedTitle": "test failed"
+    }
+  },
+  "proxiesPanel": {
+    "title": "proxy groups (mihomo)",
+    "titleBeforeConnect": " · before connect",
+    "loading": "loading…",
+    "emptyState": "no groups in the current profile. connect to a mihomo profile from your subscription to see proxy groups.",
+    "staticHint": "click a node → applies on connect. latency and «test» appear after VPN starts.",
+    "active": "active",
+    "selected": "selected",
+    "nodeCount": " · {{count}} nodes",
+    "test": "test",
+    "delayUnit": "{{value}} ms",
+    "delayMs": "{{value}} ms",
+    "timeout": "timeout",
+    "nodeTitleLiveSelector": "select this node",
+    "nodeTitlePreferredSelector": "save as preferred — will apply on connect",
+    "nodeTitleAuto": "managed automatically",
+    "refresh": "refresh",
+    "close": "close",
+    "typeLabels": {
+      "Selector": "selector",
+      "URLTest": "url-test",
+      "Fallback": "fallback",
+      "LoadBalance": "load-balance",
+      "Relay": "relay"
+    },
+    "toast": {
+      "selectedTitle": "selected",
+      "selectedPending": "{{group}} → {{name}}. will apply on connect",
+      "switchedTitle": "switched",
+      "switchedMessage": "{{group}} → {{name}}",
+      "switchFailedTitle": "failed to switch",
+      "testFailedTitle": "test failed"
+    }
+  }
+}

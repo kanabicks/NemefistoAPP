@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { RoutingProfilesPanel } from "./RoutingProfilesPanel";
@@ -62,8 +63,10 @@ type SettingsCategory =
 type CategoryMeta = {
   id: SettingsCategory;
   icon: string;
-  title: string;
-  desc: string;
+  /** i18n-ключ для заголовка категории. Резолвится через t() в месте рендера. */
+  titleKey: string;
+  /** i18n-ключ для описания категории. */
+  descKey: string;
 };
 
 /** Метаданные категорий для рендера CategoryList. Иконки — эмодзи
@@ -73,54 +76,55 @@ const CATEGORIES: CategoryMeta[] = [
   {
     id: "subscription",
     icon: "📡",
-    title: "Подписка",
-    desc: "URL, обновление, user agent, HWID",
+    titleKey: "settings.categories.subscription.title",
+    descKey: "settings.categories.subscription.desc",
   },
   {
     id: "connection",
     icon: "🔌",
-    title: "Подключение",
-    desc: "поведение при запуске, сортировка серверов",
+    titleKey: "settings.categories.connection.title",
+    descKey: "settings.categories.connection.desc",
   },
   {
     id: "engine",
     icon: "⚙️",
-    title: "Движок",
-    desc: "sing-box / Mihomo, правила приложений",
+    titleKey: "settings.categories.engine.title",
+    descKey: "settings.categories.engine.desc",
   },
   {
     id: "tunnel",
     icon: "🛡️",
-    title: "Туннель",
-    desc: "LAN, маскировка TUN-имени",
+    titleKey: "settings.categories.tunnel.title",
+    descKey: "settings.categories.tunnel.desc",
   },
   {
     id: "security",
     icon: "🔒",
-    title: "Anti-DPI и защита",
-    desc: "фрагментация, kill switch, leak protection",
+    titleKey: "settings.categories.security.title",
+    descKey: "settings.categories.security.desc",
   },
   {
     id: "routing",
     icon: "🗺️",
-    title: "Маршрутизация",
-    desc: "geosite/geoip профили, авто-группы",
+    titleKey: "settings.categories.routing.title",
+    descKey: "settings.categories.routing.desc",
   },
   {
     id: "appearance",
     icon: "🎨",
-    title: "Интерфейс",
-    desc: "пресет, тема, фон, плавающее окно",
+    titleKey: "settings.categories.appearance.title",
+    descKey: "settings.categories.appearance.desc",
   },
   {
     id: "system",
     icon: "🔧",
-    title: "Система и о программе",
-    desc: "автозапуск, обновления, история, логи, сброс",
+    titleKey: "settings.categories.system.title",
+    descKey: "settings.categories.system.desc",
   },
 ];
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const s = useSettingsStore();
   const eff = useEffectiveSettings();
   const subUrl = useSubscriptionStore((x) => x.url);
@@ -179,8 +183,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   };
   const headerTitle =
     category === null
-      ? "настройки"
-      : CATEGORIES.find((c) => c.id === category)?.title.toLowerCase() ?? "настройки";
+      ? t("settings.title")
+      : t(
+          CATEGORIES.find((c) => c.id === category)?.titleKey ??
+            "settings.title"
+        ).toLowerCase();
 
   return (
     <div className="settings-page">
@@ -190,9 +197,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={onBack}
             className="back-btn"
-            aria-label="назад"
+            aria-label={t("common.back")}
           >
-            ← назад
+            ← {t("common.back")}
           </button>
           <h2 className="settings-title">{headerTitle}</h2>
         </header>
@@ -206,10 +213,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "subscription" && (
             <>
               <section className="settings-section">
-                <div className="settings-section-title">подписка</div>
+                <div className="settings-section-title">{t("settings.subscription.title")}</div>
                 {subMeta?.title && (
                   <div className="settings-row-hint" style={{ marginBottom: 8 }}>
-                    {subMeta.title} <span className="hint-badge">из подписки</span>
+                    {subMeta.title} <span className="hint-badge">{t("settings.fromSubscription")}</span>
                   </div>
                 )}
                 <div className="row-input">
@@ -227,7 +234,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     onClick={() => fetchSubscription()}
                     className="btn-ghost"
                   >
-                    {subLoading ? "…" : "обновить"}
+                    {subLoading ? "…" : t("common.refresh")}
                   </button>
                 </div>
                 {subError && <pre className="hero-error">{subError}</pre>}
@@ -238,19 +245,19 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     className="btn-ghost"
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
                   >
-                    личный кабинет →
+                    {t("settings.subscription.dashboard")}
                   </button>
                 )}
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">авто-обновление</div>
+                <div className="settings-section-title">{t("settings.autoRefresh.title")}</div>
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">обновлять подписку</div>
+                    <div className="settings-row-label">{t("settings.autoRefresh.label")}</div>
                     <div className="settings-row-hint">
-                      в фоне через заданный интервал
+                      {t("settings.autoRefresh.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -263,11 +270,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <div className="settings-row">
                     <div>
                       <div className="settings-row-label">
-                        интервал (часы)
+                        {t("settings.autoRefresh.intervalHours")}
                         {!s.autoRefreshHoursTouched &&
                           subMeta?.updateIntervalHours != null && (
                             <span className="hint-badge" style={{ marginLeft: 8 }}>
-                              из подписки
+                              {t("settings.fromSubscription")}
                             </span>
                           )}
                       </div>
@@ -294,14 +301,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">отправка данных</div>
+                <div className="settings-section-title">{t("settings.dataSending.title")}</div>
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">передавать HWID</div>
+                    <div className="settings-row-label">{t("settings.dataSending.sendHwid.label")}</div>
                     <div className="settings-row-hint">
-                      отправляется в заголовке x-hwid · сервер сам регистрирует
-                      устройство в подписке
+                      {t("settings.dataSending.sendHwid.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -312,10 +318,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
                   <div className="settings-row-label">
-                    user agent
+                    {t("settings.dataSending.userAgent.label")}
                     {!s.userAgentTouched && (
                       <span className="hint-badge" style={{ marginLeft: 8 }}>
-                        авто по движку
+                        {t("settings.dataSending.userAgent.autoBadge")}
                       </span>
                     )}
                   </div>
@@ -327,16 +333,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     className="input"
                   />
                   <div className="settings-row-hint">
-                    автоматически: <b>Happ/2.7.0</b> для sing-box (Marzban-style
-                    xray-json с готовым routing — мы конвертируем в sing-box JSON),
-                    <b>clash-verge</b> для Mihomo (clash YAML напрямую).
-                    если правишь вручную — фиксируется как есть, на оба движка.
+                    {t("settings.dataSending.userAgent.hint")}
                   </div>
                 </div>
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">hwid устройства</div>
+                <div className="settings-section-title">{t("settings.hwid.title")}</div>
                 <div className="hwid-row">
                   <span className={"hwid-value" + (deviceHwid ? "" : " hwid-empty")}>
                     {deviceHwid || "—"}
@@ -347,12 +350,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     disabled={!deviceHwid}
                     className="btn-ghost"
                   >
-                    {hwidCopied ? "ок" : "копировать"}
+                    {hwidCopied ? t("common.ok") : t("common.copy")}
                   </button>
                 </div>
                 <p className="hint">
-                  machineguid windows · передаётся автоматически в каждом запросе
-                  подписки
+                  {t("settings.hwid.hint")}
                 </p>
 
                 <button
@@ -360,21 +362,21 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   onClick={() => setAdvancedOpen((v) => !v)}
                   className="advanced-toggle"
                 >
-                  {advancedOpen ? "▾ override hwid" : "▸ override hwid"}
+                  {advancedOpen ? `▾ ${t("settings.hwid.override")}` : `▸ ${t("settings.hwid.override")}`}
                 </button>
                 {advancedOpen && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
                     {subHwid.trim() && (
                       <div className="warn-box">
                         <span className="warn-box-text">
-                          активен override — приложение шлёт «{subHwid.slice(0, 12)}…» вместо системного hwid
+                          {t("settings.hwid.overrideActive", { value: subHwid.slice(0, 12) })}
                         </span>
                         <button
                           type="button"
                           onClick={() => setSubHwid("")}
                           className="btn-ghost"
                         >
-                          сбросить
+                          {t("settings.hwid.resetOverride")}
                         </button>
                       </div>
                     )}
@@ -383,7 +385,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       value={subHwid}
                       onChange={(e) => setSubHwid(e.target.value)}
                       placeholder={
-                        deviceHwid || "оставь пустым чтобы использовать системный hwid"
+                        deviceHwid || t("settings.hwid.placeholder")
                       }
                       className="input"
                     />
@@ -392,8 +394,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </section>
 
               <ComingSoonNote
-                title="слияние нескольких подписок"
-                desc="добавить 2-5 подписок параллельно, серверы из всех в одном списке с тегом источника"
+                titleKey="settings.comingSoon.mergeSubs.title"
+                descKey="settings.comingSoon.mergeSubs.desc"
               />
             </>
           )}
@@ -402,13 +404,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "connection" && (
             <>
               <section className="settings-section">
-                <div className="settings-section-title">при запуске</div>
+                <div className="settings-section-title">{t("settings.connection.onStart.title")}</div>
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">обновлять подписку</div>
+                    <div className="settings-row-label">{t("settings.connection.refreshOnOpen.label")}</div>
                     <div className="settings-row-hint">
-                      подгружать список серверов при каждом старте
+                      {t("settings.connection.refreshOnOpen.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -419,9 +421,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">пинговать серверы</div>
+                    <div className="settings-row-label">{t("settings.connection.pingOnOpen.label")}</div>
                     <div className="settings-row-hint">
-                      замерять задержку до всех серверов
+                      {t("settings.connection.pingOnOpen.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -432,9 +434,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">авто-подключение</div>
+                    <div className="settings-row-label">{t("settings.connection.connectOnOpen.label")}</div>
                     <div className="settings-row-hint">
-                      подключаться к выбранному серверу при запуске
+                      {t("settings.connection.connectOnOpen.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -445,14 +447,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">сортировка серверов</div>
+                <div className="settings-section-title">{t("settings.connection.sort.title")}</div>
                 {(
                   [
-                    ["none", "без сортировки"],
-                    ["ping", "по пингу (от быстрых)"],
-                    ["name", "по алфавиту"],
+                    ["none", "settings.connection.sort.none"],
+                    ["ping", "settings.connection.sort.ping"],
+                    ["name", "settings.connection.sort.name"],
                   ] as [SortMode, string][]
-                ).map(([value, label]) => (
+                ).map(([value, labelKey]) => (
                   <label key={value} className="radio-row">
                     <input
                       type="radio"
@@ -460,14 +462,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       checked={s.sort === value}
                       onChange={() => s.set("sort", value)}
                     />
-                    <span>{label}</span>
+                    <span>{t(labelKey)}</span>
                   </label>
                 ))}
               </section>
 
               <ComingSoonNote
-                title="auto-failover"
-                desc="при пинге выбранного сервера >3000мс автоматически переключаться на следующий по списку"
+                titleKey="settings.comingSoon.autoFailover.title"
+                descKey="settings.comingSoon.autoFailover.desc"
               />
             </>
           )}
@@ -476,23 +478,19 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "engine" && (
             <>
               <section className="settings-section">
-                <div className="settings-section-title">vpn-ядро</div>
+                <div className="settings-section-title">{t("settings.engine.title")}</div>
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-label">
-                      движок
+                      {t("settings.engine.label")}
                       {!s.engineTouched && subMeta?.engine && (
                         <span className="hint-badge" style={{ marginLeft: 8 }}>
-                          из подписки
+                          {t("settings.fromSubscription")}
                         </span>
                       )}
                     </div>
                     <div className="settings-row-hint">
-                      <b>sing-box</b> — современный движок с быстрым стартом
-                      и встроенным TUN. оптимально для
-                      vless/vmess/trojan/ss/hy2/tuic/wireguard. <b>mihomo</b> —
-                      нужен для anytls / mieru, для XHTTP-серверов и для
-                      per-process routing (правила приложений)
+                      {t("settings.engine.hint")}
                     </div>
                   </div>
                   <select
@@ -527,13 +525,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "tunnel" && (
             <>
               <section className="settings-section">
-                <div className="settings-section-title">сеть</div>
+                <div className="settings-section-title">{t("settings.tunnel.network.title")}</div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">подключения из LAN</div>
+                    <div className="settings-row-label">{t("settings.tunnel.allowLan.label")}</div>
                     <div className="settings-row-hint">
-                      inbound слушает 0.0.0.0 — другие устройства в сети могут
-                      использовать этот прокси (логин/пароль показываются после connect)
+                      {t("settings.tunnel.allowLan.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -544,12 +541,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">маскировка TUN-имени</div>
+                    <div className="settings-row-label">{t("settings.tunnel.tunMasking.label")}</div>
                     <div className="settings-row-hint">
-                      имя адаптера выглядит как обычный сетевой интерфейс
-                      (wlan99 / Local Area Connection / Ethernet). помогает
-                      от приложений-шпионов которые детектят VPN по имени
-                      адаптера через GetAdaptersAddresses
+                      {t("settings.tunnel.tunMasking.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -560,12 +554,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">только TUN-режим (strict)</div>
+                    <div className="settings-row-label">{t("settings.tunnel.tunOnlyStrict.label")}</div>
                     <div className="settings-row-hint">
-                      скрыть переключатель proxy/tun на главном экране и
-                      работать только через TUN-адаптер. без локального
-                      SOCKS5-сокета на loopback — для параноиков, не желающих
-                      оставлять никакой VPN-поверхности на 127.0.0.1
+                      {t("settings.tunnel.tunOnlyStrict.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -582,13 +573,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             <>
               <section className="settings-section">
                 <div className="settings-section-title">
-                  anti-dpi
+                  {t("settings.antiDpi.title")}
                   {!s.antiDpiTouched &&
                     (subMeta?.fragmentationEnable != null ||
                       subMeta?.noisesEnable != null ||
                       subMeta?.serverResolveEnable != null) && (
                       <span className="hint-badge" style={{ marginLeft: 8 }}>
-                        из подписки
+                        {t("settings.fromSubscription")}
                       </span>
                     )}
                 </div>
@@ -600,27 +591,21 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     mihomo: anti-DPI обвязка не реализована (DNS-resolve работает). */}
                 {mihomoActive && (
                   <div className="hint-warning">
-                    активен mihomo — фрагментация и шумы не применяются
-                    (anti-DPI обвязка реализована только для sing-box).
-                    doh-резолв продолжает работать через dns mihomo.
+                    {t("settings.antiDpi.mihomoWarning")}
                   </div>
                 )}
                 {!mihomoActive && (
                   <div className="hint-info" style={{ marginBottom: 8 }}>
-                    в sing-box фрагментация работает как простой ON/OFF —
-                    тонкие параметры (size/sleep/interval) sing-box не
-                    принимает. шумы (noises) в upstream sing-box не
-                    поддерживаются и игнорируются. для тонкой настройки
-                    используйте Mihomo (но anti-DPI там пока не реализовано).
+                    {t("settings.antiDpi.singboxInfo")}
                   </div>
                 )}
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">фрагментация tcp</div>
+                    <div className="settings-row-label">{t("settings.antiDpi.fragmentation.label")}</div>
                     <div className="settings-row-hint">
-                      режет tls clienthello на куски — обходит большинство dpi
-                      {mihomoActive && " (только sing-box)"}
+                      {t("settings.antiDpi.fragmentation.hint")}
+                      {mihomoActive && t("settings.antiDpi.fragmentation.singboxOnly")}
                     </div>
                   </div>
                   <Toggle
@@ -637,7 +622,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <>
                     <div className="settings-row">
                       <div>
-                        <div className="settings-row-label">какие пакеты</div>
+                        <div className="settings-row-label">{t("settings.antiDpi.fragmentation.packetsLabel")}</div>
                       </div>
                       <select
                         className="select-field"
@@ -648,12 +633,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       >
                         <option value="tlshello">tlshello</option>
                         <option value="1-3">1-3</option>
-                        <option value="all">все</option>
+                        <option value="all">{t("settings.antiDpi.fragmentation.packetsAll")}</option>
                       </select>
                     </div>
                     <div className="settings-row">
                       <div>
-                        <div className="settings-row-label">длина (байт)</div>
+                        <div className="settings-row-label">{t("settings.antiDpi.fragmentation.lengthLabel")}</div>
                       </div>
                       <input
                         type="text"
@@ -666,7 +651,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     </div>
                     <div className="settings-row">
                       <div>
-                        <div className="settings-row-label">интервал (мс)</div>
+                        <div className="settings-row-label">{t("settings.antiDpi.fragmentation.intervalLabel")}</div>
                       </div>
                       <input
                         type="text"
@@ -682,9 +667,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">шумовые пакеты</div>
+                    <div className="settings-row-label">{t("settings.antiDpi.noises.label")}</div>
                     <div className="settings-row-hint">
-                      фейковые udp-пакеты для запутывания dpi
+                      {t("settings.antiDpi.noises.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -699,10 +684,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">doh-резолв сервера</div>
+                    <div className="settings-row-label">{t("settings.antiDpi.dohResolve.label")}</div>
                     <div className="settings-row-hint">
-                      адрес vpn-сервера резолвится через doh, минуя системный dns
-                      (помогает при dns-блокировках)
+                      {t("settings.antiDpi.dohResolve.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -719,7 +703,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <>
                     <div className="settings-row">
                       <div>
-                        <div className="settings-row-label">doh endpoint</div>
+                        <div className="settings-row-label">{t("settings.antiDpi.dohResolve.endpointLabel")}</div>
                       </div>
                       <input
                         type="url"
@@ -730,7 +714,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     </div>
                     <div className="settings-row">
                       <div>
-                        <div className="settings-row-label">bootstrap ip</div>
+                        <div className="settings-row-label">{t("settings.antiDpi.dohResolve.bootstrapLabel")}</div>
                       </div>
                       <input
                         type="text"
@@ -746,15 +730,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">kill switch</div>
+                <div className="settings-section-title">{t("settings.killSwitch.title")}</div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">блокировать сеть при падении vpn</div>
+                    <div className="settings-row-label">{t("settings.killSwitch.main.label")}</div>
                     <div className="settings-row-hint">
-                      защита от утечек на уровне ядра windows (wfp). работает
-                      даже если vpn-движок крашнется. защита от orphan-фильтров
-                      тройная: dynamic-session + heartbeat-watchdog (60с) +
-                      cleanup при старте helper-сервиса
+                      {t("settings.killSwitch.main.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -764,13 +745,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">строгий режим</div>
+                    <div className="settings-row-label">{t("settings.killSwitch.strict.label")}</div>
                     <div className="settings-row-hint">
-                      даже сам sing-box/mihomo может ходить только на vpn-сервер.
-                      direct-маршруты (например <code>geosite:ru → DIRECT</code>{" "}
-                      из вашего конфига) блокируются. для тех кто хочет
-                      гарантированно «всё через vpn». ⚠️ ru-сайты в split-routing
-                      перестанут открываться. требует включённого kill-switch
+                      {t("settings.killSwitch.strict.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -780,12 +757,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">блокировать прямые dns-запросы</div>
+                    <div className="settings-row-label">{t("settings.killSwitch.dnsLeak.label")}</div>
                     <div className="settings-row-hint">
-                      все :53/udp+tcp кроме vpn-dns заблокированы. защищает
-                      от dns-leak'а. ⚠️ в proxy-режиме может ломать приложения
-                      которые используют системный dns мимо прокси (некоторые
-                      игры, мессенджеры). лучше использовать в tun-режиме
+                      {t("settings.killSwitch.dnsLeak.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -795,12 +769,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">восстановить сеть</div>
+                    <div className="settings-row-label">{t("settings.killSwitch.recover.label")}</div>
                     <div className="settings-row-hint">
-                      если интернет «полу-сломан» после краша / отключения —
-                      одной кнопкой убирает wfp-фильтры, orphan tun-адаптеры,
-                      half-default routes и системный прокси. безопасно жать
-                      в любой момент когда vpn не активен
+                      {t("settings.killSwitch.recover.hint")}
                     </div>
                   </div>
                   <button
@@ -816,30 +787,30 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       void invoke<RecoveryReport>("recover_network").then(
                         (r) => {
                           const cleaned = [
-                            r.kill_switch_cleaned ? "wfp-фильтры" : null,
+                            r.kill_switch_cleaned ? t("toast.recover.parts.wfp") : null,
                             r.orphan_resources_cleaned
-                              ? "tun + маршруты"
+                              ? t("toast.recover.parts.tunRoutes")
                               : null,
-                            r.system_proxy_cleared ? "системный прокси" : null,
+                            r.system_proxy_cleared ? t("toast.recover.parts.proxy") : null,
                           ].filter(Boolean);
                           if (r.errors.length === 0) {
                             showToast({
                               kind: "success",
-                              title: "сеть восстановлена",
+                              title: t("toast.recover.successTitle"),
                               message:
                                 cleaned.length > 0
-                                  ? `очищено: ${cleaned.join(", ")}`
-                                  : "ничего чистить не пришлось",
+                                  ? t("toast.recover.cleaned", { items: cleaned.join(", ") })
+                                  : t("toast.recover.nothingToClean"),
                             });
                           } else {
                             showToast({
                               kind: "warning",
-                              title: "частично восстановлено",
+                              title: t("toast.recover.partialTitle"),
                               message: `${
                                 cleaned.length > 0
-                                  ? `ок: ${cleaned.join(", ")}\n`
+                                  ? t("toast.recover.okPrefix", { items: cleaned.join(", ") }) + "\n"
                                   : ""
-                              }ошибки: ${r.errors.join("; ")}`,
+                              }${t("toast.recover.errorsPrefix", { errors: r.errors.join("; ") })}`,
                               durationMs: 12_000,
                             });
                           }
@@ -847,17 +818,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       );
                     }}
                   >
-                    восстановить
+                    {t("settings.killSwitch.recover.button")}
                   </button>
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">выгрузить диагностику</div>
+                    <div className="settings-row-label">{t("settings.diagnostics.label")}</div>
                     <div className="settings-row-hint">
-                      сохранит zip с логами sing-box/mihomo, версией приложения,
-                      текущим состоянием и списком запущенных vpn-процессов в папку
-                      Documents. без телеметрии — только локально, ты сам
-                      решаешь кому отправить файл если нужна помощь
+                      {t("settings.diagnostics.hint")}
                     </div>
                   </div>
                   <button
@@ -868,8 +836,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                         .then((path) => {
                           showToast({
                             kind: "success",
-                            title: "диагностика сохранена",
-                            message: `файл: ${path}\nоткроем папку?`,
+                            title: t("toast.diagnostics.savedTitle"),
+                            message: t("toast.diagnostics.savedMessage", { path }),
                             durationMs: 8_000,
                           });
                           // Открываем explorer на родительской папке.
@@ -880,31 +848,27 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                         .catch((e) =>
                           showToast({
                             kind: "error",
-                            title: "не получилось сохранить",
+                            title: t("toast.diagnostics.failedTitle"),
                             message: String(e),
                           })
                         );
                     }}
                   >
-                    выгрузить
+                    {t("settings.diagnostics.button")}
                   </button>
                 </div>
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">проверка утечек</div>
+                <div className="settings-section-title">{t("settings.leakTest.title")}</div>
                 <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
-                  делает два запроса параллельно: cloudflare cdn-trace для
-                  публичного ip + страны (с fallback на ipwho.is для города)
-                  и cloudflare doh whoami.cloudflare для ip dns-резолвера.
-                  если ip-резолвера совпадает с твоим публичным — значит
-                  dns-запросы видны как твои собственные (leak).
+                  {t("settings.leakTest.description")}
                 </p>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">авто-проверка после подключения</div>
+                    <div className="settings-row-label">{t("settings.leakTest.auto.label")}</div>
                     <div className="settings-row-hint">
-                      через ~1.5 сек после connect показать тост с реальным ip
+                      {t("settings.leakTest.auto.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -914,9 +878,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">проверить сейчас</div>
+                    <div className="settings-row-label">{t("settings.leakTest.run.label")}</div>
                     <div className="settings-row-hint">
-                      запустить тест вручную — результат в правом нижнем углу
+                      {t("settings.leakTest.run.hint")}
                     </div>
                   </div>
                   <button
@@ -929,14 +893,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       void runLeakTest(port);
                     }}
                   >
-                    запустить
+                    {t("settings.leakTest.run.button")}
                   </button>
                 </div>
               </section>
 
               <ComingSoonNote
-                title="windows hello при запуске"
-                desc="требовать аутентификацию (face/pin/fingerprint) при старте приложения. полезно для общих компьютеров"
+                titleKey="settings.comingSoon.windowsHello.title"
+                descKey="settings.comingSoon.windowsHello.desc"
               />
             </>
           )}
@@ -945,27 +909,18 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "routing" && (
             <>
               <div className="settings-row-hint" style={{ marginBottom: 12 }}>
-                routing-профили задают какие домены/IP идут через VPN, какие
-                напрямую, какие блокируются. правила применяются к sing-box и
-                Mihomo при connect. для xray-json / sing-box-json конфигов
-                из подписки (с собственным routing) — НЕ применяются
-                (приоритет у подписки)
+                {t("settings.routing.intro")}
               </div>
               <RoutingProfilesPanel />
               <section className="settings-section">
-                <div className="settings-section-title">авто-шаблон</div>
+                <div className="settings-section-title">{t("settings.routing.autoTemplate.title")}</div>
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-label">
-                      «минимальные правила РФ» если профиль не выбран
+                      {t("settings.routing.autoTemplate.label")}
                     </div>
                     <div className="settings-row-hint">
-                      когда нет активного routing-профиля — применяется
-                      встроенный шаблон: <code>geosite:ru</code> +{" "}
-                      <code>geoip:ru</code> + LAN → DIRECT, реклама
-                      (<code>geosite:category-ads-all</code>) → BLOCK,
-                      остальное → PROXY. полезно из коробки без импорта
-                      внешних правил
+                      {t("settings.routing.autoTemplate.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -975,8 +930,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
               </section>
               <ComingSoonNote
-                title="WFP per-app routing"
-                desc="per-process правила в обоих движках через kernel-driver Windows Filtering Platform. альтернатива Mihomo PROCESS-NAME"
+                titleKey="settings.comingSoon.wfpPerApp.title"
+                descKey="settings.comingSoon.wfpPerApp.desc"
               />
             </>
           )}
@@ -984,20 +939,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {/* ── Интерфейс ───────────────────────────────────────────────── */}
           {category === "appearance" && (
             <>
+              <LanguageSection />
+
               <section className="settings-section">
-                <div className="settings-section-title">пресет</div>
+                <div className="settings-section-title">{t("settings.appearance.preset.title")}</div>
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-label">
-                      готовый стиль
+                      {t("settings.appearance.preset.label")}
                       {eff.fromSubscription.preset && (
                         <span className="hint-badge" style={{ marginLeft: 8 }}>
-                          из подписки
+                          {t("settings.fromSubscription")}
                         </span>
                       )}
                     </div>
                     <div className="settings-row-hint">
-                      уникальная палитра, фон и стиль кнопки разом
+                      {t("settings.appearance.preset.hint")}
                     </div>
                   </div>
                   <select
@@ -1005,7 +962,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     value={eff.preset}
                     onChange={(e) => s.set("preset", e.target.value as Preset)}
                   >
-                    <option value="none">без пресета</option>
+                    <option value="none">{t("settings.appearance.preset.options.none")}</option>
                     <option value="fluent">fluent</option>
                     <option value="cupertino">cupertino</option>
                     <option value="vice">vice</option>
@@ -1023,22 +980,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 const effectiveStyle = presetActive
                   ? PRESET_BUTTON_STYLE[eff.preset]
                   : eff.buttonStyle;
-                const presetHint = "управляется пресетом";
+                const presetHint = t("settings.appearance.themeStyle.presetHint");
                 return (
                   <section className="settings-section">
-                    <div className="settings-section-title">тема и стиль</div>
+                    <div className="settings-section-title">{t("settings.appearance.themeStyle.title")}</div>
                     <div className="settings-row">
                       <div>
                         <div className="settings-row-label">
-                          тема
+                          {t("settings.appearance.theme.label")}
                           {!presetActive && eff.fromSubscription.theme && (
                             <span className="hint-badge" style={{ marginLeft: 8 }}>
-                              из подписки
+                              {t("settings.fromSubscription")}
                             </span>
                           )}
                         </div>
                         <div className="settings-row-hint">
-                          {presetActive ? presetHint : "палитра приложения и кристалла"}
+                          {presetActive ? presetHint : t("settings.appearance.theme.hint")}
                         </div>
                       </div>
                       <select
@@ -1047,8 +1004,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                         disabled={presetActive}
                         onChange={(e) => s.set("theme", e.target.value as Theme)}
                       >
-                        <option value="dark">тёмная</option>
-                        <option value="light">светлая</option>
+                        <option value="dark">{t("settings.appearance.theme.options.dark")}</option>
+                        <option value="light">{t("settings.appearance.theme.options.light")}</option>
                         <option value="midnight">midnight</option>
                         <option value="sunset">sunset</option>
                         <option value="sand">sand</option>
@@ -1057,15 +1014,15 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     <div className="settings-row">
                       <div>
                         <div className="settings-row-label">
-                          фон
+                          {t("settings.appearance.background.label")}
                           {!presetActive && eff.fromSubscription.background && (
                             <span className="hint-badge" style={{ marginLeft: 8 }}>
-                              из подписки
+                              {t("settings.fromSubscription")}
                             </span>
                           )}
                         </div>
                         <div className="settings-row-hint">
-                          {presetActive ? presetHint : "3d-сцена за интерфейсом"}
+                          {presetActive ? presetHint : t("settings.appearance.background.hint")}
                         </div>
                       </div>
                       <select
@@ -1074,24 +1031,24 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                         disabled={presetActive}
                         onChange={(e) => s.set("background", e.target.value as Background)}
                       >
-                        <option value="crystal">кристалл</option>
-                        <option value="tunnel">тоннель</option>
-                        <option value="globe">глобус</option>
-                        <option value="particles">частицы</option>
+                        <option value="crystal">{t("settings.appearance.background.options.crystal")}</option>
+                        <option value="tunnel">{t("settings.appearance.background.options.tunnel")}</option>
+                        <option value="globe">{t("settings.appearance.background.options.globe")}</option>
+                        <option value="particles">{t("settings.appearance.background.options.particles")}</option>
                       </select>
                     </div>
                     <div className="settings-row">
                       <div>
                         <div className="settings-row-label">
-                          стиль кнопки
+                          {t("settings.appearance.buttonStyle.label")}
                           {!presetActive && eff.fromSubscription.buttonStyle && (
                             <span className="hint-badge" style={{ marginLeft: 8 }}>
-                              из подписки
+                              {t("settings.fromSubscription")}
                             </span>
                           )}
                         </div>
                         <div className="settings-row-hint">
-                          {presetActive ? presetHint : "оформление главной кнопки connect"}
+                          {presetActive ? presetHint : t("settings.appearance.buttonStyle.hint")}
                         </div>
                       </div>
                       <select
@@ -1100,10 +1057,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                         disabled={presetActive}
                         onChange={(e) => s.set("buttonStyle", e.target.value as ButtonStyle)}
                       >
-                        <option value="glass">стекло</option>
-                        <option value="flat">плоский</option>
-                        <option value="neon">неон</option>
-                        <option value="metallic">металл</option>
+                        <option value="glass">{t("settings.appearance.buttonStyle.options.glass")}</option>
+                        <option value="flat">{t("settings.appearance.buttonStyle.options.flat")}</option>
+                        <option value="neon">{t("settings.appearance.buttonStyle.options.neon")}</option>
+                        <option value="metallic">{t("settings.appearance.buttonStyle.options.metallic")}</option>
                       </select>
                     </div>
                   </section>
@@ -1111,16 +1068,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               })()}
 
               <section className="settings-section">
-                <div className="settings-section-title">плавающее окно</div>
+                <div className="settings-section-title">{t("settings.appearance.floating.title")}</div>
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-label">
-                      мини-окно поверх всего
+                      {t("settings.appearance.floating.label")}
                     </div>
                     <div className="settings-row-hint">
-                      статус vpn и текущая скорость ↑/↓ в маленьком
-                      окошке. клик по точке — toggle, двойной клик по
-                      окну — открыть главное
+                      {t("settings.appearance.floating.hint")}
                     </div>
                   </div>
                   <Toggle
@@ -1141,89 +1096,85 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           {category === "system" && (
             <>
               <section className="settings-section">
-                <div className="settings-section-title">автозапуск</div>
+                <div className="settings-section-title">{t("settings.system.autostart.title")}</div>
                 <AutostartRow />
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">горячие клавиши</div>
+                <div className="settings-section-title">{t("settings.shortcuts.title")}</div>
                 <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
-                  работают глобально, даже когда окно nemefisto скрыто. кликни поле, нажми
-                  нужную комбинацию (минимум один модификатор: ctrl/alt/shift/win). esc — отмена,
-                  backspace — очистить.
+                  {t("settings.shortcuts.intro")}
                 </p>
                 <ShortcutInput
-                  label="включить / выключить vpn"
-                  hint="как нажатие на главную кнопку — connect или disconnect"
+                  label={t("settings.shortcuts.toggleVpn.label")}
+                  hint={t("settings.shortcuts.toggleVpn.hint")}
                   value={s.shortcutToggleVpn}
                   onChange={(v) => s.set("shortcutToggleVpn", v)}
                 />
                 <ShortcutInput
-                  label="показать / скрыть окно"
-                  hint="как клик по иконке в системном трее"
+                  label={t("settings.shortcuts.showHide.label")}
+                  hint={t("settings.shortcuts.showHide.hint")}
                   value={s.shortcutShowHide}
                   onChange={(v) => s.set("shortcutShowHide", v)}
                 />
                 <ShortcutInput
-                  label="переключить режим"
-                  hint="proxy ↔ tun. срабатывает только когда vpn остановлен"
+                  label={t("settings.shortcuts.switchMode.label")}
+                  hint={t("settings.shortcuts.switchMode.hint")}
                   value={s.shortcutSwitchMode}
                   onChange={(v) => s.set("shortcutSwitchMode", v)}
                 />
               </section>
 
               <section className="settings-section">
-                <div className="settings-section-title">доверенные wi-fi</div>
+                <div className="settings-section-title">{t("settings.trustedWifi.title")}</div>
                 <TrustedWifiBlock />
               </section>
 
               <ComingSoonNote
-                title="авто-обновление приложения"
-                desc="клиент сам проверит наличие новой версии, скачает подписанный установщик и обновится — без захода на сайт"
+                titleKey="settings.comingSoon.autoUpdate.title"
+                descKey="settings.comingSoon.autoUpdate.desc"
               />
               <ComingSoonNote
-                title="история сессий"
-                desc="локальный лог connect/disconnect: время, сервер, режим, длительность, причина отключения"
+                titleKey="settings.comingSoon.history.title"
+                descKey="settings.comingSoon.history.desc"
               />
               <ComingSoonNote
-                title="speed-test через VPN"
-                desc="замер скорости через cloudflare CDN. опционально — авто-замер раз в неделю на всех серверах"
+                titleKey="settings.comingSoon.speedTest.title"
+                descKey="settings.comingSoon.speedTest.desc"
               />
               <BackupBlock />
 
               <LogsBlock />
 
               <section className="settings-section">
-                <div className="settings-section-title">url-схемы</div>
+                <div className="settings-section-title">{t("settings.urlSchemes.title")}</div>
                 <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5 }}>
-                  приложение реагирует на ссылки с префиксом <span className="bracket">nemefisto://</span>.
-                  бот может слать такие ссылки чтобы автоматически добавить подписку или
-                  переключить туннель.
+                  {t("settings.urlSchemes.intro")}
                 </p>
                 <div className="schemes">
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://add?url=&lt;url&gt;</span>
-                    <span className="scheme-desc">добавить подписку (URL должен быть encoded)</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.add")}</span>
                   </div>
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://connect</span>
-                    <span className="scheme-desc">подключить выбранный сервер</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.connect")}</span>
                   </div>
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://disconnect</span>
-                    <span className="scheme-desc">остановить туннель</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.disconnect")}</span>
                   </div>
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://toggle</span>
-                    <span className="scheme-desc">переключить состояние</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.toggle")}</span>
                   </div>
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://export</span>
-                    <span className="scheme-desc">выгрузить настройки в Documents</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.export")}</span>
                   </div>
                   <div className="scheme-row">
                     <span className="scheme-url">nemefisto://import-from-url/&lt;url&gt;</span>
-                    <span className="scheme-desc">скачать и предпросмотреть backup</span>
+                    <span className="scheme-desc">{t("settings.urlSchemes.importFromUrl")}</span>
                   </div>
                 </div>
               </section>
@@ -1231,9 +1182,9 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <UpdatesSection />
 
               <section className="settings-section">
-                <div className="settings-section-title">о программе</div>
+                <div className="settings-section-title">{t("settings.about.title")}</div>
                 <div className="about-grid">
-                  <span className="about-key">версия</span>
+                  <span className="about-key">{t("settings.about.version")}</span>
                   <span className="about-val">v.{APP_VERSION} · build 2026.4</span>
                   <span className="about-key">sing-box</span>
                   <span className="about-val">1.13.x</span>
@@ -1241,7 +1192,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   <span className="about-val">v1.19.24</span>
                   {subMeta?.webPageUrl && (
                     <>
-                      <span className="about-key">личный кабинет</span>
+                      <span className="about-key">{t("settings.about.dashboard")}</span>
                       <button
                         type="button"
                         onClick={openDashboard}
@@ -1251,13 +1202,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                           try {
                             return new URL(subMeta.webPageUrl).host;
                           } catch {
-                            return "ссылка";
+                            return t("settings.about.link");
                           }
                         })()}
                       </button>
                     </>
                   )}
-                  <span className="about-key">поддержка</span>
+                  <span className="about-key">{t("settings.about.support")}</span>
                   <button
                     type="button"
                     onClick={openSupport}
@@ -1273,7 +1224,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   >
                     kanabicks/NemefistoAPP
                   </button>
-                  <span className="about-key">приватность</span>
+                  <span className="about-key">{t("settings.about.privacy")}</span>
                   <button
                     type="button"
                     onClick={() => void openUrl(PRIVACY_URL)}
@@ -1281,7 +1232,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   >
                     PRIVACY.md
                   </button>
-                  <span className="about-key">лицензия</span>
+                  <span className="about-key">{t("settings.about.license")}</span>
                   <button
                     type="button"
                     onClick={() => void openUrl(LICENSE_URL)}
@@ -1301,9 +1252,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     marginTop: 12,
                   }}
                 >
-                  nemefisto не собирает телеметрию, не отправляет crash-репорты
-                  «домой» и не имеет remote-control механизмов. все логи —
-                  локально на этом компьютере. подробнее в PRIVACY.md.
+                  {t("settings.about.privacyNote")}
                 </p>
               </section>
 
@@ -1323,6 +1272,7 @@ function CategoryList({
 }: {
   onSelect: (c: SettingsCategory) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="settings-categories">
       {CATEGORIES.map((c) => (
@@ -1336,8 +1286,8 @@ function CategoryList({
             {c.icon}
           </span>
           <span className="settings-category-text">
-            <span className="settings-category-title">{c.title}</span>
-            <span className="settings-category-desc">{c.desc}</span>
+            <span className="settings-category-title">{t(c.titleKey)}</span>
+            <span className="settings-category-desc">{t(c.descKey)}</span>
           </span>
           <span className="settings-category-arrow" aria-hidden>
             ›
@@ -1350,14 +1300,15 @@ function CategoryList({
 
 // ─── Плашка «скоро» для будущих фич ─────────────────────────────────────────
 
-function ComingSoonNote({ title, desc }: { title: string; desc: string }) {
+function ComingSoonNote({ titleKey, descKey }: { titleKey: string; descKey: string }) {
+  const { t } = useTranslation();
   return (
     <section className="settings-section coming-soon">
       <div className="coming-soon-row">
-        <span className="coming-soon-badge">скоро</span>
+        <span className="coming-soon-badge">{t("settings.comingSoon.badge")}</span>
         <div className="coming-soon-text">
-          <div className="coming-soon-title">{title}</div>
-          <div className="coming-soon-desc">{desc}</div>
+          <div className="coming-soon-title">{t(titleKey)}</div>
+          <div className="coming-soon-desc">{t(descKey)}</div>
         </div>
       </div>
     </section>
@@ -1376,6 +1327,7 @@ function ComingSoonNote({ title, desc }: { title: string; desc: string }) {
  * при переключении движка на Mihomo сразу применятся.
  */
 function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
+  const { t } = useTranslation();
   const rules = useSettingsStore((s) => s.appRules);
   const set = useSettingsStore((s) => s.set);
   // 8.D: PROCESS-NAME matcher Mihomo на Windows работает в двух
@@ -1421,33 +1373,22 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">правила приложений</div>
+      <div className="settings-section-title">{t("settings.appRules.title")}</div>
 
       {!mihomoActive && (
         <div className="hint-warning">
-          активен sing-box — правила приложений работают только с движком{" "}
-          <b>mihomo</b> (через нативный <code>PROCESS-NAME</code> matcher).
-          переключи движок в Settings → движок чтобы правила заработали.
+          {t("settings.appRules.singboxWarning")}
         </div>
       )}
 
       {mihomoActive && tunMode && (
         <div className="hint-warning">
-          в TUN-режиме правила приложений работают только когда подписка
-          отдала <b>полный mihomo-config</b> (тип сервера{" "}
-          <code>mihomo-profile</code>) — там Mihomo владеет TUN-адаптером
-          напрямую и видит реальные процессы. Для URI-серверов
-          (vless/vmess/trojan/hy2/...) в TUN правила не применяются —
-          переключи на <b>proxy-режим</b>.
+          {t("settings.appRules.tunWarning")}
         </div>
       )}
 
       <div className="settings-row-hint" style={{ marginBottom: 10 }}>
-        правила вида <b>«&lt;exe&gt; → action»</b> применяются Mihomo
-        к процессам по имени исполняемого файла. например, можно
-        пустить telegram через VPN, а steam — направить direct.
-        имя exe берётся из диспетчера задач (телеграм.exe, steam.exe).
-        работают только в <b>proxy-режиме</b>
+        {t("settings.appRules.intro")}
       </div>
 
       {rules.length > 0 && (
@@ -1459,10 +1400,10 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
                 className={`app-rule-badge action-${r.action}`}
                 title={
                   r.action === "proxy"
-                    ? "через VPN"
+                    ? t("settings.appRules.actionTitles.proxy")
                     : r.action === "direct"
-                    ? "напрямую, мимо VPN"
-                    : "блокируется"
+                    ? t("settings.appRules.actionTitles.direct")
+                    : t("settings.appRules.actionTitles.block")
                 }
               >
                 {r.action}
@@ -1474,8 +1415,8 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
                 type="button"
                 className="app-rule-del"
                 onClick={() => removeRule(r.exe)}
-                title="удалить правило"
-                aria-label="удалить"
+                title={t("settings.appRules.deleteTitle")}
+                aria-label={t("common.delete")}
               >
                 ×
               </button>
@@ -1507,7 +1448,7 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
           className="input"
           value={draftComment}
           onChange={(e) => setDraftComment(e.target.value)}
-          placeholder="заметка (опционально)"
+          placeholder={t("settings.appRules.commentPlaceholder")}
           onKeyDown={(e) => e.key === "Enter" && addRule()}
         />
         <button
@@ -1516,7 +1457,7 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
           onClick={addRule}
           disabled={!draftExe.trim()}
         >
-          добавить
+          {t("common.add")}
         </button>
       </div>
     </section>
@@ -1540,6 +1481,7 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
  * `nemefisto://import-from-url/<url>` (см. lib/deepLinks.ts).
  */
 function BackupBlock() {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
   const onExport = async () => {
@@ -1548,12 +1490,12 @@ function BackupBlock() {
       const path = await exportBackupToDocuments();
       showToast({
         kind: "success",
-        title: "выгружено",
+        title: t("toast.backup.exportedTitle"),
         message: path,
         durationMs: 8000,
       });
     } catch (e) {
-      showToast({ kind: "error", title: "не удалось выгрузить", message: String(e) });
+      showToast({ kind: "error", title: t("toast.backup.exportFailed"), message: String(e) });
     } finally {
       setBusy(false);
     }
@@ -1571,7 +1513,7 @@ function BackupBlock() {
       .catch((err) => {
         showToast({
           kind: "error",
-          title: "не удалось прочитать backup",
+          title: t("toast.backup.readFailed"),
           message: String(err),
         });
       });
@@ -1579,7 +1521,7 @@ function BackupBlock() {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">backup настроек</div>
+      <div className="settings-section-title">{t("settings.backup.title")}</div>
       <p
         className="hint"
         style={{
@@ -1591,9 +1533,7 @@ function BackupBlock() {
           marginBottom: 8,
         }}
       >
-        выгружает все настройки + URL подписки в JSON-файл (HWID и
-        прочие машинно-зависимые данные не попадают). при импорте сначала
-        покажется превью изменений.
+        {t("settings.backup.intro")}
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button
@@ -1602,10 +1542,10 @@ function BackupBlock() {
           disabled={busy}
           className="btn-ghost"
         >
-          выгрузить в файл
+          {t("settings.backup.export")}
         </button>
         <label className="btn-ghost" style={{ cursor: "pointer" }}>
-          загрузить из файла
+          {t("settings.backup.import")}
           <input
             type="file"
             accept="application/json,.json"
@@ -1618,9 +1558,56 @@ function BackupBlock() {
   );
 }
 
+// ── 14.J Language section ─────────────────────────────────────────────────
+
+function LanguageSection() {
+  const language = useSettingsStore((s) => s.language);
+  const setSetting = useSettingsStore((s) => s.set);
+  const { i18n, t } = useTranslation();
+
+  const onChange = (value: "auto" | "ru" | "en") => {
+    setSetting("language", value);
+    // i18n.changeLanguage:
+    // - "auto" → детектим из navigator.language
+    // - "ru" / "en" → явный
+    if (value === "auto") {
+      const nav = navigator.language?.toLowerCase() ?? "";
+      void i18n.changeLanguage(nav.startsWith("ru") ? "ru" : "en");
+    } else {
+      void i18n.changeLanguage(value);
+    }
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">{t("settings.language.title")}</div>
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">{t("settings.language.label")}</div>
+          <div className="settings-row-hint">
+            {t("settings.language.hint")}
+          </div>
+        </div>
+        <select
+          className="select-field"
+          value={language}
+          onChange={(e) =>
+            onChange(e.target.value as "auto" | "ru" | "en")
+          }
+        >
+          <option value="auto">{t("settings.language.auto")}</option>
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </section>
+  );
+}
+
 // ── 14.A Updates section ──────────────────────────────────────────────────
 
 function UpdatesSection() {
+  const { t } = useTranslation();
   const autoCheck = useSettingsStore((s) => s.autoCheckUpdates);
   const setSetting = useSettingsStore((s) => s.set);
   const updateState = useUpdateStore((s) => s.state);
@@ -1640,15 +1627,15 @@ function UpdatesSection() {
         setUpdateState({ kind: "idle" });
         showToast({
           kind: "success",
-          title: "проверка обновлений",
-          message: "у вас уже последняя версия",
+          title: t("toast.update.checkTitle"),
+          message: t("toast.update.upToDate"),
         });
       }
     } catch (e) {
       setUpdateState({ kind: "idle" });
       showToast({
         kind: "error",
-        title: "не удалось проверить",
+        title: t("toast.update.checkFailed"),
         message: String(e),
       });
     } finally {
@@ -1660,12 +1647,12 @@ function UpdatesSection() {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">обновления</div>
+      <div className="settings-section-title">{t("settings.updates.title")}</div>
       <div className="settings-row">
         <div>
-          <div className="settings-row-label">авто-проверка</div>
+          <div className="settings-row-label">{t("settings.updates.auto.label")}</div>
           <div className="settings-row-hint">
-            раз в 6 часов спрашивает GitHub. найдено — модалка предложит обновить
+            {t("settings.updates.auto.hint")}
           </div>
         </div>
         <Toggle
@@ -1680,7 +1667,7 @@ function UpdatesSection() {
           disabled={checking}
           className="btn-ghost"
         >
-          {checking ? "проверяю…" : "проверить сейчас"}
+          {checking ? t("settings.updates.checking") : t("settings.updates.checkNow")}
         </button>
       </div>
     </section>
@@ -1690,13 +1677,14 @@ function UpdatesSection() {
 // ── Logs block ────────────────────────────────────────────────────────────
 
 function LogsBlock() {
+  const { t } = useTranslation();
   const [text, setText] = useState("");
   const [loaded, setLoaded] = useState(false);
 
   const reload = async () => {
     try {
       const log = await invoke<string>("read_xray_log");
-      setText(log || "(лог пустой)");
+      setText(log || t("settings.logs.empty"));
       setLoaded(true);
     } catch (e) {
       setText(String(e));
@@ -1706,7 +1694,7 @@ function LogsBlock() {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">логи vpn-движка</div>
+      <div className="settings-section-title">{t("settings.logs.title")}</div>
       {!loaded ? (
         <button
           type="button"
@@ -1714,7 +1702,7 @@ function LogsBlock() {
           className="btn-ghost"
           style={{ alignSelf: "flex-start" }}
         >
-          показать логи
+          {t("settings.logs.show")}
         </button>
       ) : (
         <>
@@ -1725,7 +1713,7 @@ function LogsBlock() {
             className="btn-ghost"
             style={{ alignSelf: "flex-start" }}
           >
-            обновить
+            {t("common.refresh")}
           </button>
         </>
       )}
@@ -1748,6 +1736,7 @@ function LogsBlock() {
  * понимает что именно собирается сделать.
  */
 function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
+  const { t } = useTranslation();
   type Pending = null | "settings" | "all";
   const [pending, setPending] = useState<Pending>(null);
   const disconnect = useVpnStore((s) => s.disconnect);
@@ -1778,7 +1767,7 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
 
   return (
     <section className="settings-section">
-      <div className="settings-section-title">сброс</div>
+      <div className="settings-section-title">{t("settings.reset.title")}</div>
 
       {pending === null && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1787,14 +1776,14 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
             onClick={() => setPending("settings")}
             className="btn-ghost"
           >
-            сбросить настройки
+            {t("settings.reset.resetSettings")}
           </button>
           <button
             type="button"
             onClick={() => setPending("all")}
             className="btn-danger"
           >
-            удалить всё
+            {t("settings.reset.deleteAll")}
           </button>
         </div>
       )}
@@ -1802,23 +1791,21 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
       {pending === "settings" && (
         <div className="warn-box" style={{ borderColor: "rgba(217,119,87,0.4)" }}>
           <span className="warn-box-text">
-            настройки вернутся к дефолтным (тема, anti-DPI, движок,
-            правила приложений). <b>подписка и hwid останутся.</b>
-            продолжить?
+            {t("settings.reset.confirmSettings")}
           </span>
           <button
             type="button"
             onClick={() => setPending(null)}
             className="btn-ghost"
           >
-            отмена
+            {t("common.cancel")}
           </button>
           <button
             type="button"
             onClick={doResetSettings}
             className="btn-danger"
           >
-            да, сбросить
+            {t("settings.reset.confirmSettingsBtn")}
           </button>
         </div>
       )}
@@ -1826,23 +1813,21 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
       {pending === "all" && (
         <div className="warn-box" style={{ borderColor: "rgba(217,119,87,0.6)" }}>
           <span className="warn-box-text">
-            <b>это удалит абсолютно всё:</b> подписку, hwid-override,
-            все настройки, dismissed-объявления. отключит туннель и
-            перезагрузит приложение
+            {t("settings.reset.confirmAll")}
           </span>
           <button
             type="button"
             onClick={() => setPending(null)}
             className="btn-ghost"
           >
-            отмена
+            {t("common.cancel")}
           </button>
           <button
             type="button"
             onClick={doResetAll}
             className="btn-danger"
           >
-            да, удалить всё
+            {t("settings.reset.confirmAllBtn")}
           </button>
         </div>
       )}
@@ -1855,6 +1840,7 @@ function ResetBlock({ onAfterReset }: { onAfterReset: () => void }) {
  *  task через стандартный UI Windows и тогда настройка должна это
  *  отражать.*/
 function AutostartRow() {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1884,10 +1870,9 @@ function AutostartRow() {
   return (
     <div className="settings-row">
       <div>
-        <div className="settings-row-label">запуск с системой</div>
+        <div className="settings-row-label">{t("settings.system.autostart.label")}</div>
         <div className="settings-row-hint">
-          приложение само запустится при входе в windows (через task
-          scheduler, без UAC)
+          {t("settings.system.autostart.hint")}
         </div>
       </div>
       <Toggle
@@ -1922,6 +1907,7 @@ function ShortcutInput({
   label: string;
   hint?: string;
 }) {
+  const { t } = useTranslation();
   const [recording, setRecording] = useState(false);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -2009,8 +1995,8 @@ function ShortcutInput({
         onKeyDown={recording ? onKeyDown : undefined}
       >
         {recording
-          ? "нажми комбинацию…"
-          : value ?? "не задано"}
+          ? t("settings.shortcuts.pressCombo")
+          : value ?? t("settings.shortcuts.notSet")}
         {!recording && value && (
           <button
             type="button"
@@ -2019,7 +2005,7 @@ function ShortcutInput({
               e.stopPropagation();
               onChange(null);
             }}
-            title="очистить"
+            title={t("settings.shortcuts.clear")}
           >
             ×
           </button>
@@ -2039,6 +2025,7 @@ function ShortcutInput({
  * стационарном ПК).
  */
 function TrustedWifiBlock() {
+  const { t } = useTranslation();
   const trustedSsids = useSettingsStore((s) => s.trustedSsids);
   const trustedSsidAction = useSettingsStore((s) => s.trustedSsidAction);
   const autoConnectOnLeave = useSettingsStore((s) => s.autoConnectOnLeave);
@@ -2066,14 +2053,11 @@ function TrustedWifiBlock() {
   return (
     <>
       <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
-        в доверенной сети vpn автоматически отключается. при возврате
-        в обычную — может включиться обратно (если включена опция ниже).
-        работает только с wi-fi (по ssid из netsh), ethernet/мобильный
-        интернет считаются обычной сетью.
+        {t("settings.trustedWifi.intro")}
       </p>
 
       <div className="trusted-current">
-        <span className="trusted-current-label">текущая сеть:</span>
+        <span className="trusted-current-label">{t("settings.trustedWifi.currentNetwork")}</span>
         <span className="trusted-current-name">
           {currentSsid ? currentSsid : "—"}
         </span>
@@ -2084,11 +2068,11 @@ function TrustedWifiBlock() {
             onClick={() => addSsid(currentSsid)}
             style={{ fontSize: 12, padding: "4px 10px" }}
           >
-            + добавить
+            {t("settings.trustedWifi.addThis")}
           </button>
         )}
         {isCurrentInList && (
-          <span className="trusted-current-badge">в списке</span>
+          <span className="trusted-current-badge">{t("settings.trustedWifi.inList")}</span>
         )}
       </div>
 
@@ -2098,13 +2082,13 @@ function TrustedWifiBlock() {
             <div key={ssid} className="app-rule-row">
               <span className="app-rule-exe">{ssid}</span>
               {ssid === currentSsid && (
-                <span className="trusted-current-badge">текущая</span>
+                <span className="trusted-current-badge">{t("settings.trustedWifi.current")}</span>
               )}
               <button
                 type="button"
                 className="app-rule-del"
                 onClick={() => removeSsid(ssid)}
-                title="удалить"
+                title={t("common.delete")}
                 style={{ marginLeft: "auto" }}
               >
                 ×
@@ -2118,7 +2102,7 @@ function TrustedWifiBlock() {
         <input
           type="text"
           className="input"
-          placeholder="ввести имя сети вручную"
+          placeholder={t("settings.trustedWifi.manualPlaceholder")}
           value={manualInput}
           onChange={(e) => setManualInput(e.target.value)}
           onKeyDown={(e) => {
@@ -2137,15 +2121,15 @@ function TrustedWifiBlock() {
           }}
           disabled={!manualInput.trim()}
         >
-          добавить
+          {t("common.add")}
         </button>
       </div>
 
       <div className="settings-row" style={{ marginTop: 12 }}>
         <div>
-          <div className="settings-row-label">при подключении к доверенной</div>
+          <div className="settings-row-label">{t("settings.trustedWifi.action.label")}</div>
           <div className="settings-row-hint">
-            что делать когда мы попали в одну из сетей выше
+            {t("settings.trustedWifi.action.hint")}
           </div>
         </div>
         <select
@@ -2158,17 +2142,16 @@ function TrustedWifiBlock() {
             )
           }
         >
-          <option value="ignore">ничего</option>
-          <option value="disconnect">отключить vpn</option>
+          <option value="ignore">{t("settings.trustedWifi.action.ignore")}</option>
+          <option value="disconnect">{t("settings.trustedWifi.action.disconnect")}</option>
         </select>
       </div>
 
       <div className="settings-row">
         <div>
-          <div className="settings-row-label">авто-включение при выходе</div>
+          <div className="settings-row-label">{t("settings.trustedWifi.autoLeave.label")}</div>
           <div className="settings-row-hint">
-            когда уходим из доверенной сети — переподключиться, если
-            vpn отключали именно мы по этому правилу
+            {t("settings.trustedWifi.autoLeave.hint")}
           </div>
         </div>
         <Toggle

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 
 /**
  * 14.E — Расширенный crash-recovery диалог.
@@ -41,6 +42,7 @@ type RecoveryReport = {
 };
 
 export function CrashRecoveryDialog() {
+  const { t } = useTranslation();
   const [state, setState] = useState<RecoveryState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,27 +113,26 @@ export function CrashRecoveryDialog() {
   // Считаем сколько orphan'ов нашли — для текста в шапке.
   const findings: { key: string; label: string }[] = [];
   if (state.proxy_orphan)
-    findings.push({ key: "proxy", label: "системный прокси указывает на нас" });
+    findings.push({ key: "proxy", label: t("modal.crashRecovery.findings.proxy") });
   if (state.proxy_backup_present)
     findings.push({
       key: "backup",
-      label: "сохранён backup оригинальных настроек прокси",
+      label: t("modal.crashRecovery.findings.backup"),
     });
   if (state.tun_orphan)
-    findings.push({ key: "tun", label: "tun-адаптер `nemefisto-*` в системе" });
+    findings.push({ key: "tun", label: t("modal.crashRecovery.findings.tun") });
   if (state.orphan_wfp_filters)
     findings.push({
       key: "wfp",
-      label: "wfp-фильтры kill switch остались от прошлой сессии",
+      label: t("modal.crashRecovery.findings.wfp"),
     });
 
   return (
     <div className="recovery-overlay" role="dialog" aria-modal="true">
       <div className="recovery-dialog">
-        <div className="recovery-title">обнаружены остатки прошлой сессии</div>
+        <div className="recovery-title">{t("modal.crashRecovery.title")}</div>
         <div className="recovery-text">
-          предыдущий запуск не завершился чисто (краш или принудительная
-          остановка). нашли:
+          {t("modal.crashRecovery.intro")}
         </div>
         <ul className="recovery-list">
           {findings.map((f) => (
@@ -139,13 +140,11 @@ export function CrashRecoveryDialog() {
           ))}
         </ul>
         <div className="recovery-text">
-          «починить всё» — снимет любые наши wfp-фильтры, удалит
-          orphan tun-адаптеры и принудительно очистит системный прокси.
+          {t("modal.crashRecovery.explainBase")}
           {state.proxy_backup_present && (
             <>
               {" "}
-              «восстановить прокси» — откатит реестр на оригинальные
-              значения которые были до подключения.
+              {t("modal.crashRecovery.explainRestoreProxy")}
             </>
           )}
         </div>
@@ -157,7 +156,7 @@ export function CrashRecoveryDialog() {
             onClick={onLeaveAsIs}
             disabled={busy}
           >
-            оставить как есть
+            {t("modal.crashRecovery.leaveAsIs")}
           </button>
           {state.proxy_backup_present && (
             <button
@@ -166,7 +165,7 @@ export function CrashRecoveryDialog() {
               onClick={onRestoreBackup}
               disabled={busy}
             >
-              восстановить прокси
+              {t("modal.crashRecovery.restoreProxy")}
             </button>
           )}
           <button
@@ -175,7 +174,7 @@ export function CrashRecoveryDialog() {
             onClick={onFixAll}
             disabled={busy}
           >
-            {busy ? "…" : "починить всё"}
+            {busy ? "…" : t("modal.crashRecovery.fixAll")}
           </button>
         </div>
       </div>
