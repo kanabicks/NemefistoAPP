@@ -315,6 +315,12 @@ export type Settings = {
    *  явный выбор пользователя. Изменение применяется сразу через
    *  `i18n.changeLanguage()`. */
   language: "auto" | "ru" | "en";
+
+  /** Native Windows toast'ы через WinRT ToastNotifier (Action Center).
+   *  Показываются ТОЛЬКО когда главное окно не visible (свёрнуто, скрыто
+   *  в трее, на заднем плане). Когда окно открыто — используем обычный
+   *  in-app `Toaster.tsx`, не дублируем. Default `true`. */
+  nativeNotifications: boolean;
 };
 
 /**
@@ -419,6 +425,7 @@ const DEFAULTS: Settings = {
   autoCheckUpdates: true,
   dismissedUpdateVersions: [],
   language: "auto",
+  nativeNotifications: true,
 };
 
 const KEY = "nemefisto.settings.v1";

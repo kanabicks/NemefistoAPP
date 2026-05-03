@@ -12,6 +12,7 @@
     "global-shortcut:allow-unregister-all",
     "global-shortcut:allow-is-registered",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "notification:default"
   ]
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -10,10 +10,17 @@ import { useApplyTheme } from "./lib/hooks/useApplyTheme";
 import { useGlobalShortcuts } from "./lib/hooks/useGlobalShortcuts";
 import { useTrustedWifi } from "./lib/hooks/useTrustedWifi";
 import { useAutoUpdateCheck } from "./lib/hooks/useAutoUpdateCheck";
+import { useNativeStatusNotify } from "./lib/hooks/useNativeStatusNotify";
 import { initDeepLinks } from "./lib/deepLinks";
 
 import { BackgroundLayers } from "./components/effects/BackgroundLayers";
-import { Scene3D } from "./components/effects/Scene3D";
+// Bundle optimization: Scene3D тащит за собой three.js (~600 КБ gzip).
+// Lazy-load → отдельный chunk загружается только когда основной UI уже
+// показан. BackgroundLayers рисует базовый градиент сразу — пользователь
+// не увидит чёрного экрана пока three.js парсится.
+const Scene3D = lazy(() =>
+  import("./components/effects/Scene3D").then((m) => ({ default: m.Scene3D })),
+);
 import { CustomCursor } from "./components/effects/CustomCursor";
 import { WideAmbient } from "./components/effects/WideAmbient";
 import { AnnounceBanner } from "./components/AnnounceBanner";
@@ -112,6 +119,10 @@ function App() {
   // GitHub Releases latest.json (см. tauri.conf.json). При найденном
   // апдейте UpdateModal сам всплывает.
   useAutoUpdateCheck();
+  // Native Windows toast'ы при connect/disconnect/error/update — только
+  // когда главное окно невидимо (свёрнуто/в трее). Видимое окно — in-app
+  // toaster справится сам. Решение visible vs hidden внутри nativeNotify.
+  useNativeStatusNotify();
 
   // 13.R: TUN-only strict mode. Если пользователь только что включил
   // toggle и на главном экране был выбран proxy-режим — авто-переключаем
@@ -355,7 +366,9 @@ function App() {
   return (
     <>
       <BackgroundLayers />
-      <Scene3D status={status} />
+      <Suspense fallback={null}>
+        <Scene3D status={status} />
+      </Suspense>
       <WideAmbient />
       <CustomCursor />
 

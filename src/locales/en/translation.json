@@ -229,6 +229,25 @@
       "message": "active VPN on interface: {{list}}.\nDisconnect it before connecting."
     }
   },
+  "notification": {
+    "connected": {
+      "title": "Nemefisto connected",
+      "body": "Via {{server}}",
+      "unknownServer": "selected server"
+    },
+    "disconnected": {
+      "title": "Nemefisto disconnected",
+      "body": "VPN connection closed"
+    },
+    "error": {
+      "title": "Connection failure",
+      "body": "VPN stopped due to an error. Open the app for details."
+    },
+    "updateAvailable": {
+      "title": "Update available",
+      "body": "Version {{version}} is ready to install"
+    }
+  },
   "settings": {
     "title": "settings",
     "fromSubscription": "from subscription",
@@ -508,6 +527,11 @@
         "title": "autostart",
         "label": "launch with the system",
         "hint": "the app starts automatically on windows login (via task scheduler, no UAC)"
+      },
+      "notifications": {
+        "title": "notifications",
+        "label": "native windows toasts",
+        "hint": "show popups in action center when the window is hidden (connect, disconnect, error, update). in a visible window — in-app toasts as usual"
       }
     },
     "shortcuts": {

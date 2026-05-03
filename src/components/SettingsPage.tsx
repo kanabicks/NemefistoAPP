@@ -1102,6 +1102,22 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </section>
 
               <section className="settings-section">
+                <div className="settings-section-title">{t("settings.system.notifications.title")}</div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("settings.system.notifications.label")}</div>
+                    <div className="settings-row-hint">
+                      {t("settings.system.notifications.hint")}
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.nativeNotifications}
+                    onChange={(v) => s.set("nativeNotifications", v)}
+                  />
+                </div>
+              </section>
+
+              <section className="settings-section">
                 <div className="settings-section-title">{t("settings.shortcuts.title")}</div>
                 <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
                   {t("settings.shortcuts.intro")}

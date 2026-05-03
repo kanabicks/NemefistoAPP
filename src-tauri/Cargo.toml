@@ -1,6 +1,6 @@
 [package]
 name = "vpn-client"
-version = "0.2.2"
+version = "0.2.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -39,6 +39,10 @@ tauri-plugin-updater = "2"
 # 14.A: process plugin для `relaunch()` после download+install update'а.
 # Без него фронт не может перезапустить app после tauri-plugin-updater'а.
 tauri-plugin-process = "2"
+# Native Windows toasts (через WinRT ToastNotifier API). Показываются в
+# Action Center когда окно свёрнуто/в трее. При видимом окне используем
+# in-app Toaster — нативные нужны именно когда юзер не смотрит на app.
+tauri-plugin-notification = "2"
 serde_yaml = "0.9.34"
 base64 = "0.22.1"
 uuid = { version = "1.23.1", features = ["v4"] }

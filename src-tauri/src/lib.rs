@@ -59,6 +59,13 @@ pub fn run() {
         // 14.A: relaunch после install update'а — нужен process-plugin
         // (`@tauri-apps/plugin-process` фронта вызывает relaunch()).
         .plugin(tauri_plugin_process::init())
+        // Native Windows toasts (через WinRT ToastNotifier). Используется
+        // для событий когда окно свёрнуто/в трее (connect/disconnect/update/
+        // kill-switch trigger). При visible-окне используем in-app toaster.
+        // AppUserModelID берётся автоматически из bundle.identifier
+        // (`com.nemefisto.vpn-client`) — Windows группирует уведомления
+        // под именем productName из tauri.conf.json.
+        .plugin(tauri_plugin_notification::init())
         .manage(MihomoState::new())
         .manage(SingBoxState::new())
         .manage(vpn::MihomoApiState::new())
