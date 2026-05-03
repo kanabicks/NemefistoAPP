@@ -50,8 +50,12 @@ export function Scene3D({ status }: { status: VpnStatus }) {
       solid: number;
       fog: number;
     };
+    // useEffectiveSettings уже резолвит "system" → dark/light,
+    // но TS этого не знает — добавим запись для exhaustiveness.
+    const darkPalette: ScenePalette = { base: 0xffffff, dim: 0xbfbfbf, solid: 0x0a0a0a, fog: 0x050505 };
     const themePalettes: Record<typeof theme, ScenePalette> = {
-      dark:     { base: 0xffffff, dim: 0xbfbfbf, solid: 0x0a0a0a, fog: 0x050505 },
+      system:   darkPalette,
+      dark:     darkPalette,
       light:    { base: 0x1c1b1a, dim: 0x6c6a66, solid: 0xf0eee8, fog: 0xf5f4ef },
       midnight: { base: 0x818cf8, dim: 0x5a64b8, solid: 0x14143a, fog: 0x0a0a18 },
       sunset:   { base: 0xff9b6e, dim: 0xc06d4a, solid: 0x2c1612, fog: 0x1a0d0a },

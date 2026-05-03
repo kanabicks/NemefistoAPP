@@ -1000,10 +1000,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                       </div>
                       <select
                         className="select-field"
-                        value={eff.theme}
+                        value={s.theme}
                         disabled={presetActive}
                         onChange={(e) => s.set("theme", e.target.value as Theme)}
                       >
+                        <option value="system">{t("settings.appearance.theme.options.system")}</option>
                         <option value="dark">{t("settings.appearance.theme.options.dark")}</option>
                         <option value="light">{t("settings.appearance.theme.options.light")}</option>
                         <option value="midnight">midnight</option>
@@ -1254,6 +1255,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 >
                   {t("settings.about.privacyNote")}
                 </p>
+                <FeedbackButton />
               </section>
 
               <ResetBlock onAfterReset={onClose} />
@@ -1555,6 +1557,61 @@ function BackupBlock() {
         </label>
       </div>
     </section>
+  );
+}
+
+// ── Feedback button (Settings → about) ───────────────────────────────────
+
+/**
+ * Кнопка «сообщить о проблеме» — открывает GitHub Issues с
+ * pre-filled телом (версия app + sing-box + mihomo + OS из user-agent
+ * + текущий движок + текущий режим). Юзеру не надо писать «у меня
+ * Win11, версия X.Y.Z», всё уже в шаблоне.
+ */
+function FeedbackButton() {
+  const { t } = useTranslation();
+  const engine = useSettingsStore((s) => s.engine);
+  const mode = useVpnStore((s) => s.mode);
+  const status = useVpnStore((s) => s.status);
+  const language = useSettingsStore((s) => s.language);
+
+  const onClick = () => {
+    // userAgent на Tauri включает Edge/Chromium версию + Windows-версию
+    // (подходит для baseline-инфы; helper-log юзер прикрепит сам).
+    const ua = navigator.userAgent;
+    const body = [
+      "<!-- опиши что произошло, шаги чтобы воспроизвести и что ты ожидал -->",
+      "",
+      "",
+      "---",
+      "**Окружение** (заполнено автоматически):",
+      `- App: \`${APP_VERSION}\``,
+      `- Engine: \`${engine}\``,
+      `- Mode: \`${mode}\``,
+      `- Status: \`${status}\``,
+      `- Language: \`${language}\``,
+      `- UA: \`${ua}\``,
+      "",
+      "<!-- если связано с kill-switch / TUN — прикрепи `C:\\ProgramData\\NemefistoVPN\\helper.log` -->",
+      "<!-- если sing-box ругается — `%TEMP%\\NemefistoVPN\\sing-box-stderr.log` -->",
+      "<!-- Settings → System → диагностика собирает ZIP со всем разом -->",
+    ].join("\n");
+    const url = new URL(`${GITHUB_URL}/issues/new`);
+    url.searchParams.set("title", `[bug] `);
+    url.searchParams.set("body", body);
+    url.searchParams.set("labels", "bug");
+    void openUrl(url.toString());
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="btn-ghost"
+      style={{ marginTop: 12 }}
+    >
+      {t("settings.about.reportIssue")}
+    </button>
   );
 }
 

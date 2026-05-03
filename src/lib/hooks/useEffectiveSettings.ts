@@ -6,6 +6,7 @@ import {
   type Theme,
 } from "../../stores/settingsStore";
 import { useSubscriptionStore } from "../../stores/subscriptionStore";
+import { useSystemTheme } from "./useSystemTheme";
 
 /**
  * Override-логика 8.C для server-driven UX:
@@ -22,7 +23,14 @@ import { useSubscriptionStore } from "../../stores/subscriptionStore";
  * перерендерится при любом из них.
  */
 
-const THEME_VALUES = ["dark", "light", "midnight", "sunset", "sand"] as const;
+const THEME_VALUES = [
+  "system",
+  "dark",
+  "light",
+  "midnight",
+  "sunset",
+  "sand",
+] as const;
 const BACKGROUND_VALUES = ["crystal", "tunnel", "globe", "particles"] as const;
 const BUTTON_STYLE_VALUES = ["glass", "flat", "neon", "metallic"] as const;
 const PRESET_VALUES = [
@@ -59,6 +67,7 @@ export type EffectiveSettings = {
 
 export function useEffectiveSettings(): EffectiveSettings {
   const theme = useSettingsStore((s) => s.theme);
+  const systemTheme = useSystemTheme();
   const background = useSettingsStore((s) => s.background);
   const buttonStyle = useSettingsStore((s) => s.buttonStyle);
   const preset = useSettingsStore((s) => s.preset);
@@ -78,8 +87,15 @@ export function useEffectiveSettings(): EffectiveSettings {
   const useMetaButtonStyle = !buttonStyleTouched && metaButtonStyle !== null;
   const useMetaPreset = !presetTouched && metaPreset !== null;
 
+  // Резолвим "system" в реальное dark/light по prefers-color-scheme.
+  // Делаем ПОСЛЕ override-логики — даже если в подписке прислан
+  // `theme: "system"`, мы тоже подставим текущее системное значение.
+  const rawTheme = useMetaTheme ? (metaTheme as Theme) : theme;
+  const resolvedTheme: Theme =
+    rawTheme === "system" ? (systemTheme as Theme) : rawTheme;
+
   return {
-    theme: useMetaTheme ? (metaTheme as Theme) : theme,
+    theme: resolvedTheme,
     background: useMetaBackground ? (metaBackground as Background) : background,
     buttonStyle: useMetaButtonStyle
       ? (metaButtonStyle as ButtonStyle)

@@ -2469,6 +2469,16 @@ input, textarea { font: inherit; cursor: text; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.welcome.is-drag-over {
+  border-color: var(--accent, #5cc6c6);
+  background: color-mix(in oklab, var(--bg-glass), var(--accent, #5cc6c6) 8%);
+}
+.welcome-desc-hint {
+  font-size: 11px;
+  color: var(--fg-mute);
+  font-style: italic;
 }
 .welcome-tag {
   font-family: var(--mono);

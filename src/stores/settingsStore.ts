@@ -1,7 +1,19 @@
 import { create } from "zustand";
 
 export type SortMode = "none" | "ping" | "name";
-export type Theme = "dark" | "light" | "midnight" | "sunset" | "sand";
+/**
+ * Тема интерфейса. `system` — авто, синхронизируется с
+ * `prefers-color-scheme` ОС (Win10/11 Settings → Personalization → Colors
+ * → Choose your default app mode). При смене на лету — UI обновляется
+ * без перезапуска. См. `useEffectiveSettings`.
+ */
+export type Theme =
+  | "system"
+  | "dark"
+  | "light"
+  | "midnight"
+  | "sunset"
+  | "sand";
 export type Background = "crystal" | "tunnel" | "globe" | "particles";
 export type ButtonStyle = "glass" | "flat" | "neon" | "metallic";
 

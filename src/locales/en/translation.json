@@ -47,7 +47,8 @@
       "before": "paste your subscription URL (looks like",
       "after": "), the app will fetch the server list and ping each one."
     },
-    "load": "load"
+    "load": "load",
+    "dropHint": "or just drop a link from your browser here"
   },
   "power": {
     "connect": "connect",
@@ -471,6 +472,7 @@
         "label": "theme",
         "hint": "app and crystal palette",
         "options": {
+          "system": "system default",
           "dark": "dark",
           "light": "light"
         }
@@ -584,7 +586,8 @@
       "support": "support",
       "privacy": "privacy",
       "license": "license",
-      "privacyNote": "nemefisto does not collect telemetry, does not send crash reports «home» and has no remote-control mechanisms. all logs are local to this computer. see PRIVACY.md for details."
+      "privacyNote": "nemefisto does not collect telemetry, does not send crash reports «home» and has no remote-control mechanisms. all logs are local to this computer. see PRIVACY.md for details.",
+      "reportIssue": "report an issue"
     },
     "reset": {
       "title": "reset",

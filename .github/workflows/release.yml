@@ -59,6 +59,31 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Генерируем CHANGELOG из git log с предыдущего tag'а. Списком
+      # включается в releaseBody — пользователи видят что нового прямо
+      # на странице release'а и в auto-updater'е (он показывает
+      # release notes в модалке).
+      - name: Generate changelog
+        id: changelog
+        shell: bash
+        run: |
+          set -e
+          # Предыдущий tag (если есть) — обрезаем сам тег HEAD, ищем ближайший.
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV" ]; then
+            echo "Previous tag: $PREV"
+            LOG=$(git log --pretty=format:'- %s' "$PREV..HEAD" --no-merges)
+          else
+            echo "No previous tag — using last 20 commits"
+            LOG=$(git log --pretty=format:'- %s' -20 --no-merges)
+          fi
+          # Многострочный output для GitHub Actions.
+          {
+            echo 'CHANGELOG<<CHANGELOG_EOF'
+            echo "$LOG"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # prepare-bundle.mjs: собирает helper.exe в release + копирует с
       # triplet-суффиксом в src-tauri/binaries/. Без этого tauri-build
       # упадёт на отсутствии externalBin nemefisto-helper.
@@ -83,7 +108,7 @@ jobs:
           releaseBody: |
             ## Что нового
 
-            См. git log от предыдущего тега или PR'ы помеченные в этом релизе.
+            ${{ steps.changelog.outputs.CHANGELOG }}
 
             ## Установка
 
