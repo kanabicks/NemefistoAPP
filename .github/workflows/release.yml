@@ -123,8 +123,12 @@ jobs:
             проверку и предложит обновиться. Подпись проверяется через Tauri ed25519 (защита от
             man-in-the-middle подмены NSIS-installer'а).
           releaseDraft: false
-          # До 1.0 пусть всё будет pre-release. Потом снимем флаг.
-          prerelease: true
+          # prerelease: false — релизы помечаются как Latest, что
+          # критично для auto-updater'а: endpoint
+          # `releases/latest/download/latest.json` редиректит ТОЛЬКО на
+          # non-prerelease. Если хочется тестовый канал — для тегов
+          # `v*-beta.*` / `v*-rc.*` будет отдельный workflow с prerelease.
+          prerelease: false
           # Это и есть основная фича 14.I — генерация подписанного latest.json.
           includeUpdaterJson: true
           # Не передаём --target: prepare-bundle.mjs копирует helper.exe в
