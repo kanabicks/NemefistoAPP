@@ -113,7 +113,18 @@ pub async fn handle(req: Request) -> Response {
             // через SCM. Задержка нужна чтобы клиент успел получить Ok
             // и закрыть pipe — иначе он увидит «pipe closed» вместо
             // успешного ответа.
+            //
+            // 0.3.2 fix: ПЕРЕД self-stop останавливаем своих детей —
+            // SYSTEM-spawned sing-box / mihomo. Иначе helper выходит,
+            // дети становятся orphan'ами и продолжают работать → их
+            // .exe залочены, NSIS installer не сможет их перезаписать.
+            // Frontend (lib/updater.ts) тоже зовёт `disconnect` перед
+            // `shutdown_helper`, так что обычно дети уже стоплены —
+            // здесь defensive backup для случая когда disconnect упал
+            // или его вообще не вызвали (старый клиент).
             tokio::spawn(async {
+                let _ = super::sing_box::stop().await;
+                let _ = super::mihomo::stop().await;
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 if let Err(e) = super::service::stop_self() {
                     hlog(&format!("[dispatch] stop_self failed: {e:#}"));

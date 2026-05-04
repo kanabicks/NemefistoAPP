@@ -79,12 +79,35 @@ export async function downloadAndInstall(
     }
   });
 
+  // 0.3.2 / sing-box file-lock fix: перед shutdown'ом helper'а нужно
+  // полноценно дисконнектить VPN — иначе sing-box (либо как Tauri
+  // sidecar в proxy-mode, либо как SYSTEM-spawned child helper'а в
+  // TUN-mode) продолжит работать как orphan-процесс и залочит свой
+  // .exe. NSIS installer не сможет перезаписать `sing-box-*.exe`.
+  //
+  // `disconnect` грациозно стопит ОБА движка через нормальный pipeline
+  // (sing_box::stop / mihomo::stop в commands.rs). После этого sing-box
+  // и mihomo .exe-файлы свободны для перезаписи installer'ом.
+  try {
+    await invoke("disconnect");
+  } catch (e) {
+    // Если disconnect упал — продолжаем. Возможно VPN уже отключён,
+    // либо помешал internal error. NSIS hook (Fix C / installer-hooks.nsh)
+    // и helper-side stop_self с stop'ом детей (Fix 2) — defensive backup.
+    console.warn("[updater] disconnect failed:", e);
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+
   // 0.3.1 / installer file-lock fix: перед перезапуском (которое
   // запускает NSIS installer в passive mode) грациозно стопим helper.
   // Иначе NSIS не сможет перезаписать `nemefisto-helper.exe` (Windows
   // service держит open handle на файл) → "невозможно открыть файл для
   // записи" + abort. Helper после этого недоступен ~до первого connect,
   // там helper_bootstrap поднимет его заново.
+  //
+  // 0.3.2: helper при ShutdownHelper также стопит своих детей
+  // (sing-box, mihomo) — на случай если frontend disconnect выше
+  // не отработал и helper остался с running child'ами.
   //
   // Ждём ~1.5с после команды чтобы SCM успел маршрутизировать
   // SERVICE_CONTROL_STOP, helper'у завершить pipe-loop и SCM пометить
