@@ -75,6 +75,11 @@ function App() {
   const loadDeviceHwid = useSubscriptionStore((s) => s.loadDeviceHwid);
   const loadSecureCreds = useSubscriptionStore((s) => s.loadSecureCreds);
   const pingAll = useSubscriptionStore((s) => s.pingAll);
+  // 0.3.0: subscriptions.length > 0 ⇒ multi-state активен, server-list
+  // живёт внутри карточек подписок, глобальный ServerSelector прячем.
+  const hasSubscriptionState = useSubscriptionStore(
+    (s) => s.subscriptions.length > 0
+  );
 
   // Settings
   const refreshOnOpen = useSettingsStore((x) => x.refreshOnOpen);
@@ -392,12 +397,19 @@ function App() {
               ) : (
                 <>
                   <SubscriptionMeta />
-                  {/* mihomo-profile: вместо одинокой синтетической карточки
-                      «Профиль Mihomo» показываем сразу группы и страновые
-                      ноды. ServerSelector скрываем, чтобы не дублировать
-                      пустую запись поверх настоящих карточек. */}
-                  {!showMihomoGroups && <ServerSelector />}
-                  {showMihomoGroups && <MihomoGroupsInline />}
+                  {/* 0.3.0: server-list теперь внутри каждой карточки
+                      подписки (раскрывается chevron'ом). Глобальный
+                      ServerSelector скрываем когда multi-subscription
+                      state активен (subscriptions.length > 0); legacy
+                      single-sub без миграции — оставляем pill+drawer
+                      для backward compat. mihomo-profile — отдельный
+                      MihomoGroupsInline без изменений. */}
+                  {!showMihomoGroups && !hasSubscriptionState && (
+                    <ServerSelector />
+                  )}
+                  {showMihomoGroups && !hasSubscriptionState && (
+                    <MihomoGroupsInline />
+                  )}
                   <BandwidthMeter />
                 </>
               )}

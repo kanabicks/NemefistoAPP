@@ -35,7 +35,8 @@
   },
   "header": {
     "dashboard": "личный кабинет",
-    "settings": "настройки"
+    "settings": "настройки",
+    "addSubscription": "добавить подписку"
   },
   "footer": {
     "left": "NO-LOGS · XRAY · VLESS · REALITY"
@@ -130,6 +131,21 @@
     "updated": "обновлено {{when}}",
     "neverUpdated": "не обновлялась",
     "refreshTitle": "обновить подписку",
+    "menuAria": "меню подписки",
+    "menuEngineTitle": "движок",
+    "menuEngineAuto": "авто",
+    "menuEngineAutoHint": "из заголовка подписки или системный",
+    "deleteAction": "удалить подписку",
+    "deleteConfirmTitle": "удалить подписку?",
+    "deleteConfirmMessage": "ссылка, серверы и сохранённые настройки сервера будут удалены. вернуть подписку можно вставив URL заново.",
+    "deleteConfirmYes": "удалить",
+    "deleteConfirmNo": "отмена",
+    "addAction": "добавить ещё подписку",
+    "expandAria": "показать серверы",
+    "collapseAria": "скрыть серверы",
+    "serversLoading": "загружаем серверы…",
+    "serversEmpty": "серверов нет — попробуйте обновить",
+    "mihomoActivateHint": "нажмите чтобы активировать эту подписку и увидеть группы",
     "justNow": "только что",
     "longAgo": "давно",
     "minutesAgo_one": "{{count}} мин назад",
@@ -185,6 +201,18 @@
       "checkTitle": "проверка обновлений",
       "upToDate": "у вас уже последняя версия",
       "checkFailed": "не удалось проверить"
+    },
+    "serverGone": {
+      "title": "сервер пропал из подписки",
+      "message": "сервер «{{name}}» больше не приходит — выберите другой"
+    },
+    "subscriptionDeleted": {
+      "title": "подписка удалена",
+      "message": "вставьте новую ссылку в Welcome или Settings"
+    },
+    "subscriptionDuplicate": {
+      "title": "подписка уже добавлена",
+      "message": "такой же URL уже есть в списке"
     }
   },
   "backup": {

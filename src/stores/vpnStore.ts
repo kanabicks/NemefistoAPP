@@ -116,6 +116,77 @@ type VpnState = {
   refresh: () => Promise<void>;
 };
 
+/** Persist выбранного сервера: сохраняем `(subscriptionId, name)` пару.
+ *  - serverName — устойчиво к смене порядка серверов в подписке (refetch
+ *    пересоздаёт массив, индексы сбиваются)
+ *  - subscriptionId — устойчиво к multi-subscription (две подписки
+ *    могут содержать сервер с одинаковым именем «Germany», без id
+ *    мы бы выбирали не тот)
+ *  Сохраняется при `selectServer()`. Восстанавливается через
+ *  findSelectedIndexByName в subscriptionStore (loadCached / fetchSubscription). */
+const SELECTED_NAME_KEY = "nemefisto.selectedServerName.v1";
+const SELECTED_SUB_KEY = "nemefisto.selectedSubscriptionId.v1";
+
+/** Нормализация имени для сравнения: trim + collapse повторных пробелов
+ *  + lowercase. Нужно потому что разные парсеры формируют одно и то же
+ *  имя по-разному: например mihomo пишет «🇪🇺  Fastest» с двумя
+ *  пробелами, sing-box — «🇪🇺 Fastest» с одним. Без нормализации
+ *  findSelectedIndexByName промахивается при смене engine. */
+const normalizeName = (name: string): string =>
+  name.trim().replace(/\s+/g, " ").toLowerCase();
+
+const saveSelectedName = (name: string | null, subId: string | null) => {
+  try {
+    if (name) localStorage.setItem(SELECTED_NAME_KEY, name);
+    else localStorage.removeItem(SELECTED_NAME_KEY);
+    if (subId) localStorage.setItem(SELECTED_SUB_KEY, subId);
+    else localStorage.removeItem(SELECTED_SUB_KEY);
+  } catch {
+    // приватный режим — игнорируем
+  }
+};
+
+export const loadSelectedName = (): string | null => {
+  try {
+    return localStorage.getItem(SELECTED_NAME_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const loadSelectedSubId = (): string | null => {
+  try {
+    return localStorage.getItem(SELECTED_SUB_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/** Найти индекс сохранённого сервера в новом массиве. Логика поиска:
+ *   1. Если saved subscriptionId есть — ищем сначала точный match по
+ *      (name + subscriptionId). Это правильное поведение для multi-sub:
+ *      «Germany» из подписки A не выберется при выбранной из B.
+ *   2. Fallback на просто name (для legacy single-sub state, где
+ *      subscriptionId ещё не tag'ался).
+ *  Сравнение имён через normalizeName (trim + collapse spaces + lowercase). */
+export const findSelectedIndexByName = (
+  servers: { name: string; subscriptionId?: string }[]
+): number => {
+  const saved = loadSelectedName();
+  if (!saved) return -1;
+  const target = normalizeName(saved);
+  const savedSubId = loadSelectedSubId();
+  if (savedSubId) {
+    const exact = servers.findIndex(
+      (s) =>
+        s.subscriptionId === savedSubId && normalizeName(s.name) === target
+    );
+    if (exact >= 0) return exact;
+  }
+  // Fallback: поиск только по имени.
+  return servers.findIndex((s) => normalizeName(s.name) === target);
+};
+
 export const useVpnStore = create<VpnState>((set, get) => ({
   status: "stopped",
   errorMessage: null,
@@ -130,6 +201,12 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   selectServer: (index) => {
     const prev = get().selectedIndex;
     set({ selectedIndex: index });
+    // Persist (subscriptionId, name) пары для восстановления после
+    // refetch / restart app. 0.3.0: subscriptionId различает серверы
+    // с одинаковыми именами из разных подписок.
+    const servers = useSubscriptionStore.getState().servers;
+    const sel = servers[index];
+    saveSelectedName(sel?.name ?? null, sel?.subscriptionId ?? null);
     // 0.1.1 / Bug 6: авто-reconnect при смене сервера. Раньше после
     // выбора другого сервера пользователь должен был вручную
     // disconnect → connect — счёт-фактура «два клика на смену сервера»
@@ -214,25 +291,19 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     // воспримет его как «no PROCESS-NAME правил» и не включит
     // дорогой `find-process-mode: always`.
     const appRules = useSettingsStore.getState().appRules;
-    // 8.B/8.C: эффективный engine. Если пользователь явно не менял
-    // (engineTouched=false) и подписка прислала X-Nemefisto-Engine —
-    // берём из заголовка; иначе — пользовательский выбор.
+    // 0.3.0 multi-subscription: engine берём из подписки-источника
+    // выбранного сервера через `getEffectiveEngine()`. Этот метод
+    // соблюдает приоритет: per-subscription engineOverride →
+    // header X-Nemefisto-Engine → settings.engine (fallback).
+    // Если у server'а нет subscriptionId (legacy state до миграции) —
+    // используем primary, иначе settings.engine.
+    const subStore = useSubscriptionStore.getState();
     const settings = useSettingsStore.getState();
-    const meta = useSubscriptionStore.getState().meta;
-    // sing-box миграция (0.1.2): подписка может всё ещё присылать
-    // `X-Nemefisto-Engine: xray` — мы автоматически маппим в "sing-box"
-    // (sing-box покрывает всё что покрывал xray, без потери семантики).
-    const headerEngineRaw = meta?.engine;
-    const headerEngine: "sing-box" | "mihomo" | null =
-      headerEngineRaw === "mihomo"
-        ? "mihomo"
-        : headerEngineRaw === "sing-box" || headerEngineRaw === "xray"
-        ? "sing-box"
-        : null;
-    const engine: "sing-box" | "mihomo" =
-      !settings.engineTouched && headerEngine
-        ? headerEngine
-        : settings.engine;
+    const selectedServer = subStore.servers[selectedIndex];
+    const sourceId = selectedServer?.subscriptionId ?? subStore.primaryId;
+    const engine: "sing-box" | "mihomo" = sourceId
+      ? subStore.getEffectiveEngine(sourceId)
+      : settings.engine;
     set({ status: "starting", errorMessage: null });
     try {
       const result = await invoke<ConnectResult>("connect", {

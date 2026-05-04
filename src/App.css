@@ -738,10 +738,11 @@ input, textarea { font: inherit; cursor: text; }
 
 /* ── Subscription meta (трафик + срок подписки) ──────────────────────── */
 .sub-meta {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 10px 36px 10px 14px; /* справа ⋯-кнопка */
   margin-bottom: 10px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -750,6 +751,472 @@ input, textarea { font: inherit; cursor: text; }
   -webkit-backdrop-filter: blur(20px);
   font-size: 12px;
   letter-spacing: 0.02em;
+}
+
+/* 0.3.0: active subscription card highlight (primary, currently used). */
+.sub-meta.is-active {
+  border-color: rgba(74, 222, 128, 0.45);
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.18) inset;
+}
+.sub-meta.is-expanded {
+  padding-bottom: 6px;
+}
+
+/* ── ⋯-меню подписки (0.2.4: удалить подписку) ───────────────────────── */
+.sub-meta-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+.sub-meta-expand-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-mute);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: none;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.sub-meta-expand-btn:hover,
+.sub-meta-expand-btn[aria-expanded="true"] {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--line-strong);
+}
+:root[data-theme="light"] .sub-meta-expand-btn:hover,
+:root[data-theme="light"] .sub-meta-expand-btn[aria-expanded="true"] {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* 0.3.0: server-list внутри карточки подписки (Etap 6). */
+.sub-meta-servers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.sub-meta-servers::-webkit-scrollbar {
+  width: 6px;
+}
+.sub-meta-servers::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sub-meta-servers::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+.sub-meta-servers::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-mute);
+}
+.sub-meta-servers-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.sub-meta-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  cursor: none;
+  transition: background 0.12s, border-color 0.12s;
+  text-align: left;
+}
+.sub-meta-server-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+}
+:root[data-theme="light"] .sub-meta-server-row:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.03);
+}
+.sub-meta-server-row.is-selected {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+.sub-meta-server-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sub-meta-server-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-meta-server-ping {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  min-width: 50px;
+  text-align: right;
+}
+
+/* 0.3.0: Mihomo proxy-groups внутри подписочной карточки превращаем в
+   row-list (как обычные server-rows), вместо grid 2-column. Это
+   унифицирует визуал и убирает «инородность» Mihomo-cards. Override
+   scoped к `.sub-meta-servers` чтобы не задеть другие места если
+   MihomoGroupsInline где-то ещё используется. */
+.sub-meta-servers .mihomo-groups { gap: 8px; }
+.sub-meta-servers .mihomo-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0;
+}
+.sub-meta-servers .mihomo-group-head {
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.sub-meta-servers .mihomo-group-sub {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.sub-meta-servers .mihomo-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0;
+}
+.sub-meta-servers .mihomo-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  height: auto;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sub-meta-servers .mihomo-card:hover:not(:disabled):not(.is-readonly) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+}
+:root[data-theme="light"] .sub-meta-servers .mihomo-card:hover:not(:disabled):not(.is-readonly) {
+  background: rgba(0, 0, 0, 0.03);
+}
+.sub-meta-servers .mihomo-card.is-active {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+.sub-meta-servers .mihomo-card-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.sub-meta-servers .mihomo-card-meta {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+}
+.sub-meta-servers .mihomo-card-proto {
+  display: none; /* VLESS бейдж избыточен — protocol виден по subscription header */
+}
+.sub-meta-servers .mihomo-card-delay {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  min-width: 50px;
+  text-align: right;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.sub-meta-servers .mihomo-card-check {
+  position: static;
+  font-size: 12px;
+  color: rgba(74, 222, 128, 1);
+  margin-left: 4px;
+}
+.sub-meta-menu-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-mute);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: none;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.sub-meta-menu-btn:hover,
+.sub-meta-menu-btn[aria-expanded="true"] {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--line-strong);
+}
+:root[data-theme="light"] .sub-meta-menu-btn:hover,
+:root[data-theme="light"] .sub-meta-menu-btn[aria-expanded="true"] {
+  background: rgba(0, 0, 0, 0.05);
+}
+.sub-meta-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  white-space: nowrap;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-glass);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  animation: sub-meta-menu-in 0.14s ease-out;
+}
+@keyframes sub-meta-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sub-meta-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: calc(var(--r-md) - 4px);
+  font-size: 12px;
+  text-align: left;
+  color: var(--fg);
+  cursor: none;
+  transition: background 0.12s, color 0.12s;
+}
+.sub-meta-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+:root[data-theme="light"] .sub-meta-menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.sub-meta-menu-item.is-danger {
+  color: #f06060;
+}
+.sub-meta-menu-item.is-danger:hover {
+  background: rgba(240, 96, 96, 0.12);
+  color: #ff7878;
+}
+/* 0.3.0: engine-radio в меню подписки */
+.sub-meta-menu-section-title {
+  padding: 8px 12px 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.sub-meta-menu-item.is-active {
+  color: var(--accent);
+}
+.sub-meta-menu-radio {
+  display: inline-block;
+  width: 14px;
+  margin-right: 6px;
+  font-size: 10px;
+  color: var(--accent);
+}
+.sub-meta-menu-divider {
+  height: 1px;
+  margin: 4px 4px;
+  background: var(--line);
+}
+
+/* 0.3.0: глобальная add-form (открывается из Header `+`). Висит над
+   списком карточек подписок. */
+.sub-meta-global-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  animation: sub-meta-menu-in 0.18s ease-out;
+}
+.sub-meta-global-add .sub-meta-add-input { flex: 1; min-width: 0; }
+
+/* 0.3.0: «+ добавить ещё подписку» inline-форма */
+.sub-meta-add {
+  margin-top: 6px;
+}
+.sub-meta-add-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: none;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.sub-meta-add-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg-mute);
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme="light"] .sub-meta-add-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.sub-meta-add-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sub-meta-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--bg-glass);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.sub-meta-add-input:focus {
+  border-color: var(--accent);
+}
+.sub-meta-add-confirm,
+.sub-meta-add-cancel {
+  padding: 7px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--bg-glass);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sub-meta-add-confirm:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--accent);
+}
+.sub-meta-add-cancel {
+  width: 30px;
+  padding: 0;
+  text-align: center;
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--fg-mute);
+}
+.sub-meta-add-cancel:hover {
+  color: var(--fg);
+}
+.sub-meta-add-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Confirm-модалка для удаления ─────────────────────────────────────── */
+.sub-meta-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  animation: sub-meta-overlay-in 0.18s ease-out;
+}
+@keyframes sub-meta-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.sub-meta-confirm {
+  max-width: 320px;
+  width: calc(100% - 32px);
+  padding: 18px 18px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-2);
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.6);
+  animation: sub-meta-confirm-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes sub-meta-confirm-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.sub-meta-confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+.sub-meta-confirm-message {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  margin-bottom: 14px;
+}
+.sub-meta-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.sub-meta-confirm-cancel,
+.sub-meta-confirm-delete {
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.sub-meta-confirm-cancel {
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--fg);
+}
+.sub-meta-confirm-cancel:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.sub-meta-confirm-delete {
+  border: 1px solid rgba(240, 96, 96, 0.5);
+  background: rgba(240, 96, 96, 0.16);
+  color: #ff7878;
+}
+.sub-meta-confirm-delete:hover {
+  background: rgba(240, 96, 96, 0.26);
+  border-color: rgba(240, 96, 96, 0.7);
 }
 .sub-meta-title {
   display: flex;

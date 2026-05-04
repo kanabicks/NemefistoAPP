@@ -35,7 +35,8 @@
   },
   "header": {
     "dashboard": "dashboard",
-    "settings": "settings"
+    "settings": "settings",
+    "addSubscription": "add subscription"
   },
   "footer": {
     "left": "NO-LOGS · XRAY · VLESS · REALITY"
@@ -128,6 +129,21 @@
     "updated": "updated {{when}}",
     "neverUpdated": "never updated",
     "refreshTitle": "refresh subscription",
+    "menuAria": "subscription menu",
+    "menuEngineTitle": "engine",
+    "menuEngineAuto": "auto",
+    "menuEngineAutoHint": "from subscription header or system default",
+    "deleteAction": "delete subscription",
+    "deleteConfirmTitle": "delete subscription?",
+    "deleteConfirmMessage": "the link, servers and saved server selection will be removed. you can paste a new URL anytime.",
+    "deleteConfirmYes": "delete",
+    "deleteConfirmNo": "cancel",
+    "addAction": "add another subscription",
+    "expandAria": "show servers",
+    "collapseAria": "hide servers",
+    "serversLoading": "loading servers…",
+    "serversEmpty": "no servers — try refreshing",
+    "mihomoActivateHint": "tap to activate this subscription and see groups",
     "justNow": "just now",
     "longAgo": "a while ago",
     "minutesAgo_one": "{{count}} min ago",
@@ -177,6 +193,18 @@
       "checkTitle": "checking for updates",
       "upToDate": "you are on the latest version",
       "checkFailed": "check failed"
+    },
+    "serverGone": {
+      "title": "server gone from subscription",
+      "message": "«{{name}}» no longer comes — pick another"
+    },
+    "subscriptionDeleted": {
+      "title": "subscription deleted",
+      "message": "paste a new URL in Welcome or Settings"
+    },
+    "subscriptionDuplicate": {
+      "title": "subscription already added",
+      "message": "this URL is already in the list"
     }
   },
   "backup": {

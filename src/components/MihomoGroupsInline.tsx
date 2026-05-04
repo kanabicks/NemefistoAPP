@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { useVpnStore } from "../stores/vpnStore";
-import { useSubscriptionStore } from "../stores/subscriptionStore";
+import {
+  useSubscriptionStore,
+  type ProxyEntry,
+} from "../stores/subscriptionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { showToast } from "../stores/toastStore";
 
@@ -98,7 +101,28 @@ function buildStaticSnapshot(
   return { proxies: out };
 }
 
-export function MihomoGroupsInline() {
+/** Опционально передаваемый source — конкретный mihomo-profile entry.
+ *  Когда задан, MihomoGroupsInline отрисовывает группы из него (а не
+ *  из global state.servers по selectedIndex). Используется внутри
+ *  SubscriptionCard expand'а для multi-subscription, чтобы группы
+ *  каждой подписки рендерились в её карточке без swap'а primary.
+ *  `onActivate` дёргается при click по карточке-ноде Selector-группы
+ *  (если задан) — там SubscriptionCard переключает primary на эту
+ *  подписку перед сохранением preferredNode.
+ *  `showSelection` — рендерить ли визуально active-ноду (галку, подсветку).
+ *  В multi-sub карточки non-primary подписок передают false, чтобы
+ *  глобально выделялся только один (active) сервер, как просил юзер. */
+export type MihomoGroupsInlineProps = {
+  entry?: ProxyEntry;
+  onActivate?: () => void | Promise<void>;
+  showSelection?: boolean;
+};
+
+export function MihomoGroupsInline({
+  entry: entryProp,
+  onActivate,
+  showSelection = true,
+}: MihomoGroupsInlineProps = {}) {
   const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
   const selectedIndex = useVpnStore((s) => s.selectedIndex);
@@ -106,7 +130,7 @@ export function MihomoGroupsInline() {
   const preferredNodes = useSettingsStore((s) => s.preferredMihomoNodes);
   const setSetting = useSettingsStore((s) => s.set);
 
-  const liveMode = status === "running";
+  const liveMode = status === "running" && !entryProp;
 
   const typeLabel = (apiType: string): string => {
     const known = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"];
@@ -143,7 +167,10 @@ export function MihomoGroupsInline() {
       const t = window.setInterval(() => void refresh(), 3000);
       return () => window.clearInterval(t);
     }
-    const entry = selectedIndex !== null ? servers[selectedIndex] : null;
+    // Source приоритет: entryProp (multi-sub: рендерим группы конкретной
+    // подписки) → selectedIndex (legacy single-sub mode).
+    const entry =
+      entryProp ?? (selectedIndex !== null ? servers[selectedIndex] : null);
     if (!entry || entry.protocol !== "mihomo-profile") {
       setSnap(null);
       return;
@@ -155,7 +182,7 @@ export function MihomoGroupsInline() {
         }
       | undefined;
     setSnap(buildStaticSnapshot(raw?.groups ?? [], raw?.proxies ?? []));
-  }, [liveMode, selectedIndex, servers]);
+  }, [liveMode, selectedIndex, servers, entryProp]);
 
   const groups = useMemo(() => {
     if (!snap) return [];
@@ -213,14 +240,16 @@ export function MihomoGroupsInline() {
       });
       return;
     }
+    // 0.3.0: если рендеримся внутри карточки non-primary subscription
+    // (entryProp задан + onActivate задан) — сначала активируем эту
+    // подписку (swap primary), затем сохраняем preferredNode для неё.
+    if (entryProp && onActivate) {
+      await onActivate();
+    }
     setPreferred(group, name);
     if (!liveMode) {
-      showToast({
-        kind: "success",
-        title: t("mihomoGroups.toast.selectedTitle"),
-        message: t("mihomoGroups.toast.selectedPending", { group, name }),
-        durationMs: 3000,
-      });
+      // Toast «выбрано: applies on connect» удалён — галочка ✓ на
+      // карточке уже даёт visual feedback, сообщение избыточное.
       return;
     }
     try {
@@ -274,9 +303,14 @@ export function MihomoGroupsInline() {
         const memberInfos = g.all.map((n) => snap!.proxies[n]).filter(Boolean);
         const liveActive = g.now ?? null;
         const preferredName = preferredNodes[g.name];
-        const displayActive = liveMode
-          ? liveActive
-          : preferredName ?? liveActive;
+        // 0.3.0: showSelection=false (multi-sub non-primary card) — не
+        // подсвечиваем «активную» ноду, чтобы globally была только одна
+        // visual selection (на active subscription).
+        const displayActive = !showSelection
+          ? null
+          : liveMode
+            ? liveActive
+            : preferredName ?? liveActive;
         const isCollapsed = collapsed.has(g.name);
         const isSelector = g.type === "Selector";
         return (
@@ -288,19 +322,29 @@ export function MihomoGroupsInline() {
               <div className="mihomo-group-title-block">
                 <div className="mihomo-group-title">{g.name}</div>
                 <div className="mihomo-group-sub">
-                  <span className="mihomo-group-type">{typeLabel(g.type)}</span>
+                  {/* Для Selector скрываем typeLabel («выбор»), потому
+                      что «выбрана: X» сам по себе сигнализирует тип —
+                      иначе тавтология «выбор · выбрана: X». Для
+                      auto-типов (URL-test/Fallback) показываем тип. */}
+                  {!isSelector && (
+                    <>
+                      <span className="mihomo-group-type">
+                        {typeLabel(g.type)}
+                      </span>
+                      <span className="dot-sep">·</span>
+                    </>
+                  )}
                   {displayActive && (
                     <>
-                      <span className="dot-sep">·</span>
                       <span className="mihomo-group-active">
                         {liveMode
                           ? t("mihomoGroups.active")
                           : t("mihomoGroups.selected")}
                         : {displayActive}
                       </span>
+                      <span className="dot-sep">·</span>
                     </>
                   )}
-                  <span className="dot-sep">·</span>
                   <span>
                     {t("mihomoGroups.nodeCount", { count: memberInfos.length })}
                   </span>
