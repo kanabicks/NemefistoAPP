@@ -103,7 +103,8 @@
   },
   "bandwidth": {
     "titleIface": "interface: {{iface}}",
-    "titleNoIface": "interface not detected"
+    "titleNoIface": "interface not detected",
+    "memTitle": "sing-box / mihomo working set (resident memory)"
   },
   "announce": {
     "openLink": "open link"
@@ -313,37 +314,6 @@
         "desc": "autostart, updates, history, logs, reset"
       }
     },
-    "comingSoon": {
-      "badge": "soon",
-      "mergeSubs": {
-        "title": "merge multiple subscriptions",
-        "desc": "add 2-5 subscriptions in parallel, all servers in one list tagged by source"
-      },
-      "autoFailover": {
-        "title": "auto-failover",
-        "desc": "if the active server pings >3000ms, auto-switch to the next one in the list"
-      },
-      "windowsHello": {
-        "title": "windows hello on launch",
-        "desc": "require auth (face/pin/fingerprint) when the app starts. handy on shared machines"
-      },
-      "wfpPerApp": {
-        "title": "WFP per-app routing",
-        "desc": "per-process rules for both engines via the Windows Filtering Platform kernel driver. an alternative to Mihomo PROCESS-NAME"
-      },
-      "autoUpdate": {
-        "title": "app auto-update",
-        "desc": "client checks for new versions, downloads the signed installer and updates itself — no need to visit a website"
-      },
-      "history": {
-        "title": "session history",
-        "desc": "local connect/disconnect log: time, server, mode, duration, disconnect reason"
-      },
-      "speedTest": {
-        "title": "speed test through VPN",
-        "desc": "measure throughput via cloudflare CDN. optional weekly auto-test on every server"
-      }
-    },
     "subscription": {
       "title": "subscription",
       "dashboard": "dashboard →"
@@ -404,9 +374,8 @@
     },
     "appRules": {
       "title": "app rules",
-      "singboxWarning": "sing-box is active — app rules only work with the mihomo engine (via its native PROCESS-NAME matcher). switch the engine in Settings → engine to enable rules.",
-      "tunWarning": "in TUN mode app rules only work when the subscription delivers a full mihomo-config (server type mihomo-profile) — there Mihomo owns the TUN adapter directly and sees real processes. for URI servers (vless/vmess/trojan/hy2/...) in TUN, rules are not applied — switch to proxy mode.",
-      "intro": "rules of the form «<exe> → action» are applied by Mihomo to processes by their executable file name. for example, send telegram through the VPN while routing steam direct. the exe name is taken from task manager (telegram.exe, steam.exe). proxy mode only",
+      "tunWarning": "with Mihomo active in TUN mode rules only work when the subscription delivers a full mihomo-config (server type mihomo-profile). For URI servers (vless/vmess/trojan/hy2/...) in TUN with Mihomo, rules are not applied — switch the engine to sing-box or the mode to proxy.",
+      "intro": "rules of the form «<exe> → action» are applied by the engine to processes by their executable file name. for example, send telegram through the VPN while routing steam direct. the exe name is taken from task manager (telegram.exe, steam.exe).",
       "actionTitles": {
         "proxy": "through VPN",
         "direct": "direct, bypasses VPN",
@@ -432,10 +401,27 @@
         "hint": "hide the proxy/tun switch on the main screen and operate via the TUN adapter only. no local SOCKS5 socket on loopback — for paranoiacs who refuse to leave any VPN surface on 127.0.0.1"
       }
     },
+    "mux": {
+      "title": "Mux (multiplexing)",
+      "intro": "multiplexes stream protocols over a single TCP connection. reduces TLS-handshake overhead and helps bypass connection-rate limits. applies to vless / vmess / trojan / shadowsocks / socks for sing-box URI servers. ignored for hy2 / tuic / wireguard (own multiplexing). also not applied to xray-json / sing-box-json subscription configs (mux must come from the provider). server-side must support a compatible mux",
+      "mihomoWarning": "mihomo is active — mux settings currently only apply with the sing-box engine. for mihomo, mux is enabled via subscription YAML",
+      "enable": {
+        "label": "enable mux",
+        "hint": "if the server does not support a compatible mux, sing-box automatically falls back to regular mode"
+      },
+      "protocol": {
+        "label": "protocol",
+        "hint": "smux — recommended (fast, proven). yamux — more fault-tolerant. h2mux — over HTTP/2 frames"
+      },
+      "maxStreams": {
+        "label": "max streams per connection: {{count}}",
+        "hint": "0 = unlimited (sing-box default). recommended 4-16. higher values mean more streams per TCP session, but also more head-of-line blocking"
+      }
+    },
     "antiDpi": {
       "title": "anti-dpi",
       "mihomoWarning": "mihomo is active — fragmentation and noises are not applied (anti-DPI is implemented for sing-box only). doh-resolve still works via mihomo's dns.",
-      "singboxInfo": "in sing-box fragmentation works as a simple ON/OFF — fine-grained parameters (size/sleep/interval) are not accepted by sing-box. noises are not supported in upstream sing-box and are ignored. for fine-tuning use Mihomo (anti-DPI is not implemented there yet).",
+      "singboxInfo": "TLS fragmentation runs with sing-box default values — fine-grained parameters (size/sleep/interval) do not affect the upstream engine. noises are only implemented in xray-core; sing-box does not have them.",
       "fragmentation": {
         "label": "tcp fragmentation",
         "hint": "splits the tls clienthello into chunks — bypasses most dpi",
@@ -470,6 +456,10 @@
         "label": "block direct dns queries",
         "hint": "all :53/udp+tcp except vpn-dns is blocked. protects against dns leaks. ⚠️ in proxy mode this can break apps that use system dns outside the proxy (some games, messengers). better used in tun mode"
       },
+      "forceDisableIpv6": {
+        "label": "block ipv6 while vpn is active",
+        "hint": "protects against ipv6 leaks on dual-stack ISPs. all outbound ipv6 is cut by wfp at the kernel layer — apps automatically fall back to ipv4 (which goes through the vpn). loopback ::1 stays accessible. requires kill switch enabled"
+      },
       "recover": {
         "label": "recover network",
         "hint": "if the internet feels half-broken after a crash / disconnect — one button removes wfp filters, orphan tun adapters, half-default routes and the system proxy. safe to press any time vpn is not active",
@@ -480,6 +470,48 @@
       "label": "export diagnostics",
       "hint": "saves a zip with sing-box/mihomo logs, app version, current state and the list of running vpn processes to the Documents folder. no telemetry — fully local, you decide who to send the file to if you need help",
       "button": "export"
+    },
+    "routingTable": {
+      "title": "routing table",
+      "intro": "live snapshot of the system routing table. helps you understand where traffic goes: whether the default-route is through the VPN, whether an orphan route from another VPN is left behind, which LAN subnets you currently have. read-only — does not modify anything",
+      "show": "show",
+      "refresh": "refresh",
+      "searchPlaceholder": "search by address / interface",
+      "familyAll": "all",
+      "count": "{{count}} of {{total}}",
+      "empty": "no entries match the filter"
+    },
+    "ping": {
+      "title": "ping",
+      "intro": "manual connection-integrity test. separate from per-server ping in the drawer (which is always TCP to the VPN server). in proxy mode with VPN active, HTTP methods go through SOCKS5 — measuring the full TCP+TLS+HTTP chain. in TUN mode — through the system route (already via VPN). TCP method always goes directly to the URL as a baseline",
+      "method": {
+        "label": "method",
+        "hint": "tcp — fast reachability check; http-get/head — full request through the active tunnel",
+        "options": {
+          "tcp": "TCP connect",
+          "http-get": "HTTP GET (via proxy)",
+          "http-head": "HTTP HEAD (via proxy)"
+        }
+      },
+      "url": {
+        "label": "test URL",
+        "hint": "endpoint to request. default — cloudflare's no-content (fast, no redirects, no ads)"
+      },
+      "timeout": {
+        "label": "timeout: {{seconds}}s",
+        "hint": "total timeout for dns + tcp + tls + http. exceeded → fail"
+      },
+      "run": {
+        "label": "connection test",
+        "hint": "run with the selected method. result appears below",
+        "hintInactive": "VPN not active — HTTP methods will go directly (same as TCP). connect first to test through the tunnel",
+        "button": "test"
+      },
+      "result": {
+        "ok": "{{ms}} ms",
+        "failed": "error",
+        "viaProxy": "via VPN"
+      }
     },
     "leakTest": {
       "title": "leak test",
@@ -543,6 +575,10 @@
           "neon": "neon",
           "metallic": "metallic"
         }
+      },
+      "memoryMonitor": {
+        "label": "engine memory on the main screen",
+        "hint": "shows sing-box / mihomo working set in MB next to the bandwidth meter. cheap — one EnumProcesses per second. helps spot memory leaks and see 'is the engine alive'"
       },
       "floating": {
         "title": "floating window",

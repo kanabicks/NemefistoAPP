@@ -315,25 +315,37 @@ function App() {
   // сам всё применил) от «user toggle» — без этого при каждом connect
   // дёргалась бы лишняя re-apply.
   const killSwitchStrictEnabled = useSettingsStore((x) => x.killSwitchStrict);
+  const forceDisableIpv6Enabled = useSettingsStore((x) => x.forceDisableIpv6);
   const prevKillSwitch = useRef(killSwitchEnabled);
   const prevKillSwitchStrict = useRef(killSwitchStrictEnabled);
+  const prevForceDisableIpv6 = useRef(forceDisableIpv6Enabled);
   useEffect(() => {
     if (status !== "running") {
       prevKillSwitch.current = killSwitchEnabled;
       prevKillSwitchStrict.current = killSwitchStrictEnabled;
+      prevForceDisableIpv6.current = forceDisableIpv6Enabled;
       return;
     }
     const enabledChanged = prevKillSwitch.current !== killSwitchEnabled;
     const strictChanged =
       prevKillSwitchStrict.current !== killSwitchStrictEnabled;
-    if (!enabledChanged && !strictChanged) return;
+    const v6Changed =
+      prevForceDisableIpv6.current !== forceDisableIpv6Enabled;
+    if (!enabledChanged && !strictChanged && !v6Changed) return;
     prevKillSwitch.current = killSwitchEnabled;
     prevKillSwitchStrict.current = killSwitchStrictEnabled;
+    prevForceDisableIpv6.current = forceDisableIpv6Enabled;
     void invoke("kill_switch_apply", {
       enabled: killSwitchEnabled,
       strict: killSwitchStrictEnabled,
+      forceDisableIpv6: forceDisableIpv6Enabled,
     }).catch((e) => console.error("[kill_switch_apply]", e));
-  }, [status, killSwitchEnabled, killSwitchStrictEnabled]);
+  }, [
+    status,
+    killSwitchEnabled,
+    killSwitchStrictEnabled,
+    forceDisableIpv6Enabled,
+  ]);
 
   // ── Авто-подключение к последнему выбранному при старте ────────────────────
   const [didAutoConnect, setDidAutoConnect] = useState(false);

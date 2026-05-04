@@ -143,6 +143,32 @@ pub fn install() -> Result<()> {
     Ok(())
 }
 
+/// Graceful self-stop через SCM (0.3.1 / installer file-lock fix).
+///
+/// Используется обработчиком `Request::ShutdownHelper`: helper открывает
+/// собственный сервис через SCM с `SERVICE_STOP` access (он работает под
+/// SYSTEM, права у него есть) и шлёт `service.stop()` себе же. SCM
+/// маршрутизирует это в наш `event_handler` в `service_loop`, который
+/// выставляет `shutdown` атомик-флаг → pipe-сервер выходит из accept-loop
+/// → `my_service_main` возвращает `SERVICE_STOPPED` обратно в SCM
+/// → процесс терминируется штатно, `.exe`-handle освобождается.
+///
+/// Этот путь предпочтительнее `process::exit(0)` потому что:
+/// - SCM получает корректный SERVICE_STOPPED статус (а не «крах»);
+/// - Failure-actions (auto-restart на 1с/3с/5с) не срабатывают —
+///   они только для unexpected crashes;
+/// - Все pending pipe-операции получают clean disconnect.
+pub fn stop_self() -> Result<()> {
+    let manager_access = ServiceManagerAccess::CONNECT;
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)
+        .context("SCM open для self-stop")?;
+    let service = service_manager
+        .open_service(SERVICE_NAME, ServiceAccess::STOP)
+        .context("open собственного сервиса для self-stop")?;
+    service.stop().context("self-stop service.stop()")?;
+    Ok(())
+}
+
 pub fn uninstall() -> Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)

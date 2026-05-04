@@ -1,8 +1,9 @@
 //! Маршрутизатор JSON-RPC команд helper-сервиса.
 //!
-//! Вся бизнес-логика (запуск tun2socks, манипуляции с routing) в подмодулях
-//! `tun.rs` и `routing.rs`. Здесь — только switch + конверсия ошибок в
-//! `Response::Error`.
+//! Вся бизнес-логика (SYSTEM-spawn движков, WFP kill-switch, cleanup
+//! orphan TUN/routes) в подмодулях `mihomo.rs` / `sing_box.rs` /
+//! `firewall.rs` / `tun.rs` / `routing.rs`. Здесь — только switch +
+//! конверсия ошибок в `Response::Error`.
 
 use super::firewall;
 use super::helper_log::log as hlog;
@@ -28,6 +29,7 @@ pub async fn handle(req: Request) -> Response {
             allow_dns_ips,
             strict_mode,
             expect_tun,
+            force_disable_ipv6,
         } => {
             let paths: Vec<std::path::PathBuf> = allow_app_paths
                 .into_iter()
@@ -53,6 +55,7 @@ pub async fn handle(req: Request) -> Response {
                 allow_dns_ips,
                 tun_if,
                 strict_mode,
+                force_disable_ipv6,
             )
             .await
             {
@@ -104,5 +107,23 @@ pub async fn handle(req: Request) -> Response {
             Ok(()) => Response::Ok,
             Err(e) => Response::err(format!("sing_box_stop: {e:#}")),
         },
+        Request::ShutdownHelper => {
+            // 0.3.1 fix: graceful self-stop. Отвечаем Ok сразу, потом в
+            // фоновой задаче через 200мс шлём self SERVICE_CONTROL_STOP
+            // через SCM. Задержка нужна чтобы клиент успел получить Ok
+            // и закрыть pipe — иначе он увидит «pipe closed» вместо
+            // успешного ответа.
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                if let Err(e) = super::service::stop_self() {
+                    hlog(&format!("[dispatch] stop_self failed: {e:#}"));
+                    // Last resort: hard exit. Pipe-сервер уже не сможет
+                    // принять новые соединения, файл .exe освободится
+                    // как только OS уберёт reference на наш running image.
+                    std::process::exit(0);
+                }
+            });
+            Response::Ok
+        }
     }
 }

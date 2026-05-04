@@ -21,6 +21,10 @@ pub struct KillSwitchContext {
     /// 0.1.3: TUN-режим? Сохраняется чтобы live-toggle re-apply искал
     /// WinTUN-адаптер через retry в helper'е.
     pub expect_tun: bool,
+    /// 14.D: блокировать весь IPv6 outbound пока VPN активен. Сохраняем
+    /// в контексте для live-toggle (можно включать/выключать без
+    /// disconnect/connect через kill_switch_apply).
+    pub force_disable_ipv6: bool,
 }
 
 /// Tauri-state для контекста активного kill-switch. None = VPN не подключён.
@@ -33,7 +37,7 @@ impl KillSwitchState {
 }
 
 use crate::config::mihomo_config::AppRule;
-use crate::config::sing_box_config::AntiDpiOptions;
+use crate::config::sing_box_config::{AntiDpiOptions, MuxOptions};
 use crate::config::subscription::{fetch_and_parse, SubscriptionMeta};
 use crate::config::{mihomo_config, sing_box_config, HwidState, ProxyEntry, SubscriptionState};
 use crate::platform;
@@ -162,7 +166,8 @@ fn generate_masked_tun_name() -> String {
 /// `socks_username` / `socks_password` — заполнены только если включён
 /// `auth: password` на SOCKS5 inbound (этап 9.G). Используется в LAN-
 /// режиме чтобы UI показал креды для копирования; в TUN-режиме они
-/// уже переданы в tun2socks и пользователю не нужны.
+/// нужны только внутри движка (built-in TUN inbound движка не лезет
+/// через SOCKS5) и пользователю не показываются.
 #[derive(Serialize)]
 pub struct ConnectResult {
     pub socks_port: u16,
@@ -236,7 +241,9 @@ fn build_singbox_preview(entry: &ProxyEntry) -> Result<Option<String>, String> {
         // Для mihomo-profile нет sing-box-конфига — используется raw YAML.
         return Ok(None);
     } else {
-        let cfg = build(entry, 30000, 30000, "127.0.0.1", false, None, None, None)
+        // Превью без user-настроек (mux/anti-DPI применяется только при
+        // реальном connect через `connect()` команду).
+        let cfg = build(entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
             .map_err(|e| e.to_string())?;
         cfg.json
     };
@@ -337,7 +344,10 @@ pub fn get_subscription_meta(sub: State<'_, SubscriptionState>) -> Option<Subscr
 /// Подключиться к серверу с указанным индексом в режиме `mode`.
 ///
 /// `mode` = "proxy" — системный SOCKS5 + HTTP прокси через реестр.
-/// `mode` = "tun"   — TUN-режим через helper-сервис + tun2socks.
+/// `mode` = "tun"   — built-in TUN inbound движка (sing-box или mihomo)
+///                   через helper-сервис SYSTEM-spawn. WinTUN-адаптер
+///                   создаётся самим движком, отдельный tun2socks больше
+///                   не нужен (выпилен в 0.1.2 миграции).
 /// `allow_lan` — если `Some(true)`, inbound слушает 0.0.0.0 вместо 127.0.0.1.
 ///
 /// Автоматически находит свободные порты начиная с 1080/1087.
@@ -356,6 +366,12 @@ pub async fn connect(
     // 13.S strict mode для kill-switch: убирает общий allow-app для xray/mihomo,
     // оставляет только allow на server_ips. Direct outbound xray блокируется.
     kill_switch_strict: Option<bool>,
+    // 14.D: принудительно блокировать весь IPv6 outbound пока VPN активен.
+    // Защита от утечек на dual-stack ISP. Helper пропускает все v6 allow-фильтры.
+    force_disable_ipv6: Option<bool>,
+    // Mux (multiplexing) для sing-box URI-серверов (vless/vmess/trojan/ss/socks).
+    // Для hysteria2/tuic/wireguard и для xray-json/singbox-json passthrough игнорируется.
+    mux: Option<MuxOptions>,
     // 13.Q: если активного routing-профиля нет — применять встроенный
     // минимальный RU-шаблон (geosite:ru → DIRECT, ads → BLOCK).
     auto_apply_minimal_ru_rules: Option<bool>,
@@ -588,6 +604,7 @@ pub async fn connect(
                 tun_options.as_ref(),
                 sb_anti_dpi.as_ref(),
                 auth_pair,
+                mux.as_ref(),
             )
             .map_err(|e| e.to_string())?;
             cfg.json
@@ -600,6 +617,15 @@ pub async fn connect(
                 sing_box_config::apply_routing_profile(&mut config_json, p);
             }
         }
+
+        // 8.D: per-process правила пользователя — sing-box нативный
+        // process_name. Применяется ко всем трём pipeline'ам (URI,
+        // xray-json, singbox-json passthrough) единообразно. Ставится
+        // ПОСЛЕ routing-профиля, но `apply_app_rules` сам вставляет
+        // user-правила в начало `route.rules` (после sniff/hijack-dns)
+        // — у user override приоритет над всем остальным.
+        let sb_rules_slice: &[AppRule] = app_rules.as_deref().unwrap_or(&[]);
+        sing_box_config::apply_app_rules(&mut config_json, sb_rules_slice);
 
         // Гасим другой движок если что-то осталось от прошлого сеанса.
         let _ = mihomo.stop();
@@ -688,8 +714,8 @@ pub async fn connect(
             // же direct outbound. Без этого петли между half-routes
             // через TUN и mihomo's DIRECT неизбежны.
             //
-            // В proxy-режиме (без TUN) — обычный SOCKS-server, наш
-            // tun2socks pipeline не запускается.
+            // В proxy-режиме (без TUN) — обычный mixed-server на
+            // loopback, helper не вовлечён.
             let use_builtin_tun = tun_mode;
             let patch = mihomo_config::FullYamlPatch {
                 mixed_port: default_socks,
@@ -928,6 +954,7 @@ pub async fn connect(
             Vec::new()
         };
         let strict = kill_switch_strict.unwrap_or(false);
+        let disable_v6 = force_disable_ipv6.unwrap_or(false);
 
         if let Err(e) = platform::helper_client::kill_switch_enable(
             server_ips.clone(),
@@ -937,6 +964,7 @@ pub async fn connect(
             allow_dns_ips.clone(),
             strict,
             tun_mode,
+            disable_v6,
         )
         .await
         {
@@ -962,6 +990,7 @@ pub async fn connect(
             allow_dns_ips,
             strict_mode: strict,
             expect_tun: tun_mode,
+            force_disable_ipv6: disable_v6,
         });
         stamp("kill_switch enabled");
     }
@@ -969,8 +998,9 @@ pub async fn connect(
     stamp("connect done");
 
     // В UI возвращаем креды только в LAN-режиме — там клиенты должны
-    // ввести их вручную. В TUN-режиме они уже переданы tun2socks; в
-    // proxy-режиме их вообще нет (loopback noauth).
+    // ввести их вручную. В TUN-режиме они нужны только внутри движка
+    // (built-in TUN не использует наш SOCKS5); в proxy-режиме их
+    // вообще нет (loopback noauth).
     let (resp_user, resp_pass) = if lan {
         match socks_auth {
             Some((u, p)) => (Some(u), Some(p)),
@@ -1222,6 +1252,75 @@ pub async fn get_recovery_state() -> RecoveryState {
     }
 }
 
+// ─── Routing table viewer (Settings → диагностика) ──────────────────────────
+
+/// Чтение текущей routing-таблицы Windows для UI-вьюера. Read-only.
+/// Возвращает IPv4 + IPv6 маршруты, отсортированные по metric ASC.
+///
+/// Используется в Settings → диагностика → «таблица маршрутов» — пользователь
+/// видит куда уходит трафик (default через TUN, half-default другого VPN,
+/// и т.п.). Не делает live-poll'инга — фронт сам дёргает по pull-to-refresh.
+#[tauri::command]
+pub fn get_routing_table() -> Vec<platform::network::RouteEntry> {
+    platform::network::list_routing_table()
+}
+
+// ─── Helper self-shutdown (0.3.1 / installer file-lock fix) ────────────────
+
+/// Graceful self-shutdown helper-сервиса. Используется auto-updater'ом
+/// перед запуском NSIS installer'а: helper освобождает свой `.exe`-файл
+/// (закрывает image-handle через SCM `SERVICE_CONTROL_STOP` себе же),
+/// после чего installer может перезаписать `nemefisto-helper.exe` без
+/// admin-прав.
+///
+/// После этой команды helper недоступен до следующего connect (там
+/// `helper_bootstrap::ensure_running` поднимет его снова, в случае
+/// отсутствия — через UAC reinstall).
+///
+/// Идемпотентна: если helper уже не запущен, вернёт Ok.
+#[tauri::command]
+pub async fn shutdown_helper() -> Result<(), String> {
+    platform::helper_client::shutdown_helper()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ─── Connection ping (Settings → пинг) ──────────────────────────────────────
+
+/// Замерить ping заданным методом (TCP / HTTP-GET / HTTP-HEAD).
+///
+/// Используется кнопкой «тест соединения» в Settings → пинг. В отличие от
+/// `ping_servers` (TCP-ping до VPN-сервера для server-list) этот ping
+/// проверяет **активное соединение** через VPN: HTTP-методы идут через
+/// SOCKS5 inbound (если VPN активен в proxy-режиме) или через system route
+/// (TUN-режим). TCP-метод идёт напрямую к URL.
+///
+/// `socks_port` — `None` если VPN не активен или в TUN-режиме; `Some(port)`
+/// в proxy-режиме когда хотим прогнать запрос через туннель.
+#[tauri::command]
+pub async fn connection_ping(
+    method: String,
+    url: String,
+    socks_port: Option<u16>,
+    timeout_secs: u32,
+) -> vpn::connection_ping::PingResult {
+    use vpn::connection_ping::{ping, PingMethod};
+    let m = match method.as_str() {
+        "tcp" => PingMethod::Tcp,
+        "http-get" => PingMethod::HttpGet,
+        "http-head" => PingMethod::HttpHead,
+        other => {
+            return vpn::connection_ping::PingResult {
+                latency_ms: None,
+                status: None,
+                error: Some(format!("неизвестный метод ping'а: {other}")),
+                via_proxy: socks_port.is_some(),
+            };
+        }
+    };
+    ping(m, &url, socks_port, timeout_secs).await
+}
+
 /// Live-toggle kill-switch без disconnect/connect.
 ///
 /// Фронт зовёт когда пользователь меняет переключатель в Settings во
@@ -1233,17 +1332,25 @@ pub async fn get_recovery_state() -> RecoveryState {
 /// фильтров от прошлой сессии).
 ///
 /// `strict` опционально обновляет сохранённый strict_mode перед re-apply.
-/// Используется при live-toggle 13.S strict-mode toggle в Settings.
+/// Используется при live-toggle 13.S strict-mode и 14.D force_disable_ipv6
+/// toggle'ов в Settings — без disconnect/connect.
 #[tauri::command]
 pub async fn kill_switch_apply(
     enabled: bool,
     strict: Option<bool>,
+    force_disable_ipv6: Option<bool>,
     ks_ctx: State<'_, KillSwitchState>,
 ) -> Result<(), String> {
-    // Обновляем strict_mode в контексте если фронт прислал новое значение.
-    if let Some(new_strict) = strict {
-        if let Some(ctx) = ks_ctx.0.lock().await.as_mut() {
-            ctx.strict_mode = new_strict;
+    // Обновляем поля в контексте если фронт прислал новые значения.
+    {
+        let mut g = ks_ctx.0.lock().await;
+        if let Some(ctx) = g.as_mut() {
+            if let Some(new_strict) = strict {
+                ctx.strict_mode = new_strict;
+            }
+            if let Some(new_v6) = force_disable_ipv6 {
+                ctx.force_disable_ipv6 = new_v6;
+            }
         }
     }
 
@@ -1274,6 +1381,7 @@ pub async fn kill_switch_apply(
         ctx.allow_dns_ips,
         ctx.strict_mode,
         ctx.expect_tun,
+        ctx.force_disable_ipv6,
     )
     .await
     .map_err(|e| e.to_string())

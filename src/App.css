@@ -1705,6 +1705,17 @@ input, textarea { font: inherit; cursor: text; }
   padding-left: 10px;
   border-left: 1px solid var(--line);
 }
+.bandwidth-meter .bw-sep {
+  color: var(--fg-mute);
+  font-weight: 400;
+  margin: 0 2px;
+}
+.bandwidth-meter .bw-mem {
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
 .server-pill-num {
   font-family: var(--mono);
   font-size: 10px;
@@ -2232,54 +2243,6 @@ input, textarea { font: inherit; cursor: text; }
   transform: translateX(2px);
 }
 
-/* ── Settings: плашка «скоро» для будущих фич ────────────────────────── */
-.settings-section.coming-soon {
-  background: rgba(255, 255, 255, 0.015);
-  border: 1px dashed rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-:root[data-theme="light"] .settings-section.coming-soon {
-  background: rgba(0, 0, 0, 0.02);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-.coming-soon-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-.coming-soon-badge {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 3px 7px;
-  background: rgba(100, 181, 246, 0.12);
-  color: #64b5f6;
-  border: 1px solid rgba(100, 181, 246, 0.3);
-  border-radius: 3px;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.coming-soon-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.coming-soon-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg);
-  letter-spacing: 0.01em;
-}
-.coming-soon-desc {
-  font-size: 11px;
-  color: var(--fg-dim);
-  line-height: 1.5;
-}
-
 /* ── Settings: типовые подсказки-предупреждения ──────────────────────── */
 .hint-warning {
   font-size: 11px;
@@ -2452,6 +2415,164 @@ input, textarea { font: inherit; cursor: text; }
   .app-rule-add .btn-ghost {
     grid-column: 1 / -1;
   }
+}
+
+/* ── Routing table viewer (Settings → диагностика) ───────────────────── */
+.routing-table-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.routing-table-controls .input {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.routing-table-chips {
+  display: inline-flex;
+  gap: 4px;
+}
+.routing-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.routing-chip:hover {
+  color: var(--fg);
+}
+.routing-chip.is-active {
+  color: var(--accent);
+  background: rgba(120, 130, 240, 0.12);
+  border-color: rgba(120, 130, 240, 0.4);
+}
+.routing-table-meta {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+  font-family: var(--mono);
+}
+.routing-table-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.routing-table-list::-webkit-scrollbar {
+  width: 8px;
+}
+.routing-table-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+.routing-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto 1fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+.routing-row:last-child {
+  border-bottom: none;
+}
+.routing-family {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.routing-family-v4 {
+  color: #64b5f6;
+  background: rgba(100, 181, 246, 0.1);
+}
+.routing-family-v6 {
+  color: #ba68c8;
+  background: rgba(186, 104, 200, 0.1);
+}
+.routing-dest,
+.routing-nh,
+.routing-iface {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.routing-dest {
+  color: var(--fg);
+}
+.routing-arrow {
+  color: var(--fg-dim);
+}
+.routing-nh {
+  color: var(--fg-dim);
+}
+.routing-iface {
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+.routing-metric {
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-style: italic;
+}
+
+/* ── Ping test (Settings → пинг) ─────────────────────────────────────── */
+.ping-method-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 12px;
+}
+.ping-result {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.ping-result-ok {
+  color: #81c784;
+  font-weight: 600;
+}
+.ping-result-status {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.ping-result-via {
+  color: #64b5f6;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  background: rgba(100, 181, 246, 0.1);
+  border: 1px solid rgba(100, 181, 246, 0.3);
+  border-radius: 3px;
+}
+.ping-result-err {
+  color: #e57373;
+  font-weight: 500;
 }
 
 /* ── Глобальные горячие клавиши (этап 13.N) ───────────────────────────── */

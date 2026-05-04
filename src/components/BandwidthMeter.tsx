@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { useVpnStore } from "../stores/vpnStore";
+import { useSettingsStore } from "../stores/settingsStore";
 
 /**
- * Текущая скорость передачи данных (этап 13.O).
+ * Текущая скорость передачи данных (этап 13.O) + Working Set
+ * движка (sing-box / mihomo) если включён `showMemoryMonitor`.
  *
  * Слушает `bandwidth-tick` — Rust-сервис в `platform/bandwidth.rs`
  * каждую секунду читает `GetIfTable2` для default-route интерфейса
- * и эмитит `{ up_bps, down_bps, iface }`.
+ * и эмитит `{ up_bps, down_bps, iface, engine_memory_bytes }`.
  *
  * Показывается только когда VPN активен (`status === "running"`):
  * - в TUN-режиме default-route уходит в наш WinTUN — счётчик
@@ -22,24 +24,29 @@ import { useVpnStore } from "../stores/vpnStore";
 export function BandwidthMeter() {
   const { t } = useTranslation();
   const status = useVpnStore((s) => s.status);
+  const showMemory = useSettingsStore((s) => s.showMemoryMonitor);
   const [tick, setTick] = useState<{
     up: number;
     down: number;
     iface: string | null;
-  }>({ up: 0, down: 0, iface: null });
+    memBytes: number | null;
+  }>({ up: 0, down: 0, iface: null, memBytes: null });
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void listen<{ up_bps: number; down_bps: number; iface: string | null }>(
-      "bandwidth-tick",
-      (event) => {
-        setTick({
-          up: event.payload.up_bps,
-          down: event.payload.down_bps,
-          iface: event.payload.iface,
-        });
-      }
-    ).then((fn) => {
+    void listen<{
+      up_bps: number;
+      down_bps: number;
+      iface: string | null;
+      engine_memory_bytes: number | null;
+    }>("bandwidth-tick", (event) => {
+      setTick({
+        up: event.payload.up_bps,
+        down: event.payload.down_bps,
+        iface: event.payload.iface,
+        memBytes: event.payload.engine_memory_bytes,
+      });
+    }).then((fn) => {
       unlisten = fn;
     });
     return () => {
@@ -62,6 +69,17 @@ export function BandwidthMeter() {
       <span className="bw-value">{formatRate(tick.up)}</span>
       <span className="bw-arrow">↓</span>
       <span className="bw-value">{formatRate(tick.down)}</span>
+      {showMemory && tick.memBytes !== null && (
+        <>
+          <span className="bw-sep">·</span>
+          <span
+            className="bw-mem"
+            title={t("bandwidth.memTitle")}
+          >
+            {formatMem(tick.memBytes)}
+          </span>
+        </>
+      )}
     </div>
   );
 }
@@ -70,4 +88,10 @@ function formatRate(bps: number): string {
   if (bps < 1024) return "0 B/s";
   if (bps < 1024 * 1024) return `${Math.round(bps / 1024)} KB/s`;
   return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function formatMem(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb < 100) return `${mb.toFixed(1)} MB`;
+  return `${Math.round(mb)} MB`;
 }

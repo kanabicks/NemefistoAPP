@@ -10,8 +10,8 @@
 //!
 //! Архитектура фильтров (по убыванию weight):
 //! - **W_DHCP=16** — DHCP/BOOTP UDP 67/68 (для получения IP в новой сети)
-//! - **W_APP=14** — наши процессы по абсолютному пути (xray.exe, mihomo.exe,
-//!   tun2socks.exe, nemefisto-helper.exe)
+//! - **W_APP=14** — наши процессы по абсолютному пути (sing-box.exe,
+//!   mihomo.exe, nemefisto-helper.exe, vpn-client.exe)
 //! - **W_SERVER=12** — IP VPN-сервера (резолв на стороне Tauri-main)
 //! - **W_LOOPBACK=10** — 127.0.0.0/8 (наш SOCKS5/HTTP inbound) + ::1/128
 //! - **W_LAN=8** — 10/8, 172.16/12, 192.168/16, 169.254/16 (если allow_lan=true)
@@ -114,10 +114,10 @@ unsafe impl Send for WfpEngine {}
 ///
 /// `allow_lan` — пускать ли локальную сеть (10/8, 172.16/12, 192.168/16).
 ///
-/// `allow_app_paths` — абсолютные пути к нашим бинарям (xray, mihomo,
-/// tun2socks, helper). Без них VPN-движок не сможет достучаться до
-/// сервера даже если IP есть в server_ips (мы используем оба condition'а
-/// как разные allow-rules — match-any семантика WFP).
+/// `allow_app_paths` — абсолютные пути к нашим бинарям (sing-box,
+/// mihomo, helper, vpn-client). Без них VPN-движок не сможет достучаться
+/// до сервера даже если IP есть в server_ips (мы используем оба
+/// condition'а как разные allow-rules — match-any семантика WFP).
 ///
 /// `block_dns` + `allow_dns_ips` — DNS leak protection (этап 13.D step B).
 /// Если on, блокируем весь :53/UDP+TCP трафик кроме указанных IP.
@@ -132,6 +132,7 @@ pub async fn enable(
     allow_dns_ips: Vec<String>,
     tun_interface_index: Option<u32>,
     strict_mode: bool,
+    force_disable_ipv6: bool,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         enable_blocking(
@@ -142,6 +143,7 @@ pub async fn enable(
             allow_dns_ips,
             tun_interface_index,
             strict_mode,
+            force_disable_ipv6,
         )
     })
     .await
@@ -156,9 +158,10 @@ fn enable_blocking(
     allow_dns_ips: Vec<String>,
     tun_interface_index: Option<u32>,
     strict_mode: bool,
+    force_disable_ipv6: bool,
 ) -> Result<()> {
     hlog(&format!(
-        "[wfp-killswitch] ON: server_ips={:?}, allow_lan={}, apps={}, block_dns={}, dns_allow={:?}, tun_if={:?}, strict={}",
+        "[wfp-killswitch] ON: server_ips={:?}, allow_lan={}, apps={}, block_dns={}, dns_allow={:?}, tun_if={:?}, strict={}, force_disable_ipv6={}",
         server_ips,
         allow_lan,
         allow_app_paths.len(),
@@ -166,6 +169,7 @@ fn enable_blocking(
         allow_dns_ips,
         tun_interface_index,
         strict_mode,
+        force_disable_ipv6,
     ));
     for p in &allow_app_paths {
         eprintln!(
@@ -243,26 +247,33 @@ fn enable_blocking(
                     mask,
                 )?;
             }
-            // IPv6: link-local fe80::/10 + multicast ff00::/8
-            e.add_filter_allow_v6_subnet(
-                FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-                NEMEFISTO_SUBLAYER_GUID,
-                "LAN link-local v6",
-                W_LAN,
-                ipv6_addr_octets("fe80::"),
-                10,
-            )?;
-            e.add_filter_allow_v6_subnet(
-                FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-                NEMEFISTO_SUBLAYER_GUID,
-                "LAN multicast v6",
-                W_LAN,
-                ipv6_addr_octets("ff00::"),
-                8,
-            )?;
+            // IPv6: link-local fe80::/10 + multicast ff00::/8.
+            // 14.D: при force_disable_ipv6 v6-LAN тоже блокируется —
+            // base block-all v6 остаётся в силе без allow'ов.
+            if !force_disable_ipv6 {
+                e.add_filter_allow_v6_subnet(
+                    FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                    NEMEFISTO_SUBLAYER_GUID,
+                    "LAN link-local v6",
+                    W_LAN,
+                    ipv6_addr_octets("fe80::"),
+                    10,
+                )?;
+                e.add_filter_allow_v6_subnet(
+                    FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                    NEMEFISTO_SUBLAYER_GUID,
+                    "LAN multicast v6",
+                    W_LAN,
+                    ipv6_addr_octets("ff00::"),
+                    8,
+                )?;
+            }
         }
 
         // ── VPN-сервер IPs ───────────────────────────────────────────
+        // 14.D: при force_disable_ipv6 v6-IP сервера НЕ allowить —
+        // соединение пойдёт по v4 (если у сервера dual-stack DNS) или
+        // упадёт (если он только v6, что крайне редко).
         for (i, ip_str) in server_ips.iter().enumerate() {
             if let Ok(v4) = ip_str.parse::<Ipv4Addr>() {
                 let addr = ipv4_to_u32(v4);
@@ -274,6 +285,12 @@ fn enable_blocking(
                     addr,
                 )?;
             } else if let Ok(v6) = ip_str.parse::<Ipv6Addr>() {
+                if force_disable_ipv6 {
+                    eprintln!(
+                        "[wfp-killswitch] force_disable_ipv6=on, skip VPN server v6 #{i}: {ip_str}"
+                    );
+                    continue;
+                }
                 e.add_filter_allow_v6_addr(
                     FWPM_LAYER_ALE_AUTH_CONNECT_V6,
                     NEMEFISTO_SUBLAYER_GUID,
@@ -297,13 +314,12 @@ fn enable_blocking(
                 .unwrap_or_else(|| path.display().to_string());
 
             // 13.S strict mode: НЕ давать общий outbound-allow для VPN-движков
-            // (xray/mihomo). Они смогут соединяться только на server_ips —
+            // (sing-box/mihomo). Они смогут соединяться только на server_ips —
             // это уже разрешено выше через add_filter_allow_v4_addr_port_proto.
-            // Direct outbound xray (например `geosite:ru → DIRECT`) будет
-            // заблокирован WFP. Tun2socks и vpn-client.exe оставляем —
-            // tun2socks нужен для loopback↔xray в TUN-режиме (loopback
-            // уже разрешён, allow_app даёт ему свободу), vpn-client.exe
-            // нужен для leak-test и фоновых проверок.
+            // Direct outbound движка (например `geosite:ru → DIRECT` в правилах
+            // подписки) будет заблокирован WFP. Helper и vpn-client.exe
+            // оставляем — vpn-client нужен для leak-test и фоновых проверок,
+            // helper — для собственных операций.
             if strict_mode {
                 let lower = label.to_lowercase();
                 let is_engine = lower.starts_with("xray")
@@ -341,6 +357,13 @@ fn enable_blocking(
                     continue;
                 }
             }
+            // 14.D: при force_disable_ipv6 НЕ давать v6 allow ни одному
+            // приложению (включая VPN-движки). Весь v6 outbound уходит в
+            // base block-all. Приложение должно fall back'нуться на v4 —
+            // которое уже идёт через VPN.
+            if force_disable_ipv6 {
+                continue;
+            }
             if let Err(err) = e.add_filter_allow_app(
                 FWPM_LAYER_ALE_AUTH_CONNECT_V6,
                 NEMEFISTO_SUBLAYER_GUID,
@@ -369,12 +392,20 @@ fn enable_blocking(
         if let Some(if_idx) = tun_interface_index {
             match super::routing::luid_from_index(if_idx) {
                 Ok(luid) => {
-                    for (layer, label) in [
-                        (FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TUN allow v4"),
-                        (FWPM_LAYER_ALE_AUTH_CONNECT_V6, "TUN allow v6"),
-                    ] {
+                    // 14.D: при force_disable_ipv6 пропускаем TUN allow на v6.
+                    // Если приложение шлёт v6-пакет в TUN, он упирается в
+                    // base block-all v6 (нет allow для v6 LUID) и блокируется.
+                    let layers: &[(_, &str)] = if force_disable_ipv6 {
+                        &[(FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TUN allow v4")]
+                    } else {
+                        &[
+                            (FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TUN allow v4"),
+                            (FWPM_LAYER_ALE_AUTH_CONNECT_V6, "TUN allow v6"),
+                        ]
+                    };
+                    for (layer, label) in layers {
                         e.add_filter_allow_local_interface_luid(
-                            layer,
+                            *layer,
                             NEMEFISTO_SUBLAYER_GUID,
                             label,
                             W_TUN_INTERFACE,
@@ -382,7 +413,8 @@ fn enable_blocking(
                         )?;
                     }
                     hlog(&format!(
-                        "[wfp-killswitch] TUN-interface allow added (ifIndex={if_idx}, luid=0x{luid:016x})"
+                        "[wfp-killswitch] TUN-interface allow added (ifIndex={if_idx}, luid=0x{luid:016x}, v6={})",
+                        !force_disable_ipv6,
                     ));
                 }
                 Err(e) => {

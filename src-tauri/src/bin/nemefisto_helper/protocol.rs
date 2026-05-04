@@ -47,11 +47,26 @@ use serde::{Deserialize, Serialize};
 ///   v8 поднимет kill-switch БЕЗ TUN allow (старая версия игнорирует
 ///   новое поле, и `current_tun_interface_index` стабом возвращает None).
 ///
+/// - 10 (14.D / IPv6 leak protection): добавлено
+///   `KillSwitchEnable.force_disable_ipv6`. Если `true` — пропускаются
+///   все v6 allow-фильтры (LAN, server, app-allow, TUN-interface), а
+///   базовый block-all v6 остаётся → весь IPv6 outbound блокируется
+///   пока VPN активен. Защита от утечек на dual-stack ISP. Bump чтобы
+///   старый helper v9 не молча игнорил флаг (он поднял бы kill-switch
+///   с дефолтными v6 allow'ами, и leak бы остался).
+///
+/// - 11 (0.3.1 / installer file-lock fix): добавлен `ShutdownHelper`.
+///   Helper graceful self-stop через SCM (`SERVICE_CONTROL_STOP`).
+///   Используется auto-updater'ом перед запуском NSIS installer'а:
+///   helper закрывает свой `.exe`-handle, файл становится перезаписываемым
+///   без админ-прав. Старый helper v10 не понимает команду — bump форсит
+///   reinstall через UAC, после чего обновления станут гладкими.
+///
 /// Tauri-main сравнивает с `Response::Version.protocol_version` при
 /// `ensure_running()` — если получил `<` (или 0 от helper'а без поля)
 /// форсит uninstall+install через UAC, чтобы пользователь получил
 /// помощь с дев-сборки или релиз-апгрейда без ручных шагов.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -70,9 +85,9 @@ pub enum Request {
     /// 192.168/16, 169.254/16, fe80::/10, ff00::/8).
     ///
     /// `allow_app_paths` — абсолютные пути к нашим бинарям, которым
-    /// разрешён исходящий трафик (xray.exe, mihomo.exe, tun2socks.exe).
-    /// Без этого VPN-движок не сможет соединиться даже если IP сервера
-    /// есть в server_ips.
+    /// разрешён исходящий трафик (sing-box.exe, mihomo.exe, helper.exe,
+    /// vpn-client.exe). Без этого VPN-движок не сможет соединиться
+    /// даже если IP сервера есть в server_ips.
     KillSwitchEnable {
         #[serde(default)]
         server_ips: Vec<String>,
@@ -101,6 +116,14 @@ pub enum Request {
         /// чтобы не задерживать `enable()` на 5с впустую.
         #[serde(default)]
         expect_tun: bool,
+        /// 14.D — принудительно блокировать весь IPv6-трафик пока
+        /// VPN активен. Защита от утечек на dual-stack ISP, где часть
+        /// трафика идёт по нативному v6 минуя v4-туннель. Если `true`,
+        /// helper пропускает все v6 allow-фильтры (LAN, server, app,
+        /// TUN-interface), оставляя только базовый block-all v6.
+        /// Loopback `::1` остаётся разрешён — он не уходит в сеть.
+        #[serde(default)]
+        force_disable_ipv6: bool,
     },
     /// Выключить kill switch — drop'ает WFP DYNAMIC engine,
     /// все наши фильтры удаляются автоматически.
@@ -162,6 +185,14 @@ pub enum Request {
     /// sing-box миграция (v7): остановить SYSTEM-spawned sing-box.
     /// Идемпотентно: если helper не запускал sing-box — no-op.
     SingBoxStop,
+    /// 0.3.1 / installer file-lock fix: graceful self-shutdown.
+    /// Helper отвечает `Ok`, потом в фоновой задаче после короткой
+    /// задержки (чтобы клиент успел получить ответ) сам себя стопит
+    /// через SCM `SERVICE_CONTROL_STOP`. Helper работает под SYSTEM,
+    /// имеет SERVICE_STOP rights на свой же сервис. После shutdown
+    /// `.exe`-файл становится перезаписываемым без admin-прав → NSIS
+    /// installer может обновить helper.exe в auto-update'е.
+    ShutdownHelper,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

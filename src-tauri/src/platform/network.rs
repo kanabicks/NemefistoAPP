@@ -271,3 +271,193 @@ pub fn has_orphan_tun_adapters() -> bool {
 pub fn has_orphan_tun_adapters() -> bool {
     false
 }
+
+// ─── Routing table viewer (live diagnostic, read-only) ─────────────────────
+
+/// Запись routing-таблицы для UI-вьюера. Сериализуется наружу.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RouteEntry {
+    /// `"v4"` | `"v6"`.
+    pub family: &'static str,
+    /// Назначение в формате CIDR: `"0.0.0.0/0"`, `"192.168.1.0/24"`, `"::1/128"`.
+    pub destination: String,
+    /// Next-hop IP или `"on-link"` если шлюза нет.
+    pub next_hop: String,
+    /// Friendly-имя интерфейса (`"Wi-Fi"`, `"nemefisto-1234"`, и т.д.).
+    /// Если резолвер упал — fallback на `"if{index}"`.
+    pub interface: String,
+    /// `InterfaceIndex` — для группировки/фильтрации в UI.
+    pub interface_index: u32,
+    /// Метрика (приоритет: меньше = выше).
+    pub metric: u32,
+}
+
+/// Чтение текущей routing-таблицы (IPv4 + IPv6) из ядра Windows для
+/// UI-диагностики. Read-only, не модифицирует таблицу. ~5-10ms на
+/// типичной машине с 10-30 маршрутами.
+///
+/// Используется командой `get_routing_table` для Settings → диагностика.
+/// Помогает пользователю самому увидеть «куда уходит мой трафик» когда
+/// что-то не работает (есть ли default через TUN, не остался ли orphan
+/// маршрут от другого VPN, и т.п.).
+#[cfg(windows)]
+pub fn list_routing_table() -> Vec<RouteEntry> {
+    use std::mem;
+    use windows_sys::Win32::Foundation::NO_ERROR;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToAlias, FreeMibTable,
+        GetIpForwardTable2, MIB_IPFORWARD_TABLE2,
+    };
+    use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
+    use windows_sys::Win32::Networking::WinSock::{
+        AF_INET, AF_INET6, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_INET,
+    };
+
+    let mut out: Vec<RouteEntry> = Vec::new();
+
+    // Кеш ifIndex → alias чтобы не дёргать ConvertInterfaceLuid* на каждый
+    // route (одна и та же сетевая карта обычно засветится в 5+ маршрутах).
+    let mut alias_cache: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
+
+    let resolve_alias = |if_idx: u32,
+                         cache: &mut std::collections::HashMap<u32, String>|
+     -> String {
+        if let Some(s) = cache.get(&if_idx) {
+            return s.clone();
+        }
+        unsafe {
+            let mut luid: NET_LUID_LH = mem::zeroed();
+            if ConvertInterfaceIndexToLuid(if_idx, &mut luid) != 0 {
+                let s = format!("if{if_idx}");
+                cache.insert(if_idx, s.clone());
+                return s;
+            }
+            let mut buf = [0u16; 256];
+            if ConvertInterfaceLuidToAlias(&luid, buf.as_mut_ptr(), buf.len()) != NO_ERROR {
+                let s = format!("if{if_idx}");
+                cache.insert(if_idx, s.clone());
+                return s;
+            }
+            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            let s = String::from_utf16_lossy(&buf[..len]);
+            let s = if s.is_empty() { format!("if{if_idx}") } else { s };
+            cache.insert(if_idx, s.clone());
+            s
+        }
+    };
+
+    // ── IPv4 ─────────────────────────────────────────────────────────────
+    unsafe {
+        let mut fwd_ptr: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+        if GetIpForwardTable2(AF_INET, &mut fwd_ptr) == NO_ERROR && !fwd_ptr.is_null() {
+            let fwd = &*fwd_ptr;
+            let entries =
+                std::slice::from_raw_parts(fwd.Table.as_ptr(), fwd.NumEntries as usize);
+            for e in entries {
+                let prefix_len = e.DestinationPrefix.PrefixLength;
+                let dest = &e.DestinationPrefix.Prefix;
+                if dest.si_family != AF_INET {
+                    continue;
+                }
+                let dest_v4: &SOCKADDR_IN = mem::transmute(dest);
+                let dest_addr = u32::from_be(dest_v4.sin_addr.S_un.S_addr);
+                let dest_str = format!(
+                    "{}.{}.{}.{}/{}",
+                    (dest_addr >> 24) & 0xFF,
+                    (dest_addr >> 16) & 0xFF,
+                    (dest_addr >> 8) & 0xFF,
+                    dest_addr & 0xFF,
+                    prefix_len
+                );
+
+                let nh: &SOCKADDR_INET = &e.NextHop;
+                let nh_str = if nh.si_family == AF_INET {
+                    let nh_v4: &SOCKADDR_IN = mem::transmute(nh);
+                    let nh_addr = u32::from_be(nh_v4.sin_addr.S_un.S_addr);
+                    if nh_addr == 0 {
+                        "on-link".to_string()
+                    } else {
+                        format!(
+                            "{}.{}.{}.{}",
+                            (nh_addr >> 24) & 0xFF,
+                            (nh_addr >> 16) & 0xFF,
+                            (nh_addr >> 8) & 0xFF,
+                            nh_addr & 0xFF
+                        )
+                    }
+                } else {
+                    "on-link".to_string()
+                };
+
+                out.push(RouteEntry {
+                    family: "v4",
+                    destination: dest_str,
+                    next_hop: nh_str,
+                    interface: resolve_alias(e.InterfaceIndex, &mut alias_cache),
+                    interface_index: e.InterfaceIndex,
+                    metric: e.Metric,
+                });
+            }
+            FreeMibTable(fwd_ptr as *mut _);
+        }
+    }
+
+    // ── IPv6 ─────────────────────────────────────────────────────────────
+    unsafe {
+        let mut fwd_ptr: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+        if GetIpForwardTable2(AF_INET6, &mut fwd_ptr) == NO_ERROR && !fwd_ptr.is_null() {
+            let fwd = &*fwd_ptr;
+            let entries =
+                std::slice::from_raw_parts(fwd.Table.as_ptr(), fwd.NumEntries as usize);
+            for e in entries {
+                let prefix_len = e.DestinationPrefix.PrefixLength;
+                let dest = &e.DestinationPrefix.Prefix;
+                if dest.si_family != AF_INET6 {
+                    continue;
+                }
+                let dest_v6: &SOCKADDR_IN6 = mem::transmute(dest);
+                let dest_octets = dest_v6.sin6_addr.u.Byte;
+                let dest_addr = std::net::Ipv6Addr::from(dest_octets);
+                let dest_str = format!("{dest_addr}/{prefix_len}");
+
+                let nh: &SOCKADDR_INET = &e.NextHop;
+                let nh_str = if nh.si_family == AF_INET6 {
+                    let nh_v6: &SOCKADDR_IN6 = mem::transmute(nh);
+                    let nh_addr = std::net::Ipv6Addr::from(nh_v6.sin6_addr.u.Byte);
+                    if nh_addr.is_unspecified() {
+                        "on-link".to_string()
+                    } else {
+                        nh_addr.to_string()
+                    }
+                } else {
+                    "on-link".to_string()
+                };
+
+                out.push(RouteEntry {
+                    family: "v6",
+                    destination: dest_str,
+                    next_hop: nh_str,
+                    interface: resolve_alias(e.InterfaceIndex, &mut alias_cache),
+                    interface_index: e.InterfaceIndex,
+                    metric: e.Metric,
+                });
+            }
+            FreeMibTable(fwd_ptr as *mut _);
+        }
+    }
+
+    // Сортируем по metric ASC, затем по destination — естественный порядок
+    // «первый сработает» сверху.
+    out.sort_by(|a, b| {
+        a.metric
+            .cmp(&b.metric)
+            .then_with(|| a.destination.cmp(&b.destination))
+    });
+    out
+}
+
+#[cfg(not(windows))]
+pub fn list_routing_table() -> Vec<RouteEntry> {
+    Vec::new()
+}

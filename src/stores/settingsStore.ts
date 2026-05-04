@@ -229,6 +229,47 @@ export type Settings = {
    *  DNS — лучше использовать в TUN-режиме. */
   dnsLeakProtection: boolean;
 
+  /** Принудительно блокировать весь IPv6 outbound пока VPN активен
+   *  (этап 14.D). Защита от утечек на dual-stack ISP, где часть
+   *  трафика идёт по нативному v6 минуя v4-туннель. Реализовано как
+   *  часть kill-switch session: helper пропускает все v6 allow-фильтры
+   *  (LAN, server, app, TUN) — base block-all v6 ловит весь outbound.
+   *  Loopback `::1` остаётся разрешён. Toggle работает только при
+   *  активном kill-switch — без него WFP-сессии нет. */
+  forceDisableIpv6: boolean;
+
+  /** Метод проверки текущего соединения (Settings → пинг). Для
+   *  per-server пингов в drawer всегда используется TCP — этот
+   *  параметр влияет только на ручной «тест соединения».
+   *  - `tcp` — TCP-connect к host:port URL'а (быстрая проверка
+   *    доступности, не использует прокси, baseline)
+   *  - `http-get` / `http-head` — HTTP-запрос через активный SOCKS5
+   *    inbound (если VPN в proxy-режиме) или через system route
+   *    (TUN-режим). Полная цепочка TCP+TLS+HTTP. */
+  pingMethod: "tcp" | "http-get" | "http-head";
+
+  /** Mux (multiplexing) для sing-box URI-серверов — vless/vmess/
+   *  trojan/ss/socks. Логические потоки мультиплексируются одним
+   *  TCP-соединением, что уменьшает overhead на TLS-handshake.
+   *  Для hy2/tuic/wireguard и для xray-json/singbox-json passthrough
+   *  игнорируется (свой stream multiplexing или конфиг приходит
+   *  готовым из подписки). Серверная сторона должна быть совместима
+   *  (3x-ui / Marzban / x-ui это умеют). */
+  mux: boolean;
+  /** Протокол mux: `smux` (default), `yamux`, `h2mux`. */
+  muxProtocol: "smux" | "yamux" | "h2mux";
+  /** Макс. число параллельных потоков на одно TCP-соединение.
+   *  0 = unlimited (sing-box default). Рекомендуется 4-16. */
+  muxMaxStreams: number;
+
+  /** URL для HTTP-методов ping'а (см. `pingMethod`). Для TCP метода
+   *  парсится только host:port. Default — Cloudflare's no-content
+   *  endpoint, лёгкий и без редиректов. */
+  pingUrl: string;
+
+  /** Таймаут ping'а в секундах (3-15). Default 7. */
+  pingTimeoutSec: number;
+
   /** Активный VPN-движок (этап 8.B). См. тип `Engine` выше. */
   engine: Engine;
   /** Override-флаг для server-driven UX. Если false — заголовок
@@ -261,6 +302,12 @@ export type Settings = {
    *  Состояние применяется при старте приложения и при каждом
    *  toggle: фронт зовёт `show_floating_window` / `hide_floating_window`. */
   floatingWindow: boolean;
+
+  /** Показывать индикатор памяти движка (sing-box / mihomo) на главном
+   *  экране рядом с bandwidth-метром. Working Set резидентной памяти
+   *  процесса в МБ. Polling 1Hz через `bandwidth-tick` event (один
+   *  pipeline). Default off — для тех кто не хочет «технический» вид. */
+  showMemoryMonitor: boolean;
 
   /** Авто-проверка IP/DNS после успешного connect (этап 13.B/13.H).
    *  ipapi.co + Cloudflare DoH whoami.cloudflare за один тост.
@@ -409,6 +456,13 @@ const DEFAULTS: Settings = {
   killSwitchStrict: false,
   autoApplyMinimalRuRules: false,
   dnsLeakProtection: false,
+  forceDisableIpv6: false,
+  pingMethod: "tcp",
+  pingUrl: "https://www.gstatic.com/generate_204",
+  pingTimeoutSec: 7,
+  mux: false,
+  muxProtocol: "smux",
+  muxMaxStreams: 8,
   engine: "sing-box",
   engineTouched: false,
   userAgentTouched: false,
@@ -417,6 +471,7 @@ const DEFAULTS: Settings = {
   shortcutShowHide: "Ctrl+Shift+M",
   shortcutSwitchMode: null,
   floatingWindow: false,
+  showMemoryMonitor: false,
   autoLeakTest: true,
   trustedSsids: [],
   trustedSsidAction: "ignore",

@@ -392,11 +392,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
               </section>
-
-              <ComingSoonNote
-                titleKey="settings.comingSoon.mergeSubs.title"
-                descKey="settings.comingSoon.mergeSubs.desc"
-              />
             </>
           )}
 
@@ -466,11 +461,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   </label>
                 ))}
               </section>
-
-              <ComingSoonNote
-                titleKey="settings.comingSoon.autoFailover.title"
-                descKey="settings.comingSoon.autoFailover.desc"
-              />
             </>
           )}
 
@@ -564,6 +554,90 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     onChange={(v) => s.set("tunOnlyStrict", v)}
                   />
                 </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  {t("settings.mux.title")}
+                </div>
+                {mihomoActive && (
+                  <div className="hint-warning">
+                    {t("settings.mux.mihomoWarning")}
+                  </div>
+                )}
+                <p
+                  className="hint"
+                  style={{
+                    textTransform: "none",
+                    letterSpacing: 0,
+                    color: "var(--fg-dim)",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    marginBottom: 8,
+                  }}
+                >
+                  {t("settings.mux.intro")}
+                </p>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("settings.mux.enable.label")}</div>
+                    <div className="settings-row-hint">
+                      {t("settings.mux.enable.hint")}
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.mux}
+                    onChange={(v) => s.set("mux", v)}
+                  />
+                </div>
+                {s.mux && (
+                  <>
+                    <div className="settings-row">
+                      <div>
+                        <div className="settings-row-label">{t("settings.mux.protocol.label")}</div>
+                        <div className="settings-row-hint">
+                          {t("settings.mux.protocol.hint")}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="ping-method-radios">
+                      {(["smux", "yamux", "h2mux"] as const).map((p) => (
+                        <label key={p} className="radio-row">
+                          <input
+                            type="radio"
+                            name="muxProtocol"
+                            checked={s.muxProtocol === p}
+                            onChange={() => s.set("muxProtocol", p)}
+                          />
+                          <span>{p}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <div className="settings-row-label">
+                          {t("settings.mux.maxStreams.label", {
+                            count: s.muxMaxStreams,
+                          })}
+                        </div>
+                        <div className="settings-row-hint">
+                          {t("settings.mux.maxStreams.hint")}
+                        </div>
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={32}
+                      step={1}
+                      value={s.muxMaxStreams}
+                      onChange={(e) =>
+                        s.set("muxMaxStreams", Number(e.target.value))
+                      }
+                      style={{ width: "100%" }}
+                    />
+                  </>
+                )}
               </section>
             </>
           )}
@@ -769,6 +843,21 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="settings-row">
                   <div>
+                    <div className="settings-row-label">
+                      {t("settings.killSwitch.forceDisableIpv6.label")}
+                    </div>
+                    <div className="settings-row-hint">
+                      {t("settings.killSwitch.forceDisableIpv6.hint")}
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.forceDisableIpv6}
+                    onChange={(v) => s.set("forceDisableIpv6", v)}
+                    disabled={!s.killSwitch}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div>
                     <div className="settings-row-label">{t("settings.killSwitch.recover.label")}</div>
                     <div className="settings-row-hint">
                       {t("settings.killSwitch.recover.hint")}
@@ -859,6 +948,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 </div>
               </section>
 
+              <RoutingTableBlock />
+
+              <PingTestBlock />
+
               <section className="settings-section">
                 <div className="settings-section-title">{t("settings.leakTest.title")}</div>
                 <p className="hint" style={{ textTransform: "none", letterSpacing: 0, color: "var(--fg-dim)", fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
@@ -897,11 +990,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
               </section>
-
-              <ComingSoonNote
-                titleKey="settings.comingSoon.windowsHello.title"
-                descKey="settings.comingSoon.windowsHello.desc"
-              />
             </>
           )}
 
@@ -929,10 +1017,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                   />
                 </div>
               </section>
-              <ComingSoonNote
-                titleKey="settings.comingSoon.wfpPerApp.title"
-                descKey="settings.comingSoon.wfpPerApp.desc"
-              />
             </>
           )}
 
@@ -1089,6 +1173,20 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     }}
                   />
                 </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">
+                      {t("settings.appearance.memoryMonitor.label")}
+                    </div>
+                    <div className="settings-row-hint">
+                      {t("settings.appearance.memoryMonitor.hint")}
+                    </div>
+                  </div>
+                  <Toggle
+                    on={s.showMemoryMonitor}
+                    onChange={(v) => s.set("showMemoryMonitor", v)}
+                  />
+                </div>
               </section>
             </>
           )}
@@ -1147,18 +1245,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 <TrustedWifiBlock />
               </section>
 
-              <ComingSoonNote
-                titleKey="settings.comingSoon.autoUpdate.title"
-                descKey="settings.comingSoon.autoUpdate.desc"
-              />
-              <ComingSoonNote
-                titleKey="settings.comingSoon.history.title"
-                descKey="settings.comingSoon.history.desc"
-              />
-              <ComingSoonNote
-                titleKey="settings.comingSoon.speedTest.title"
-                descKey="settings.comingSoon.speedTest.desc"
-              />
               <BackupBlock />
 
               <LogsBlock />
@@ -1316,22 +1402,6 @@ function CategoryList({
   );
 }
 
-// ─── Плашка «скоро» для будущих фич ─────────────────────────────────────────
-
-function ComingSoonNote({ titleKey, descKey }: { titleKey: string; descKey: string }) {
-  const { t } = useTranslation();
-  return (
-    <section className="settings-section coming-soon">
-      <div className="coming-soon-row">
-        <span className="coming-soon-badge">{t("settings.comingSoon.badge")}</span>
-        <div className="coming-soon-text">
-          <div className="coming-soon-title">{t(titleKey)}</div>
-          <div className="coming-soon-desc">{t(descKey)}</div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 // ── App rules (per-process routing, 8.D) ─────────────────────────────────────
 
@@ -1393,12 +1463,10 @@ function AppRulesSection({ mihomoActive }: { mihomoActive: boolean }) {
     <section className="settings-section">
       <div className="settings-section-title">{t("settings.appRules.title")}</div>
 
-      {!mihomoActive && (
-        <div className="hint-warning">
-          {t("settings.appRules.singboxWarning")}
-        </div>
-      )}
-
+      {/* sing-box нативно поддерживает per-process matching через
+          `process_name` route rule (works in both proxy и TUN). Для
+          Mihomo URI в TUN правила всё ещё не работают — там pipeline
+          через tun2socks теряет PID исходного процесса. */}
       {mihomoActive && tunMode && (
         <div className="hint-warning">
           {t("settings.appRules.tunWarning")}
@@ -1743,6 +1811,314 @@ function UpdatesSection() {
           {checking ? t("settings.updates.checking") : t("settings.updates.checkNow")}
         </button>
       </div>
+    </section>
+  );
+}
+
+// ── Routing table viewer ─────────────────────────────────────────────────
+
+type RouteEntry = {
+  family: "v4" | "v6";
+  destination: string;
+  next_hop: string;
+  interface: string;
+  interface_index: number;
+  metric: number;
+};
+
+function RoutingTableBlock() {
+  const { t } = useTranslation();
+  const [routes, setRoutes] = useState<RouteEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [familyFilter, setFamilyFilter] = useState<"all" | "v4" | "v6">("all");
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const data = await invoke<RouteEntry[]>("get_routing_table");
+      setRoutes(data);
+    } catch (e) {
+      console.error("[get_routing_table]", e);
+      setRoutes([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filtered = (routes ?? []).filter((r) => {
+    if (familyFilter !== "all" && r.family !== familyFilter) return false;
+    if (!filter) return true;
+    const q = filter.toLowerCase();
+    return (
+      r.destination.toLowerCase().includes(q) ||
+      r.next_hop.toLowerCase().includes(q) ||
+      r.interface.toLowerCase().includes(q)
+    );
+  });
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">
+        {t("settings.routingTable.title")}
+      </div>
+      <p
+        className="hint"
+        style={{
+          textTransform: "none",
+          letterSpacing: 0,
+          color: "var(--fg-dim)",
+          fontSize: 12,
+          lineHeight: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        {t("settings.routingTable.intro")}
+      </p>
+      {routes === null ? (
+        <button type="button" className="btn-ghost" onClick={reload} disabled={loading}>
+          {loading ? "…" : t("settings.routingTable.show")}
+        </button>
+      ) : (
+        <>
+          <div className="routing-table-controls">
+            <input
+              type="text"
+              className="input"
+              placeholder={t("settings.routingTable.searchPlaceholder")}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <div className="routing-table-chips">
+              {(["all", "v4", "v6"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`routing-chip ${familyFilter === f ? "is-active" : ""}`}
+                  onClick={() => setFamilyFilter(f)}
+                >
+                  {f === "all" ? t("settings.routingTable.familyAll") : f}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={reload}
+              disabled={loading}
+              title={t("settings.routingTable.refresh")}
+            >
+              {loading ? "…" : "↻"}
+            </button>
+          </div>
+          <div className="routing-table-meta">
+            {t("settings.routingTable.count", { count: filtered.length, total: routes.length })}
+          </div>
+          {filtered.length === 0 ? (
+            <div
+              className="hint"
+              style={{
+                textTransform: "none",
+                letterSpacing: 0,
+                color: "var(--fg-dim)",
+                fontSize: 12,
+                padding: "12px 0",
+              }}
+            >
+              {t("settings.routingTable.empty")}
+            </div>
+          ) : (
+            <div className="routing-table-list">
+              {filtered.map((r, i) => (
+                <div key={`${r.family}-${i}-${r.destination}`} className="routing-row">
+                  <span className={`routing-family routing-family-${r.family}`}>
+                    {r.family}
+                  </span>
+                  <span className="routing-dest" title={r.destination}>
+                    {r.destination}
+                  </span>
+                  <span className="routing-arrow">→</span>
+                  <span className="routing-nh" title={r.next_hop}>
+                    {r.next_hop}
+                  </span>
+                  <span className="routing-iface" title={r.interface}>
+                    {r.interface}
+                  </span>
+                  <span className="routing-metric">m={r.metric}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+// ── Ping test (Settings → пинг) ──────────────────────────────────────────
+
+type PingResult = {
+  latency_ms: number | null;
+  status: number | null;
+  error: string | null;
+  via_proxy: boolean;
+};
+
+function PingTestBlock() {
+  const { t } = useTranslation();
+  const s = useSettingsStore();
+  const vpnStatus = useVpnStore((v) => v.status);
+  const vpnMode = useVpnStore((v) => v.mode);
+  const socksPort = useVpnStore((v) => v.socksPort);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PingResult | null>(null);
+
+  const isTcp = s.pingMethod === "tcp";
+  const isVpnActive = vpnStatus === "running";
+  // socks_port передаём только если VPN активен в proxy-режиме и метод HTTP-*.
+  // Для TCP метода прокси не используется. Для TUN-режима system route уже
+  // через VPN — отдельный proxy не нужен.
+  const effectiveSocksPort =
+    !isTcp && isVpnActive && vpnMode === "proxy" ? socksPort : null;
+
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await invoke<PingResult>("connection_ping", {
+        method: s.pingMethod,
+        url: s.pingUrl,
+        socksPort: effectiveSocksPort,
+        timeoutSecs: s.pingTimeoutSec,
+      });
+      setResult(r);
+    } catch (e) {
+      setResult({
+        latency_ms: null,
+        status: null,
+        error: String(e),
+        via_proxy: false,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">{t("settings.ping.title")}</div>
+      <p
+        className="hint"
+        style={{
+          textTransform: "none",
+          letterSpacing: 0,
+          color: "var(--fg-dim)",
+          fontSize: 12,
+          lineHeight: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        {t("settings.ping.intro")}
+      </p>
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">{t("settings.ping.method.label")}</div>
+          <div className="settings-row-hint">{t("settings.ping.method.hint")}</div>
+        </div>
+      </div>
+      <div className="ping-method-radios">
+        {(["tcp", "http-get", "http-head"] as const).map((m) => (
+          <label key={m} className="radio-row">
+            <input
+              type="radio"
+              name="pingMethod"
+              checked={s.pingMethod === m}
+              onChange={() => s.set("pingMethod", m)}
+            />
+            <span>{t(`settings.ping.method.options.${m}`)}</span>
+          </label>
+        ))}
+      </div>
+
+      {!isTcp && (
+        <div className="settings-row" style={{ alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div className="settings-row-label">{t("settings.ping.url.label")}</div>
+            <div className="settings-row-hint">{t("settings.ping.url.hint")}</div>
+            <input
+              type="text"
+              className="input"
+              value={s.pingUrl}
+              onChange={(e) => s.set("pingUrl", e.target.value)}
+              style={{ marginTop: 6, width: "100%" }}
+              placeholder="https://www.gstatic.com/generate_204"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">
+            {t("settings.ping.timeout.label", { seconds: s.pingTimeoutSec })}
+          </div>
+          <div className="settings-row-hint">{t("settings.ping.timeout.hint")}</div>
+        </div>
+      </div>
+      <input
+        type="range"
+        min={3}
+        max={15}
+        step={1}
+        value={s.pingTimeoutSec}
+        onChange={(e) => s.set("pingTimeoutSec", Number(e.target.value))}
+        style={{ width: "100%", marginBottom: 8 }}
+      />
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">{t("settings.ping.run.label")}</div>
+          <div className="settings-row-hint">
+            {!isTcp && !isVpnActive
+              ? t("settings.ping.run.hintInactive")
+              : t("settings.ping.run.hint")}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={run}
+          disabled={busy}
+        >
+          {busy ? "…" : t("settings.ping.run.button")}
+        </button>
+      </div>
+
+      {result && (
+        <div className="ping-result">
+          {result.latency_ms !== null ? (
+            <>
+              <span className="ping-result-ok">
+                {t("settings.ping.result.ok", { ms: result.latency_ms })}
+              </span>
+              {result.status !== null && (
+                <span className="ping-result-status">HTTP {result.status}</span>
+              )}
+              {result.via_proxy && (
+                <span className="ping-result-via">
+                  {t("settings.ping.result.viaProxy")}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="ping-result-err">
+              {t("settings.ping.result.failed")}: {result.error ?? "—"}
+            </span>
+          )}
+        </div>
+      )}
     </section>
   );
 }

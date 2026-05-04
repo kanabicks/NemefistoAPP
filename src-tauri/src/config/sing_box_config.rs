@@ -57,6 +57,38 @@ pub struct AntiDpiOptions {
     pub server_resolve_bootstrap: String,
 }
 
+/// Mux (multiplexing) для sing-box outbound (Happ-like feature).
+///
+/// Sing-box умеет мультиплексировать stream-based протоколы (vless/vmess/
+/// trojan/ss/socks) одним TCP-соединением через `smux`/`yamux`/`h2mux`.
+/// Это уменьшает overhead на TLS-handshake (одна TLS-сессия на много
+/// логических потоков) и помогает обходить connection-rate-limit'ы.
+///
+/// Не применимо для:
+/// - **hysteria2 / tuic** — у них свой stream multiplexing над QUIC;
+/// - **wireguard** — UDP-only, не stream;
+/// - **xray-json / singbox-json passthrough** — конфиги из подписки
+///   мы не патчим, mux должен прийти от провайдера.
+///
+/// Серверная сторона должна тоже включить совместимый mux (3x-ui /
+/// Marzban / x-ui это умеют). Если сервер не поддерживает mux, клиент
+/// fall-back'нется на обычный mode (sing-box делает это автоматически).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MuxOptions {
+    /// Включить мультиплексирование. Если `false`, остальные поля
+    /// игнорируются и `multiplex` блок не добавляется в outbound.
+    pub enabled: bool,
+    /// Протокол мультиплексирования: `smux` (default, рекомендуется),
+    /// `yamux` (более fault-tolerant) или `h2mux` (HTTP/2 фреймы).
+    /// Пустая строка = `smux`.
+    pub protocol: String,
+    /// Максимальное число параллельных потоков на одно TCP-соединение.
+    /// Sing-box default — 0 (unlimited). Рекомендуется 4-16. 0 = пусть
+    /// решает sing-box.
+    pub max_streams: u32,
+}
+
 /// Параметры built-in TUN inbound. Используется только когда `tun_mode=true`.
 /// helper SYSTEM-spawn'ит sing-box и tun inbound создаёт WinTUN-адаптер.
 #[derive(Debug, Clone)]
@@ -102,6 +134,10 @@ impl Default for TunOptions {
 ///
 /// `socks_auth` — пара `(user, pass)` для mixed-inbound. `None` = без auth.
 /// В TUN/LAN-режимах обязательно (защита из 9.G).
+///
+/// `mux` — параметры мультиплексирования (Mux feature). Применяется только
+/// для stream-based протоколов (vless/vmess/trojan/ss/socks). Для
+/// hysteria2/tuic/wireguard игнорируется (у них свой multiplexing).
 pub fn build(
     entry: &ProxyEntry,
     socks_port: u16,
@@ -111,11 +147,13 @@ pub fn build(
     tun_options: Option<&TunOptions>,
     anti_dpi: Option<&AntiDpiOptions>,
     socks_auth: Option<(&str, &str)>,
+    mux: Option<&MuxOptions>,
 ) -> Result<SingBoxConfig> {
     let (mut proxy_outbound, mut endpoints) = build_outbound_or_endpoint(entry)
         .with_context(|| format!("ошибка построения outbound для «{}»", entry.name))?;
 
     apply_anti_dpi_to_outbound(&mut proxy_outbound, anti_dpi);
+    apply_mux_to_outbound(&mut proxy_outbound, mux, &entry.protocol);
 
     // Стандартный набор: proxy + direct. Действия `block` и `dns` в
     // sing-box 1.11+ выполнены как rule actions ("reject" / "hijack-dns")
@@ -385,6 +423,60 @@ fn apply_anti_dpi_to_outbound(outbound: &mut Value, anti_dpi: Option<&AntiDpiOpt
              встроенный obfs: salamander для Hysteria2 или другой движок"
         );
     }
+}
+
+// ─── Mux (multiplexing) применение ───────────────────────────────────────────
+
+/// Применить mux (multiplexing) к stream-based outbound.
+///
+/// **Применимо к**: vless / vmess / trojan / shadowsocks / socks.
+/// **НЕ применимо к**: hysteria2 / tuic (свой stream multiplexing над QUIC),
+/// wireguard (UDP-only, не stream).
+///
+/// При несовместимом протоколе тихо игнорируем — пользователь включил
+/// глобальный toggle, а конкретный сервер выбрал hy2/tuic/wg. Менять
+/// семантику toggle на "сервер не поддерживает" — лишний шум в UI.
+///
+/// Sing-box schema (1.11+):
+/// ```json
+/// "multiplex": {
+///   "enabled": true,
+///   "protocol": "smux",
+///   "max_streams": 8
+/// }
+/// ```
+///
+/// Если `max_streams = 0` — поле опускаем, sing-box использует свой
+/// дефолт (unlimited). `protocol` пустой → подставляем `smux`.
+fn apply_mux_to_outbound(outbound: &mut Value, mux: Option<&MuxOptions>, protocol: &str) {
+    let Some(mux) = mux else { return };
+    if !mux.enabled {
+        return;
+    }
+
+    // Только stream-based протоколы. Список нормализован в нижнем регистре.
+    let supports_mux = matches!(
+        protocol,
+        "vless" | "vmess" | "trojan" | "shadowsocks" | "ss" | "socks"
+    );
+    if !supports_mux {
+        return;
+    }
+
+    let proto = if mux.protocol.trim().is_empty() {
+        "smux"
+    } else {
+        mux.protocol.as_str()
+    };
+
+    let mut multiplex = json!({
+        "enabled": true,
+        "protocol": proto,
+    });
+    if mux.max_streams > 0 {
+        multiplex["max_streams"] = json!(mux.max_streams);
+    }
+    outbound["multiplex"] = multiplex;
 }
 
 // ─── ограничения transport ───────────────────────────────────────────────────
@@ -978,6 +1070,123 @@ pub fn apply_routing_profile(cfg: &mut Value, profile: &RoutingProfile) {
     // Иначе — final остаётся "proxy" (выставлен в build_route).
     if profile.global_proxy == BoolString(false) {
         route.insert("final".to_string(), json!("direct"));
+    }
+}
+
+// ─── 8.D — Per-process правила (sing-box нативный process_name) ──────────────
+
+use super::mihomo_config::AppRule;
+
+/// Применить per-process правила пользователя (8.D) к sing-box-конфигу.
+/// Используется в обеих ветках: URI-entries после `build()`, xray-json
+/// после `convert_xray_json_to_singbox()`, singbox-json после
+/// `patch_singbox_json()`. Единая точка применения — поведение
+/// одинаковое для всех источников конфигурации.
+///
+/// sing-box нативно резолвит PID процесса по соединению. На Windows —
+/// через `GetExtendedTcpTable` (proxy-режим, mixed inbound) и через
+/// packet→PID lookup в TUN-стеке (TUN-режим). В отличие от Mihomo
+/// `find-process-mode: always` поллинга нет — короткоживущие процессы
+/// тоже ловятся.
+///
+/// Маппинг action → JSON:
+/// - `proxy` → `{"process_name": [...], "action": "route", "outbound": "proxy"}`
+/// - `direct` → `{"process_name": [...], "action": "route", "outbound": "direct"}`
+/// - `block` → `{"process_name": [...], "action": "reject"}`
+///
+/// Правила с одинаковым action группируются в один rule (массив
+/// `process_name`). Это компактнее и совпадает с тем как Mihomo
+/// формирует свой rules-блок.
+///
+/// **Позиция в `route.rules`**: сразу после непрерывной серии
+/// `action: "sniff"` и `action: "hijack-dns"` в начале массива. Перед
+/// private-direct, рулами routing-профиля и финальным `final`. User
+/// override имеет наивысший приоритет — как в Mihomo (8.D), где
+/// app-rules префиксуют провайдерские.
+///
+/// Пустой `app_rules` или все `exe` пустые → no-op.
+pub fn apply_app_rules(cfg: &mut Value, app_rules: &[AppRule]) {
+    // Группируем по action; пустые exe (после trim) пропускаем.
+    let mut by_proxy: Vec<String> = Vec::new();
+    let mut by_direct: Vec<String> = Vec::new();
+    let mut by_block: Vec<String> = Vec::new();
+    for r in app_rules {
+        let exe = r.exe.trim();
+        if exe.is_empty() {
+            continue;
+        }
+        match r.action.as_str() {
+            "proxy" => by_proxy.push(exe.to_string()),
+            "direct" => by_direct.push(exe.to_string()),
+            "block" => by_block.push(exe.to_string()),
+            _ => {} // unknown action — игнорируем (валидация на UI)
+        }
+    }
+    if by_proxy.is_empty() && by_direct.is_empty() && by_block.is_empty() {
+        return;
+    }
+
+    // Находим / создаём route.rules массив.
+    let route = match cfg.get_mut("route").and_then(|r| r.as_object_mut()) {
+        Some(r) => r,
+        None => {
+            cfg["route"] = json!({ "rules": [] });
+            cfg["route"].as_object_mut().unwrap()
+        }
+    };
+    let rules = route
+        .entry("rules".to_string())
+        .or_insert_with(|| json!([]));
+    let arr = match rules.as_array_mut() {
+        Some(a) => a,
+        None => {
+            *rules = json!([]);
+            rules.as_array_mut().unwrap()
+        }
+    };
+
+    // Точка вставки: после непрерывной серии sniff/hijack-dns в
+    // начале. Эти actions обязаны идти первыми, иначе sing-box не
+    // успеет отснифить SNI / перехватить DNS до user-правил.
+    let mut insert_at = 0usize;
+    while insert_at < arr.len() {
+        let action = arr[insert_at]
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if action == "sniff" || action == "hijack-dns" {
+            insert_at += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Порядок: block → direct → proxy. Block первым потому что это
+    // самый строгий action — если приложение есть и в block, и в
+    // другом списке (юзер ошибся), сработает block.
+    let mut to_insert: Vec<Value> = Vec::with_capacity(3);
+    if !by_block.is_empty() {
+        to_insert.push(json!({
+            "process_name": by_block,
+            "action": "reject",
+        }));
+    }
+    if !by_direct.is_empty() {
+        to_insert.push(json!({
+            "process_name": by_direct,
+            "action": "route",
+            "outbound": "direct",
+        }));
+    }
+    if !by_proxy.is_empty() {
+        to_insert.push(json!({
+            "process_name": by_proxy,
+            "action": "route",
+            "outbound": "proxy",
+        }));
+    }
+    for (i, rule) in to_insert.into_iter().enumerate() {
+        arr.insert(insert_at + i, rule);
     }
 }
 
@@ -2115,7 +2324,7 @@ mod tests {
     #[test]
     fn build_vless_reality_basic() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
 
         let outbounds = cfg.json["outbounds"].as_array().unwrap();
         let proxy = outbounds.iter().find(|o| o["tag"] == "proxy").unwrap();
@@ -2137,7 +2346,7 @@ mod tests {
         // sing-box 1.11+: block и dns outbound'ы deprecated, заменены
         // на rule actions reject/hijack-dns. Должны быть только proxy + direct.
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let outbounds = cfg.json["outbounds"].as_array().unwrap();
         assert_eq!(outbounds.len(), 2);
         assert!(outbounds.iter().any(|o| o["tag"] == "proxy"));
@@ -2149,7 +2358,7 @@ mod tests {
     #[test]
     fn build_proxy_mode_has_only_mixed_inbound() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let inbounds = cfg.json["inbounds"].as_array().unwrap();
         assert_eq!(inbounds.len(), 1);
         assert_eq!(inbounds[0]["type"], "mixed");
@@ -2165,7 +2374,7 @@ mod tests {
             address: "198.18.0.1/15".to_string(),
             mtu: 9000,
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun_opts), None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun_opts), None, None, None).unwrap();
         let inbounds = cfg.json["inbounds"].as_array().unwrap();
         assert_eq!(inbounds.len(), 2);
         let tun = inbounds.iter().find(|i| i["type"] == "tun").unwrap();
@@ -2180,7 +2389,7 @@ mod tests {
     fn build_socks_auth_adds_users() {
         let entry = vless_entry();
         let cfg = build(
-            &entry, 30000, 30000, "127.0.0.1", false, None, None, Some(("user", "pass"))
+            &entry, 30000, 30000, "127.0.0.1", false, None, None, Some(("user", "pass")), None
         ).unwrap();
         let mixed = &cfg.json["inbounds"][0];
         let users = mixed["users"].as_array().unwrap();
@@ -2192,7 +2401,7 @@ mod tests {
     #[test]
     fn build_no_socks_auth_omits_users() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let mixed = &cfg.json["inbounds"][0];
         assert!(mixed.get("users").is_none());
     }
@@ -2200,7 +2409,7 @@ mod tests {
     #[test]
     fn build_route_has_sniff_dns_intercept_private_direct() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let rules = cfg.json["route"]["rules"].as_array().unwrap();
         // Первое — sniff action (sing-box 1.11+ заменил inbound.sniff)
         assert_eq!(rules[0]["action"], "sniff");
@@ -2221,7 +2430,7 @@ mod tests {
     fn build_tun_mode_blocks_quic() {
         let entry = vless_entry();
         let tun_opts = TunOptions::default();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun_opts), None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun_opts), None, None, None).unwrap();
         let rules = cfg.json["route"]["rules"].as_array().unwrap();
         assert!(rules.iter().any(|r| {
             r["network"] == "udp" && r["port"][0] == 443 && r["action"] == "reject"
@@ -2231,9 +2440,346 @@ mod tests {
     #[test]
     fn build_proxy_mode_does_not_block_quic() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let rules = cfg.json["route"]["rules"].as_array().unwrap();
         assert!(!rules.iter().any(|r| r["action"] == "reject"));
+    }
+
+    // ─── 8.D — apply_app_rules ───────────────────────────────────────────────
+
+    fn rule(exe: &str, action: &str) -> AppRule {
+        AppRule {
+            exe: exe.to_string(),
+            action: action.to_string(),
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn apply_app_rules_empty_is_noop() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        let before = cfg["route"]["rules"].as_array().unwrap().len();
+        apply_app_rules(&mut cfg, &[]);
+        assert_eq!(cfg["route"]["rules"].as_array().unwrap().len(), before);
+    }
+
+    #[test]
+    fn apply_app_rules_proxy_outbound() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(&mut cfg, &[rule("telegram.exe", "proxy")]);
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        let proxy_rule = rules
+            .iter()
+            .find(|r| r["outbound"] == "proxy" && r["action"] == "route")
+            .expect("должно быть route+proxy правило");
+        assert_eq!(proxy_rule["process_name"][0], "telegram.exe");
+    }
+
+    #[test]
+    fn apply_app_rules_direct_outbound() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(&mut cfg, &[rule("steam.exe", "direct")]);
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        // Ищем именно user-правило (с process_name), а не private-direct.
+        let direct_rule = rules
+            .iter()
+            .find(|r| r.get("process_name").is_some() && r["outbound"] == "direct")
+            .expect("должно быть route+direct правило с process_name");
+        assert_eq!(direct_rule["action"], "route");
+        assert_eq!(direct_rule["process_name"][0], "steam.exe");
+    }
+
+    #[test]
+    fn apply_app_rules_block_action_uses_reject() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(&mut cfg, &[rule("ads.exe", "block")]);
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        let block_rule = rules
+            .iter()
+            .find(|r| r.get("process_name").is_some() && r["action"] == "reject")
+            .expect("должно быть reject-правило с process_name");
+        assert_eq!(block_rule["process_name"][0], "ads.exe");
+        // reject — без outbound
+        assert!(block_rule.get("outbound").is_none());
+    }
+
+    #[test]
+    fn apply_app_rules_groups_same_action_into_single_rule() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(
+            &mut cfg,
+            &[
+                rule("telegram.exe", "proxy"),
+                rule("discord.exe", "proxy"),
+                rule("steam.exe", "direct"),
+            ],
+        );
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        let proxy_rule = rules
+            .iter()
+            .find(|r| r.get("process_name").is_some() && r["outbound"] == "proxy")
+            .unwrap();
+        let names = proxy_rule["process_name"].as_array().unwrap();
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().any(|n| n == "telegram.exe"));
+        assert!(names.iter().any(|n| n == "discord.exe"));
+
+        let direct_rule = rules
+            .iter()
+            .find(|r| r.get("process_name").is_some() && r["outbound"] == "direct")
+            .unwrap();
+        let direct_names = direct_rule["process_name"].as_array().unwrap();
+        assert_eq!(direct_names.len(), 1);
+        assert_eq!(direct_names[0], "steam.exe");
+    }
+
+    #[test]
+    fn apply_app_rules_inserts_after_sniff_and_dns() {
+        // Порядок должен быть: sniff (0) → hijack-dns (1) → user-rules (2..)
+        // → private-direct → ... → final.
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(&mut cfg, &[rule("foo.exe", "proxy")]);
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["action"], "sniff");
+        assert_eq!(rules[1]["action"], "hijack-dns");
+        // Третий — наш user-rule (proxy)
+        assert_eq!(rules[2]["process_name"][0], "foo.exe");
+        assert_eq!(rules[2]["outbound"], "proxy");
+        // Четвёртый — private-direct (которая была раньше на index=2)
+        assert!(rules[3]["ip_cidr"].is_array());
+        assert_eq!(rules[3]["outbound"], "direct");
+    }
+
+    #[test]
+    fn apply_app_rules_block_first_then_direct_then_proxy() {
+        // Внутри нашего блока порядок: block → direct → proxy. Block
+        // первым, чтобы при пересекающихся exe (юзер ошибся, exe в
+        // двух списках) сработал самый строгий action.
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(
+            &mut cfg,
+            &[
+                rule("p.exe", "proxy"),
+                rule("b.exe", "block"),
+                rule("d.exe", "direct"),
+            ],
+        );
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        // [0]=sniff, [1]=hijack-dns, [2]=block, [3]=direct, [4]=proxy
+        assert_eq!(rules[2]["action"], "reject");
+        assert_eq!(rules[2]["process_name"][0], "b.exe");
+        assert_eq!(rules[3]["outbound"], "direct");
+        assert_eq!(rules[3]["process_name"][0], "d.exe");
+        assert_eq!(rules[4]["outbound"], "proxy");
+        assert_eq!(rules[4]["process_name"][0], "p.exe");
+    }
+
+    #[test]
+    fn apply_app_rules_skips_empty_exe() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        apply_app_rules(
+            &mut cfg,
+            &[
+                rule("", "proxy"),       // пустой → skip
+                rule("   ", "proxy"),    // только пробелы → skip
+                rule("real.exe", "proxy"),
+            ],
+        );
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        let proxy_rule = rules
+            .iter()
+            .find(|r| r.get("process_name").is_some() && r["outbound"] == "proxy")
+            .unwrap();
+        let names = proxy_rule["process_name"].as_array().unwrap();
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0], "real.exe");
+    }
+
+    #[test]
+    fn apply_app_rules_unknown_action_is_ignored() {
+        let entry = vless_entry();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap()
+            .json;
+        let before = cfg["route"]["rules"].as_array().unwrap().len();
+        apply_app_rules(&mut cfg, &[rule("foo.exe", "wat")]);
+        // Никаких правил не добавилось — unknown action отфильтрован,
+        // итоговый массив пустой → no-op.
+        assert_eq!(cfg["route"]["rules"].as_array().unwrap().len(), before);
+    }
+
+    #[test]
+    fn apply_app_rules_works_on_minimal_config_without_route() {
+        // Defensive: если у config'а нет route-объекта — apply_app_rules
+        // не должна паниковать, должна создать route.rules сама.
+        let mut cfg = json!({});
+        apply_app_rules(&mut cfg, &[rule("x.exe", "proxy")]);
+        let rules = cfg["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["process_name"][0], "x.exe");
+        assert_eq!(rules[0]["outbound"], "proxy");
+    }
+
+    // ─── Mux (multiplexing) ──────────────────────────────────────────────
+
+    #[test]
+    fn mux_disabled_does_not_add_field() {
+        let entry = vless_entry();
+        let mux = MuxOptions {
+            enabled: false,
+            protocol: "smux".to_string(),
+            max_streams: 8,
+        };
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        assert!(proxy.get("multiplex").is_none());
+    }
+
+    #[test]
+    fn mux_none_does_not_add_field() {
+        let entry = vless_entry();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None)
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        assert!(proxy.get("multiplex").is_none());
+    }
+
+    #[test]
+    fn mux_enabled_adds_smux_with_max_streams() {
+        let entry = vless_entry();
+        let mux = MuxOptions {
+            enabled: true,
+            protocol: "smux".to_string(),
+            max_streams: 8,
+        };
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        let m = proxy.get("multiplex").expect("multiplex должен быть");
+        assert_eq!(m["enabled"], true);
+        assert_eq!(m["protocol"], "smux");
+        assert_eq!(m["max_streams"], 8);
+    }
+
+    #[test]
+    fn mux_max_streams_zero_omits_field() {
+        let entry = vless_entry();
+        let mux = MuxOptions {
+            enabled: true,
+            protocol: "yamux".to_string(),
+            max_streams: 0,
+        };
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        let m = proxy.get("multiplex").unwrap();
+        assert_eq!(m["enabled"], true);
+        assert_eq!(m["protocol"], "yamux");
+        assert!(m.get("max_streams").is_none(), "max_streams=0 → поле опускается");
+    }
+
+    #[test]
+    fn mux_empty_protocol_defaults_to_smux() {
+        let entry = vless_entry();
+        let mux = MuxOptions {
+            enabled: true,
+            protocol: "".to_string(),
+            max_streams: 4,
+        };
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        assert_eq!(proxy["multiplex"]["protocol"], "smux");
+    }
+
+    #[test]
+    fn mux_ignored_for_hysteria2() {
+        // hy2 имеет свой stream multiplexing над QUIC — наш mux не нужен.
+        let entry = ProxyEntry {
+            name: "hy2".to_string(),
+            protocol: "hysteria2".to_string(),
+            server: "h.example.com".to_string(),
+            port: 443,
+            raw: json!({ "password": "pass", "sni": "h.example.com" }),
+            engine_compat: vec!["sing-box".to_string()],
+        };
+        let mux = MuxOptions {
+            enabled: true,
+            protocol: "smux".to_string(),
+            max_streams: 8,
+        };
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+            .unwrap();
+        let proxy = cfg.json["outbounds"]
+            .as_array().unwrap().iter()
+            .find(|o| o["tag"] == "proxy").unwrap();
+        assert!(proxy.get("multiplex").is_none(), "mux не применяется к hy2");
+    }
+
+    #[test]
+    fn mux_applied_to_trojan_and_shadowsocks() {
+        let mux = MuxOptions {
+            enabled: true,
+            protocol: "smux".to_string(),
+            max_streams: 4,
+        };
+        for (proto, raw) in [
+            ("trojan", json!({ "password": "pwd", "sni": "t.example.com" })),
+            ("shadowsocks", json!({ "method": "aes-256-gcm", "password": "pwd" })),
+        ] {
+            let entry = ProxyEntry {
+                name: format!("{proto}-test"),
+                protocol: proto.to_string(),
+                server: format!("{proto}.example.com"),
+                port: 443,
+                raw,
+                engine_compat: vec!["sing-box".to_string()],
+            };
+            let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, Some(&mux))
+                .unwrap();
+            let proxy = cfg.json["outbounds"]
+                .as_array().unwrap().iter()
+                .find(|o| o["tag"] == "proxy").unwrap();
+            assert!(
+                proxy.get("multiplex").is_some(),
+                "mux должен применяться к {proto}"
+            );
+        }
     }
 
     #[test]
@@ -2255,7 +2801,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2284,7 +2830,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2310,7 +2856,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let result = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None);
+        let result = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None);
         assert!(result.is_err());
         let msg = format!("{:#}", result.err().unwrap());
         assert!(msg.contains("XHTTP"), "ожидаем понятное сообщение про XHTTP: {msg}");
@@ -2384,7 +2930,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2408,7 +2954,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2436,7 +2982,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2461,7 +3007,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         // proxy outbound заменён на selector
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
@@ -2491,7 +3037,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2512,7 +3058,7 @@ mod tests {
             fragmentation_interval: "10-20".to_string(),
             ..Default::default()
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2535,7 +3081,7 @@ mod tests {
             fragmentation: true,
             ..Default::default()
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2561,7 +3107,7 @@ mod tests {
             noises_delay: "10-20".to_string(),
             ..Default::default()
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None, None).unwrap();
         let proxy = cfg.json["outbounds"]
             .as_array().unwrap().iter()
             .find(|o| o["tag"] == "proxy").unwrap();
@@ -2577,7 +3123,7 @@ mod tests {
             server_resolve_bootstrap: "1.1.1.1".to_string(),
             ..Default::default()
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None, None).unwrap();
         let dns = &cfg.json["dns"];
         let servers = dns["servers"].as_array().unwrap();
         let doh = servers.iter().find(|s| s["tag"] == "doh").unwrap();
@@ -3014,7 +3560,7 @@ mod tests {
     #[test]
     fn apply_routing_profile_adds_direct_and_block() {
         let entry = vless_entry();
-        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let profile = RoutingProfile {
             name: "test".to_string(),
             global_proxy: BoolString(true),
@@ -3063,7 +3609,7 @@ mod tests {
     #[test]
     fn apply_routing_profile_global_proxy_false_changes_final() {
         let entry = vless_entry();
-        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let mut cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         let profile = RoutingProfile {
             name: "test".to_string(),
             global_proxy: BoolString(false),
@@ -3111,7 +3657,7 @@ mod tests {
     #[ignore]
     fn smoke_vless_reality_proxy_mode() {
         let entry = vless_entry();
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         singbox_check(&cfg.json, "vless-reality-proxy");
     }
 
@@ -3124,7 +3670,7 @@ mod tests {
             address: "198.18.0.1/15".to_string(),
             mtu: 9000,
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun), None, Some(("u","p"))).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", true, Some(&tun), None, Some(("u","p")), None).unwrap();
         singbox_check(&cfg.json, "vless-reality-tun");
     }
 
@@ -3147,7 +3693,7 @@ mod tests {
             noises_delay: "10-20".to_string(),
             ..Default::default()
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, Some(&ad), None, None).unwrap();
         singbox_check(&cfg.json, "hy2-noises");
     }
 
@@ -3169,7 +3715,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         singbox_check(&cfg.json, "wireguard");
     }
 
@@ -3193,7 +3739,7 @@ mod tests {
             }),
             engine_compat: vec!["sing-box".to_string()],
         };
-        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None).unwrap();
+        let cfg = build(&entry, 30000, 30000, "127.0.0.1", false, None, None, None, None).unwrap();
         singbox_check(&cfg.json, "vless-grpc");
     }
 

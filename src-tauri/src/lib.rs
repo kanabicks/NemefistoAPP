@@ -11,15 +11,17 @@ use config::hwid::load_or_create;
 use config::{HwidState, SubscriptionState};
 use ipc::commands::{
     autostart_disable, autostart_enable, autostart_is_enabled, check_routing_conflicts, connect,
-    count_recent_crashes, detect_competing_vpns, discard_proxy_backup, disconnect,
+    connection_ping, count_recent_crashes, detect_competing_vpns, discard_proxy_backup, disconnect,
     export_diagnostics, export_settings_to_documents, fetch_settings_backup, fetch_subscription,
-    geofiles_refresh, geofiles_status, get_hwid, get_recovery_state, get_servers,
+    geofiles_refresh, geofiles_status, get_hwid, get_recovery_state, get_routing_table,
+    get_servers,
     get_subscription_meta, has_proxy_backup, hide_floating_window, is_xray_running,
     kill_switch_apply, kill_switch_force_cleanup, kill_switch_heartbeat, leak_test,
     mihomo_delay_test, mihomo_proxies, mihomo_select_proxy, ping_servers, preview_server_config,
     read_xray_log, recover_network, restore_proxy_backup, routing_add_static, routing_add_url,
     routing_list, routing_refresh, routing_remove, routing_set_active, secure_storage_delete,
-    secure_storage_get, secure_storage_set, show_floating_window, tray_set_status, KillSwitchState,
+    secure_storage_get, secure_storage_set, show_floating_window, shutdown_helper,
+    tray_set_status, KillSwitchState,
 };
 use vpn::{MihomoState, SingBoxState};
 
@@ -196,6 +198,9 @@ pub fn run() {
             kill_switch_apply,
             recover_network,
             get_recovery_state,
+            get_routing_table,
+            connection_ping,
+            shutdown_helper,
             export_diagnostics,
             export_settings_to_documents,
             fetch_settings_backup,

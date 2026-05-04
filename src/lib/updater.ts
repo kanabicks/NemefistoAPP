@@ -10,6 +10,7 @@
 
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface AvailableUpdate {
   /** Версия из manifest'а (например "0.1.4"). */
@@ -77,6 +78,29 @@ export async function downloadAndInstall(
         break;
     }
   });
+
+  // 0.3.1 / installer file-lock fix: перед перезапуском (которое
+  // запускает NSIS installer в passive mode) грациозно стопим helper.
+  // Иначе NSIS не сможет перезаписать `nemefisto-helper.exe` (Windows
+  // service держит open handle на файл) → "невозможно открыть файл для
+  // записи" + abort. Helper после этого недоступен ~до первого connect,
+  // там helper_bootstrap поднимет его заново.
+  //
+  // Ждём ~1.5с после команды чтобы SCM успел маршрутизировать
+  // SERVICE_CONTROL_STOP, helper'у завершить pipe-loop и SCM пометить
+  // сервис STOPPED. Эмпирически 200мс задержки внутри helper'а + ~300мс
+  // на pipe-disconnect и SCM-state-update должно укладываться, но
+  // 1500мс — щедрый запас на медленных машинах.
+  try {
+    await invoke("shutdown_helper");
+  } catch (e) {
+    // Не критично: если helper уже не работает или pipe сломан — мы
+    // всё равно идём дальше. NSIS попытается перезаписать, и в худшем
+    // случае пользователь увидит тот же диалог что и раньше — это не
+    // регрессия по сравнению с поведением до фикса.
+    console.warn("[updater] shutdown_helper failed:", e);
+  }
+  await new Promise((r) => setTimeout(r, 1500));
 
   // installMode=passive в tauri.conf.json — NSIS запускается с минимумом
   // UI и сам перезапускает app, но Tauri рекомендует звать relaunch()

@@ -284,6 +284,18 @@ export const useVpnStore = create<VpnState>((set, get) => ({
       useSettingsStore.getState().autoApplyMinimalRuRules;
     const dnsLeakProtection =
       useSettingsStore.getState().dnsLeakProtection;
+    const forceDisableIpv6 =
+      useSettingsStore.getState().forceDisableIpv6;
+    // Mux настройки (вкладывается в `mux: { enabled, protocol, maxStreams }`
+    // на стороне Rust через camelCase → snake_case serde mapping).
+    const muxSettings = useSettingsStore.getState();
+    const mux = muxSettings.mux
+      ? {
+          enabled: true,
+          protocol: muxSettings.muxProtocol,
+          maxStreams: muxSettings.muxMaxStreams,
+        }
+      : null;
     const antiDpi = buildEffectiveAntiDpi();
     // 8.D: per-process правила. Подаём в Rust в camelCase
     // (`exe`/`action`/`comment`); serde на стороне Rust десериализует
@@ -316,6 +328,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         killSwitch,
         dnsLeakProtection,
         killSwitchStrict,
+        forceDisableIpv6,
+        mux,
         autoApplyMinimalRuRules,
         appRules,
       });

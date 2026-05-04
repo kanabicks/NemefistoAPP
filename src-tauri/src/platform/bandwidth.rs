@@ -26,11 +26,17 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 /// Payload `bandwidth-tick`. Числа в байтах/сек, фронт сам форматирует
 /// в KB/s / MB/s. `iface` опционально — если null, измерения нет
 /// (default-route не определён, например только что после reboot).
+///
+/// `engine_memory_bytes` — Working Set всех запущенных sing-box / mihomo
+/// процессов суммарно в байтах. `None` если ни одного движка не запущено
+/// (VPN отключён, или старт ещё не завершился). Эмитим в том же tick'е
+/// чтобы фронт не открывал второй listener — поллинг 1Hz одинаковый.
 #[derive(Serialize, Clone)]
 pub struct BandwidthTick {
     pub up_bps: u64,
     pub down_bps: u64,
     pub iface: Option<String>,
+    pub engine_memory_bytes: Option<u64>,
 }
 
 pub fn start(app: AppHandle) {
@@ -65,6 +71,11 @@ pub fn start(app: AppHandle) {
                 );
             }
 
+            // 13.X: память движков (sing-box + mihomo). Дёшево — один
+            // EnumProcesses + GetProcessMemoryInfo per matching process.
+            // Если ни одного — None, фронт прячет индикатор.
+            let engine_memory_bytes = super::process_memory::engine_memory_bytes();
+
             let tick = match (counters, prev.as_ref()) {
                 (Some((cur_in, cur_out)), Some((prev_name, prev_in, prev_out)))
                     if Some(prev_name.as_str()) == iface.as_deref() =>
@@ -76,6 +87,7 @@ pub fn start(app: AppHandle) {
                         up_bps: up,
                         down_bps: down,
                         iface: iface.clone(),
+                        engine_memory_bytes,
                     }
                 }
                 _ => {
@@ -84,6 +96,7 @@ pub fn start(app: AppHandle) {
                         up_bps: 0,
                         down_bps: 0,
                         iface: iface.clone(),
+                        engine_memory_bytes,
                     }
                 }
             };

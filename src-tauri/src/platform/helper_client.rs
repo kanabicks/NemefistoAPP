@@ -46,6 +46,11 @@ pub enum HelperRequest {
         /// (быстро возвращает None).
         #[serde(default)]
         expect_tun: bool,
+        /// 14.D — принудительно блокировать весь IPv6 пока VPN активен.
+        /// При `true` все v6 allow-фильтры пропускаются → весь IPv6
+        /// outbound упирается в base block-all v6.
+        #[serde(default)]
+        force_disable_ipv6: bool,
     },
     KillSwitchDisable,
     /// Heartbeat для watchdog: главный шлёт каждые ~20 сек, иначе
@@ -78,6 +83,10 @@ pub enum HelperRequest {
     /// sing-box миграция (v7): остановить SYSTEM-spawned sing-box.
     /// Идемпотентно.
     SingBoxStop,
+    /// 0.3.1 / installer file-lock fix: graceful self-shutdown helper'а.
+    /// Helper закрывает свой `.exe`-handle через SCM, после чего installer
+    /// может перезаписать файл без admin-прав.
+    ShutdownHelper,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,6 +188,8 @@ pub async fn version() -> Result<(String, u32)> {
 /// - `expect_tun` — TUN-режим? Helper ретраит поиск WinTUN-адаптера
 ///   до 5с если true (нужен для allow-фильтра user-трафика идущего
 ///   через TUN). В proxy-режиме `false` чтобы не задерживать enable.
+/// - `force_disable_ipv6` — 14.D, блокировать весь IPv6 outbound пока
+///   VPN активен. Helper пропустит все v6 allow-фильтры.
 pub async fn kill_switch_enable(
     server_ips: Vec<String>,
     allow_lan: bool,
@@ -187,6 +198,7 @@ pub async fn kill_switch_enable(
     allow_dns_ips: Vec<String>,
     strict_mode: bool,
     expect_tun: bool,
+    force_disable_ipv6: bool,
 ) -> Result<()> {
     let resp = send(HelperRequest::KillSwitchEnable {
         server_ips,
@@ -196,6 +208,7 @@ pub async fn kill_switch_enable(
         allow_dns_ips,
         strict_mode,
         expect_tun,
+        force_disable_ipv6,
     })
     .await?;
     match resp {
@@ -299,6 +312,33 @@ pub async fn singbox_stop() -> Result<()> {
         HelperResponse::Ok => Ok(()),
         HelperResponse::Error { message } => bail!("{message}"),
         other => bail!("неожиданный ответ helper: {other:?}"),
+    }
+}
+
+/// 0.3.1 / installer file-lock fix: graceful self-shutdown helper'а.
+///
+/// Helper отвечает `Ok`, потом через ~200мс сам себя стопит через SCM.
+/// После этого `nemefisto-helper.exe` освобождается и NSIS installer
+/// может его перезаписать без admin-прав.
+///
+/// Pipe-disconnect после Ok нормален — сервис-процесс выходит. Поэтому
+/// если send() упал с broken pipe (а Ok мы получили), это не ошибка.
+/// Мы возвращаем Ok в любом случае — главное что helper начал shutdown.
+///
+/// **Использовать только перед запуском installer'а**: после этой команды
+/// helper не доступен пока приложение не вызовет `helper_bootstrap` снова
+/// (что произойдёт автоматически на следующем connect).
+pub async fn shutdown_helper() -> Result<()> {
+    // send() может вернуть Err если helper уже выходит — это OK,
+    // главное что команда пошла. Игнорируем ошибки connect/io после
+    // того как послали запрос.
+    match send(HelperRequest::ShutdownHelper).await {
+        Ok(HelperResponse::Ok) => Ok(()),
+        Ok(HelperResponse::Error { message }) => bail!("{message}"),
+        Ok(other) => bail!("неожиданный ответ helper: {other:?}"),
+        // Pipe-error сразу после отправки тоже считаем успехом — helper
+        // мог уже выйти к моменту чтения Response. Цель достигнута.
+        Err(_) => Ok(()),
     }
 }
 
